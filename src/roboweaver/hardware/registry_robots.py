@@ -1,0 +1,187 @@
+"""
+Pre-configured Industrial & Collaborative Robot Hardware Profiles.
+"""
+
+from __future__ import annotations
+
+import math
+from roboweaver.hardware.robot_spec import JointSpec, LinkSpec, RobotSpec
+
+
+def get_franka_panda_spec() -> RobotSpec:
+    """Franka Emika Panda 7-DOF Collaborative Robot Arm."""
+    return RobotSpec(
+        id="franka_panda",
+        name="Franka Emika Panda",
+        manufacturer="Franka Robotics",
+        dof=7,
+        payload_capacity_kg=3.0,
+        max_reach_m=0.855,
+        base_height_m=0.140,
+        joints=[
+            JointSpec("panda_joint1", "revolute", (0, 0, 1), -2.8973, 2.8973, 2.1750, 87.0),
+            JointSpec("panda_joint2", "revolute", (0, 1, 0), -1.7628, 1.7628, 2.1750, 87.0),
+            JointSpec("panda_joint3", "revolute", (0, 0, 1), -2.8973, 2.8973, 2.1750, 87.0),
+            JointSpec("panda_joint4", "revolute", (0, -1, 0), -3.0718, -0.0698, 2.1750, 87.0),
+            JointSpec("panda_joint5", "revolute", (0, 0, 1), -2.8973, 2.8973, 2.6100, 12.0),
+            JointSpec("panda_joint6", "revolute", (0, 1, 0), -0.0175, 3.7525, 2.6100, 12.0),
+            JointSpec("panda_joint7", "revolute", (0, 0, 1), -2.8973, 2.8973, 2.6100, 12.0),
+        ],
+        links=[
+            LinkSpec("panda_link1", 0.140, 4.97),
+            LinkSpec("panda_link2", 0.192, 0.65),
+            LinkSpec("panda_link3", 0.121, 3.22),
+            LinkSpec("panda_link4", 0.207, 3.58),
+            LinkSpec("panda_link5", 0.184, 1.23),
+            LinkSpec("panda_link6", 0.088, 1.67),
+            LinkSpec("panda_link7", 0.107, 0.73),
+        ],
+        description="7-DOF torque-controlled collaborative robot with high sensitivity",
+    )
+
+
+def get_ur5e_spec() -> RobotSpec:
+    """Universal Robots UR5e 6-DOF Collaborative Robot Arm."""
+    return RobotSpec(
+        id="ur5e",
+        name="Universal Robots UR5e",
+        manufacturer="Universal Robots",
+        dof=6,
+        payload_capacity_kg=5.0,
+        max_reach_m=0.850,
+        base_height_m=0.162,
+        joints=[
+            JointSpec("shoulder_pan_joint", "revolute", (0, 0, 1), -math.pi * 2, math.pi * 2, 3.14, 150.0),
+            JointSpec("shoulder_lift_joint", "revolute", (0, 1, 0), -math.pi * 2, math.pi * 2, 3.14, 150.0),
+            JointSpec("elbow_joint", "revolute", (0, 1, 0), -math.pi, math.pi, 3.14, 150.0),
+            JointSpec("wrist_1_joint", "revolute", (0, 1, 0), -math.pi * 2, math.pi * 2, 6.28, 28.0),
+            JointSpec("wrist_2_joint", "revolute", (0, 0, 1), -math.pi * 2, math.pi * 2, 6.28, 28.0),
+            JointSpec("wrist_3_joint", "revolute", (0, 1, 0), -math.pi * 2, math.pi * 2, 6.28, 28.0),
+        ],
+        links=[
+            LinkSpec("shoulder_link", 0.162, 3.7),
+            LinkSpec("upper_arm_link", 0.425, 8.3),
+            LinkSpec("forearm_link", 0.392, 2.27),
+            LinkSpec("wrist_1_link", 0.133, 1.2),
+            LinkSpec("wrist_2_link", 0.099, 1.2),
+            LinkSpec("wrist_3_link", 0.099, 0.2),
+        ],
+        description="Industry standard 6-DOF collaborative arm for assembly and pick-and-place",
+    )
+
+
+def get_kuka_iiwa_spec() -> RobotSpec:
+    """KUKA LBR iiwa 14 R820 7-DOF Sensitive Arm."""
+    return RobotSpec(
+        id="kuka_iiwa",
+        name="KUKA LBR iiwa 14 R820",
+        manufacturer="KUKA Robotics",
+        dof=7,
+        payload_capacity_kg=14.0,
+        max_reach_m=0.820,
+        base_height_m=0.150,
+        joints=[
+            JointSpec("iiwa_joint_1", "revolute", (0, 0, 1), -2.96, 2.96, 1.48, 320.0),
+            JointSpec("iiwa_joint_2", "revolute", (0, 1, 0), -2.09, 2.09, 1.48, 320.0),
+            JointSpec("iiwa_joint_3", "revolute", (0, 0, 1), -2.96, 2.96, 1.74, 176.0),
+            JointSpec("iiwa_joint_4", "revolute", (0, -1, 0), -2.09, 2.09, 1.30, 176.0),
+            JointSpec("iiwa_joint_5", "revolute", (0, 0, 1), -2.96, 2.96, 2.26, 110.0),
+            JointSpec("iiwa_joint_6", "revolute", (0, 1, 0), -2.09, 2.09, 2.35, 40.0),
+            JointSpec("iiwa_joint_7", "revolute", (0, 0, 1), -3.05, 3.05, 2.35, 40.0),
+        ],
+        links=[
+            LinkSpec("iiwa_link_1", 0.150, 5.0),
+            LinkSpec("iiwa_link_2", 0.210, 5.0),
+            LinkSpec("iiwa_link_3", 0.210, 4.0),
+            LinkSpec("iiwa_link_4", 0.190, 3.5),
+            LinkSpec("iiwa_link_5", 0.210, 3.5),
+            LinkSpec("iiwa_link_6", 0.190, 2.5),
+            LinkSpec("iiwa_link_7", 0.081, 1.2),
+        ],
+        description="High payload 7-DOF torque sensor integrated industrial arm",
+    )
+
+
+def get_kinova_gen3_spec() -> RobotSpec:
+    """Kinova Gen3 7-DOF Lightweight Arm."""
+    return RobotSpec(
+        id="kinova_gen3",
+        name="Kinova Gen3",
+        manufacturer="Kinova Robotics",
+        dof=7,
+        payload_capacity_kg=4.0,
+        max_reach_m=0.902,
+        base_height_m=0.156,
+        joints=[
+            JointSpec("joint_1", "revolute", (0, 0, 1), -math.pi * 2, math.pi * 2, 1.74, 39.0),
+            JointSpec("joint_2", "revolute", (0, 1, 0), -2.41, 2.41, 1.74, 39.0),
+            JointSpec("joint_3", "revolute", (0, 0, 1), -math.pi * 2, math.pi * 2, 1.74, 39.0),
+            JointSpec("joint_4", "revolute", (0, -1, 0), -2.66, 2.66, 1.74, 39.0),
+            JointSpec("joint_5", "revolute", (0, 0, 1), -math.pi * 2, math.pi * 2, 2.26, 9.0),
+            JointSpec("joint_6", "revolute", (0, 1, 0), -2.23, 2.23, 2.26, 9.0),
+            JointSpec("joint_7", "revolute", (0, 0, 1), -math.pi * 2, math.pi * 2, 2.26, 9.0),
+        ],
+        links=[
+            LinkSpec("link_1", 0.156, 1.37),
+            LinkSpec("link_2", 0.210, 1.16),
+            LinkSpec("link_3", 0.210, 1.16),
+            LinkSpec("link_4", 0.208, 0.93),
+            LinkSpec("link_5", 0.105, 0.68),
+            LinkSpec("link_6", 0.105, 0.68),
+            LinkSpec("link_7", 0.061, 0.40),
+        ],
+        description="Ultra-lightweight 7-DOF arm for research and mobile manipulation",
+    )
+
+
+def get_abb_irb120_spec() -> RobotSpec:
+    """ABB IRB 120 6-DOF Compact Industrial Arm."""
+    return RobotSpec(
+        id="abb_irb120",
+        name="ABB IRB 120",
+        manufacturer="ABB Robotics",
+        dof=6,
+        payload_capacity_kg=3.0,
+        max_reach_m=0.580,
+        base_height_m=0.290,
+        joints=[
+            JointSpec("joint_1", "revolute", (0, 0, 1), -2.87, 2.87, 4.36, 100.0),
+            JointSpec("joint_2", "revolute", (0, 1, 0), -1.91, 1.91, 4.36, 100.0),
+            JointSpec("joint_3", "revolute", (0, 1, 0), -1.91, 1.22, 4.36, 100.0),
+            JointSpec("joint_4", "revolute", (1, 0, 0), -2.79, 2.79, 5.58, 30.0),
+            JointSpec("joint_5", "revolute", (0, 1, 0), -2.09, 2.09, 5.58, 30.0),
+            JointSpec("joint_6", "revolute", (1, 0, 0), -6.98, 6.98, 7.33, 30.0),
+        ],
+        links=[
+            LinkSpec("base_link", 0.290, 6.2),
+            LinkSpec("link_1", 0.270, 4.0),
+            LinkSpec("link_2", 0.270, 3.5),
+            LinkSpec("link_3", 0.070, 2.0),
+            LinkSpec("link_4", 0.302, 1.5),
+            LinkSpec("link_5", 0.072, 0.5),
+        ],
+        description="High-speed compact 6-DOF industrial robot for electronics assembly",
+    )
+
+
+def get_generic_6dof_spec() -> RobotSpec:
+    """Generic 6-DOF Robot Arm Profile."""
+    return get_ur5e_spec()
+
+
+ROBOT_REGISTRY: dict[str, RobotSpec] = {
+    "franka_panda": get_franka_panda_spec(),
+    "panda": get_franka_panda_spec(),
+    "ur5e": get_ur5e_spec(),
+    "ur10e": get_ur5e_spec(),  # scaled variant
+    "kuka_iiwa": get_kuka_iiwa_spec(),
+    "kinova_gen3": get_kinova_gen3_spec(),
+    "abb_irb120": get_abb_irb120_spec(),
+    "generic_6dof": get_generic_6dof_spec(),
+}
+
+
+def get_robot_spec(robot_id: str) -> RobotSpec:
+    """Retrieve RobotSpec by robot_id (defaults to Franka Panda)."""
+    key = robot_id.lower().strip()
+    return ROBOT_REGISTRY.get(key, get_franka_panda_spec())
