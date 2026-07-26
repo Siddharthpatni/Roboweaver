@@ -246,6 +246,18 @@ roboweaver nexus query "turtlebot4"
 roboweaver nexus recommend "Build a visitor card scanner system with TurtleBot4 to scan security ID badges and navigate to reception desk"
 ```
 
+### 7. Universal Robotics Control Center & Web Dashboard (`roboweaver dashboard`)
+
+Start the interactive frontend web dashboard to visualize and interact with the **Knowledge Nexus**, **Skill Compiler**, and **Robotics Ontology Graph** in your browser:
+
+```bash
+roboweaver dashboard --port 8080
+# Visit http://localhost:8080 in your browser
+```
+- **🧠 Knowledge Nexus Recommender**: Type any prompt or click **Browse All Packages** to inspect the 11+ cataloged ecosystem packages (`nav2_bringup`, `card_scanner_ws`, `inspire_hand_ros2`, `shopmate_r_fleet`, etc.).
+- **⚡ Live Skill Compiler**: Test natural language to Groot2 BehaviorTree XML compilation.
+- **🔗 Robotics Ontology Graph**: Inspect system nodes and edges live.
+
 ---
 
 ## 🧪 Verification & Testing
