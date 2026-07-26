@@ -64,23 +64,23 @@ export const IncidentControlPanel: React.FC<IncidentControlPanelProps> = ({
   const isAlreadyResolved = current.status === 'approved' || current.status === 'escalated' || current.status === 'rejected';
 
   return (
-    <div className="flex flex-col h-full w-full bg-[#090d16] text-slate-100 overflow-hidden relative">
+    <div className="flex flex-col h-full w-full bg-robotic-grid text-slate-100 overflow-hidden relative font-mono">
       {/* Toast Alert Banner */}
       {toastMessage && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 border border-emerald-500/50 text-emerald-300 px-5 py-2.5 rounded-2xl shadow-2xl flex items-center gap-3 animate-fade-in">
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-[#060b17] border border-emerald-400 text-emerald-300 px-5 py-2.5 rounded-xl shadow-2xl flex items-center gap-3 animate-fade-in font-mono">
           <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-          <span className="text-xs font-semibold">{toastMessage}</span>
+          <span className="text-xs font-bold">{toastMessage}</span>
           <button onClick={() => setToastMessage(null)} className="text-slate-400 hover:text-white">
             <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
-      {/* Header Tabs for Selectable Incidents */}
-      <div className="px-6 py-3 bg-slate-950 border-b border-slate-800/80 flex items-center justify-between shrink-0">
+      {/* Mecha HUD Header Tabs for Selectable Incidents */}
+      <div className="px-6 py-3 bg-[#060b17] border-b border-emerald-500/30 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3 overflow-x-auto">
-          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider pr-2">
-            Incidents:
+          <span className="text-xs font-bold text-emerald-400 uppercase tracking-widest pr-2">
+            [ INCIDENT HUD ]
           </span>
           {incidents.map((inc) => {
             const isSelected = inc.id === selectedId;
@@ -88,10 +88,10 @@ export const IncidentControlPanel: React.FC<IncidentControlPanelProps> = ({
               <button
                 key={inc.id}
                 onClick={() => onSelectIncident(inc.id)}
-                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all shrink-0 ${
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase transition-all shrink-0 ${
                   isSelected
-                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/40 shadow-sm'
-                    : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400 shadow-md shadow-emerald-500/20'
+                    : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
                 }`}
               >
                 <span
@@ -104,7 +104,7 @@ export const IncidentControlPanel: React.FC<IncidentControlPanelProps> = ({
                   }`}
                 />
                 <span>{inc.id}</span>
-                <span className="text-[10px] text-slate-500 font-normal truncate max-w-[150px]">
+                <span className="text-[10px] text-slate-400 font-normal truncate max-w-[150px]">
                   — {inc.title}
                 </span>
               </button>
@@ -115,15 +115,15 @@ export const IncidentControlPanel: React.FC<IncidentControlPanelProps> = ({
         <div className="flex items-center gap-3">
           <button
             onClick={onResetDemo}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs text-slate-300 font-medium transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-950 hover:bg-slate-900 border border-emerald-500/30 text-xs text-emerald-400 font-bold uppercase transition-colors shadow-sm"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            <span>Reset Demo State</span>
+            <span>[ RESET DEMO STATE ]</span>
           </button>
           {onClose && (
             <button
               onClick={onClose}
-              className="p-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white"
+              className="p-1.5 rounded-lg bg-slate-950 hover:bg-slate-900 border border-emerald-500/30 text-slate-400 hover:text-white"
             >
               <X className="w-4 h-4" />
             </button>
@@ -157,15 +157,15 @@ export const IncidentControlPanel: React.FC<IncidentControlPanelProps> = ({
       </div>
 
       {/* Bottom Action Bar (Approve & Deploy Fix vs Reject & Escalate) */}
-      <div className="h-20 bg-slate-950 border-t border-slate-800/80 px-6 flex items-center justify-between shrink-0">
+      <div className="h-20 bg-[#060b17] border-t border-emerald-500/30 px-6 flex items-center justify-between shrink-0 font-mono">
         <div className="flex items-center gap-3">
-          <ShieldAlert className="w-5 h-5 text-emerald-400" />
+          <ShieldAlert className="w-5 h-5 text-emerald-400 animate-pulse" />
           <div>
-            <div className="text-xs font-bold text-slate-200">
-              HITL Action Required: {current.title}
+            <div className="text-xs font-bold text-white uppercase tracking-wider">
+              [ HITL_INTERLOCK_REQUIRED ] : {current.title}
             </div>
             <div className="text-[11px] text-slate-400">
-              Service: <span className="font-mono text-emerald-400">{current.service}</span> • Status:{' '}
+              ROBOT_TARGET: <span className="font-mono text-emerald-400 font-bold">{current.service}</span> • STATUS:{' '}
               <span className="uppercase font-bold text-amber-400">{current.status}</span>
             </div>
           </div>

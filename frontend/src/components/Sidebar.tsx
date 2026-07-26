@@ -52,11 +52,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'simulation' as TabType,
-      label: 'Live Simulation',
+      label: '3D Digital Twin HUD',
       icon: Cpu,
       badge: {
-        text: 'RH56F1',
-        color: 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+        text: '3D-SIM',
+        color: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
       }
     },
     {
@@ -74,23 +74,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   return (
-    <aside className="w-64 bg-slate-950 border-r border-slate-800/80 flex flex-col justify-between select-none z-20">
+    <aside className="w-64 bg-[#03060d] border-r border-emerald-500/30 flex flex-col justify-between select-none z-20 font-mono">
       <div>
-        {/* Brand Logo Header */}
-        <div className="h-16 flex items-center px-6 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-sm">
+        {/* Mecha Brand Logo Header */}
+        <div className="h-16 flex items-center px-5 border-b border-emerald-500/30 bg-[#060b17] backdrop-blur-sm">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-              <ShieldCheck className="w-5 h-5 text-slate-950 font-bold" />
+            <div className="w-9 h-9 rounded-lg bg-emerald-500/20 border border-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+              <ShieldCheck className="w-5 h-5 text-emerald-400" />
             </div>
             <div>
               <div className="flex items-center gap-1.5">
-                <span className="font-bold text-slate-100 tracking-tight text-base">OpsSentinel</span>
-                <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                  AI-HITL
+                <span className="font-bold text-white tracking-wider text-sm uppercase">OpsSentinel</span>
+                <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-500 text-slate-950">
+                  MECHA
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 font-medium tracking-wide">
-                RoboWeaver OS Nexus
+              <p className="text-[10px] text-emerald-400/80 font-mono tracking-widest uppercase">
+                // ROBO_OS_V4 //
               </p>
             </div>
           </div>
@@ -98,8 +98,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Navigation Menu */}
         <div className="px-3 py-4 space-y-1">
-          <p className="px-3 pb-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
-            Control Center
+          <p className="px-3 pb-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+            [ COMMAND COCKPIT ]
           </p>
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -108,18 +108,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 key={item.id}
                 onClick={() => onTabChange(item.id)}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-150 ${
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-bold uppercase transition-all duration-150 ${
                   isActive
-                    ? 'bg-gradient-to-r from-emerald-500/15 to-teal-500/5 text-emerald-400 border border-emerald-500/30 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/80 border border-transparent'
+                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/60 shadow-md shadow-emerald-500/10'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900/80 border border-transparent'
                 }`}
               >
-                <div className="flex items-center gap-3">
-                  <Icon className={`w-4 h-4 ${isActive ? 'text-emerald-400' : 'text-slate-400'}`} />
-                  <span>{item.label}</span>
+                <div className="flex items-center gap-2.5">
+                  <Icon className={`w-4 h-4 ${isActive ? 'text-emerald-400 animate-pulse' : 'text-slate-400'}`} />
+                  <span className="tracking-wider">{isActive ? `▶ ${item.label}` : item.label}</span>
                 </div>
                 {item.badge && (
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${item.badge.color}`}>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold font-mono ${item.badge.color}`}>
                     {item.badge.text}
                   </span>
                 )}
@@ -129,18 +129,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Footer System Status Card */}
-      <div className="p-4 m-3 rounded-2xl bg-slate-900/60 border border-slate-800/80">
-        <div className="flex items-center gap-2.5 mb-2">
-          <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="text-xs font-semibold text-slate-200">System Healthy</span>
+      {/* Footer System Diagnostics Card */}
+      <div className="p-4 m-3 rounded-xl bg-slate-950 border border-emerald-500/30 text-[11px] space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-xs font-bold text-white uppercase tracking-wider">[ DDS LINK: OK ]</span>
+          </div>
+          <span className="text-emerald-400 font-bold">100Hz</span>
         </div>
-        <p className="text-[11px] text-slate-400 leading-relaxed mb-3">
-          Agent pipeline active. 3 autonomous nodes & 6 ROS 2 packages indexed.
+        <p className="text-[10px] text-slate-400 leading-relaxed font-mono">
+          TURTLEBOT4 LiDAR: SCANNING<br/>
+          INSPIRE RH56F1: RS485 ACTIVE<br/>
+          FRANKA ARM: AUTO-SYNC
         </p>
         <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-[10px] text-slate-400">
-          <span>ROS Distro</span>
-          <span className="font-mono text-emerald-400 font-semibold">ROS 2 Humble / Jazzy</span>
+          <span>PWR VOLTAGE</span>
+          <span className="font-mono text-emerald-400 font-bold">24.2V DC</span>
         </div>
       </div>
     </aside>

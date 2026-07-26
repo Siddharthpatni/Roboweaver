@@ -97,35 +97,35 @@ export default function Home() {
           {activeTab === 'simulation' && <LiveSimulationView />}
 
           {activeTab === 'dashboard' && (
-            <div className="h-full overflow-y-auto p-6 space-y-8 bg-[#090d16]">
-              {/* Executive Welcome Banner */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-3xl bg-gradient-to-r from-slate-900 via-slate-900/90 to-slate-950 border border-slate-800 shadow-2xl">
-                <div className="space-y-2">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold">
+            <div className="h-full overflow-y-auto p-6 space-y-8 bg-robotic-grid font-mono">
+              {/* Executive Welcome Mecha Banner */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl robotic-card bg-[#060b17] border border-emerald-500/40 shadow-2xl relative overflow-hidden">
+                <div className="space-y-2 relative z-10">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-emerald-500/20 border border-emerald-500 text-emerald-400 text-xs font-bold uppercase tracking-widest">
                     <ShieldCheck className="w-3.5 h-3.5" />
-                    <span>OpsSentinel Executive Dashboard • Lead SRE & Robotics On-Call</span>
+                    <span>[ OPSSENTINEL EXECUTIVE MECHA COCKPIT // SRE ON-CALL ]</span>
                   </div>
-                  <h1 className="text-2xl font-extrabold tracking-tight text-white">
-                    RoboWeaver Multi-Robot OS & HITL Governance Center
+                  <h1 className="text-2xl font-black tracking-wider text-white uppercase font-mono">
+                    ROBOWEAVER MULTI-ROBOT OS & HITL GOVERNANCE CENTER
                   </h1>
-                  <p className="text-sm text-slate-400 max-w-2xl leading-relaxed">
+                  <p className="text-xs text-emerald-400/80 max-w-2xl leading-relaxed font-mono">
                     Unifying autonomous error remediation, ROS 2 dependency knowledge graphs, and real-time Inspire Hand RS485 kinematics simulation.
                   </p>
                 </div>
 
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-3 shrink-0 relative z-10">
                   <button
                     onClick={() => setActiveTab('incidents')}
-                    className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow-lg shadow-emerald-500/20 transition-all flex items-center gap-2"
+                    className="px-5 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs uppercase tracking-wider shadow-lg shadow-emerald-500/20 transition-all flex items-center gap-2"
                   >
                     <AlertTriangle className="w-4 h-4" />
-                    <span>Review {activeIncidentsCount} Active Incidents</span>
+                    <span>[ REVIEW {activeIncidentsCount} ACTIVE INCIDENTS ]</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('nexus')}
-                    className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-200 font-semibold text-xs transition-colors"
+                    className="px-5 py-2.5 rounded-lg bg-slate-950 hover:bg-slate-900 border border-emerald-500/50 text-emerald-400 font-bold text-xs uppercase transition-colors"
                   >
-                    Open Knowledge Nexus
+                    [ KNOWLEDGE NEXUS ]
                   </button>
                 </div>
               </div>
@@ -134,55 +134,55 @@ export default function Home() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div
                   onClick={() => setActiveTab('incidents')}
-                  className="p-5 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-rose-500/40 transition-all cursor-pointer group"
+                  className="p-5 rounded-xl robotic-card bg-[#060b17] border border-emerald-500/30 hover:border-rose-500/60 transition-all cursor-pointer group"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-400">HITL Review Queue</span>
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">[ HITL REVIEW QUEUE ]</span>
                     <AlertTriangle className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform" />
                   </div>
                   <div className="text-3xl font-extrabold font-mono text-white mt-2">
-                    {activeIncidentsCount} Active
+                    {activeIncidentsCount} ACTIVE
                   </div>
-                  <div className="text-[11px] text-rose-400 mt-1">Requires human sign-off</div>
+                  <div className="text-[10px] text-rose-400 mt-1 uppercase font-bold">// REQUIRES HUMAN SIGN-OFF //</div>
                 </div>
 
                 <div
                   onClick={() => setActiveTab('nexus')}
-                  className="p-5 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-emerald-500/40 transition-all cursor-pointer group"
+                  className="p-5 rounded-xl robotic-card bg-[#060b17] border border-emerald-500/30 hover:border-emerald-500 transition-all cursor-pointer group"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-400">Indexed ROS 2 Pkgs</span>
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">[ INDEXED ROS 2 PKGS ]</span>
                     <Database className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
                   </div>
                   <div className="text-3xl font-extrabold font-mono text-white mt-2">
-                    {MOCK_ROBOTICS_PACKAGES.length} Packages
+                    {MOCK_ROBOTICS_PACKAGES.length} PKGS
                   </div>
-                  <div className="text-[11px] text-emerald-400 mt-1">
-                    Humble & Jazzy Distros
+                  <div className="text-[10px] text-emerald-400 mt-1 uppercase font-bold">
+                    // HUMBLE & JAZZY DISTROS //
                   </div>
                 </div>
 
                 <div
                   onClick={() => setActiveTab('simulation')}
-                  className="p-5 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-purple-500/40 transition-all cursor-pointer group"
+                  className="p-5 rounded-xl robotic-card bg-[#060b17] border border-emerald-500/30 hover:border-purple-500/60 transition-all cursor-pointer group"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-400">Live Hardware Sim</span>
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">[ LIVE DIGITAL TWIN ]</span>
                     <Cpu className="w-4 h-4 text-purple-400 group-hover:scale-110 transition-transform" />
                   </div>
                   <div className="text-3xl font-extrabold font-mono text-white mt-2">
                     RH56F1-E2
                   </div>
-                  <div className="text-[11px] text-purple-400 mt-1">6-DOF RS485 Active</div>
+                  <div className="text-[10px] text-purple-400 mt-1 uppercase font-bold">// 6-DOF RS485 ACTIVE //</div>
                 </div>
 
-                <div className="p-5 rounded-2xl bg-slate-900/70 border border-slate-800">
+                <div className="p-5 rounded-xl robotic-card bg-[#060b17] border border-emerald-500/30">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-400">Agent Auto-Fix Rate</span>
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">[ AGENT AUTO-FIX RATE ]</span>
                     <Activity className="w-4 h-4 text-teal-400" />
                   </div>
                   <div className="text-3xl font-extrabold font-mono text-white mt-2">94.8%</div>
-                  <div className="text-[11px] text-teal-400 mt-1">3.0s avg fix generation</div>
+                  <div className="text-[10px] text-teal-400 mt-1 uppercase font-bold">// 3.0S AVG FIX GENERATION //</div>
                 </div>
               </div>
 

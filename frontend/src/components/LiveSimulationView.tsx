@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { SimRobotState } from '../types';
 import { INITIAL_SIM_ROBOT } from '../data/mockData';
+import { Robotic3DViewport } from './Robotic3DViewport';
 
 export const LiveSimulationView: React.FC = () => {
   const [robot, setRobot] = useState<SimRobotState>(INITIAL_SIM_ROBOT);
@@ -85,44 +86,47 @@ export const LiveSimulationView: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full w-full bg-[#090d16] text-slate-100 overflow-y-auto p-6 space-y-6">
-      {/* Hero Banner: Live Simulation Mode */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-3xl bg-gradient-to-r from-slate-900 via-slate-900/90 to-slate-950 border border-slate-800 shadow-2xl">
+    <div className="flex flex-col h-full w-full bg-robotic-grid text-slate-100 overflow-y-auto p-6 space-y-6">
+      {/* Mecha Robotic HUD Header Banner */}
+      <div className="robotic-card p-6 rounded-3xl border border-emerald-500/30 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-2 max-w-2xl">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-400 text-xs font-semibold">
-            <Cpu className="w-3.5 h-3.5" />
-            <span>RoboWeaver Dexterous Manipulation • Live Kinematics Sim</span>
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono font-bold">
+            <Cpu className="w-3.5 h-3.5 animate-pulse" />
+            <span>// ROBO_OS_V4 // 3D DIGITAL TWIN & RS485 TELEMETRY</span>
           </div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-white">
-            Inspire Hand RH56F1-E2 Real-Time Digital Twin
+          <h1 className="text-2xl font-black tracking-wider text-white uppercase font-mono text-glow-emerald">
+            [SYS_SIM] Interactive 3D Kinematic Digital Twin
           </h1>
-          <p className="text-sm text-slate-400 leading-relaxed">
-            Live hardware simulation testing RS485 Modbus RTU frame telemetry, 6-DOF finger joint angles, tactile force feedback, and slip risk prediction before deployment.
+          <p className="text-xs text-slate-400 font-mono leading-relaxed">
+            REAL-TIME 3D CANVAS VIEWPORT • 6-DOF ACTUATOR ANGLES • SLIP RISK FORCE VECTOR PREDICTION • TURTLEBOT 4 & FRANKA CHOREOGRAPHY
           </p>
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
           <button
             onClick={() => setIsSimulating(!isSimulating)}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all ${
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-mono font-bold text-xs uppercase shadow-lg transition-all ${
               isSimulating
                 ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-500/20'
                 : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20'
             }`}
           >
             {isSimulating ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-            <span>{isSimulating ? 'Pause Telemetry' : 'Resume Telemetry'}</span>
+            <span>{isSimulating ? '[ PAUSE TELEMETRY ]' : '[ RESUME TELEMETRY ]'}</span>
           </button>
 
           <button
             onClick={handleReset}
-            className="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300"
+            className="p-2.5 rounded-xl bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-300"
             title="Reset Simulation"
           >
             <RotateCcw className="w-4 h-4" />
           </button>
         </div>
       </div>
+
+      {/* 3D Interactive Digital Twin Viewport */}
+      <Robotic3DViewport graspState={robot.graspState} />
 
       {/* Main Simulation Control Cards Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

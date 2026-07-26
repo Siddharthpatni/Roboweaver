@@ -78,44 +78,44 @@ export const KnowledgeNexusView: React.FC<KnowledgeNexusViewProps> = ({ packages
   };
 
   return (
-    <div className="flex flex-col h-full w-full bg-[#090d16] text-slate-100 overflow-y-auto p-6 space-y-8">
-      {/* Hero Banner: Knowledge Nexus */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-3xl bg-gradient-to-r from-slate-900 via-slate-900/90 to-slate-950 border border-slate-800 shadow-2xl">
-        <div className="space-y-2 max-w-2xl">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold">
+    <div className="flex flex-col h-full w-full bg-robotic-grid text-slate-100 overflow-y-auto p-6 space-y-8 font-mono">
+      {/* Mecha Hero Banner: Knowledge Nexus */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl robotic-card bg-[#060b17] border border-emerald-500/40 shadow-2xl relative overflow-hidden">
+        <div className="space-y-2 max-w-2xl relative z-10">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-emerald-500/20 border border-emerald-500 text-emerald-400 text-xs font-bold uppercase tracking-widest">
             <Database className="w-3.5 h-3.5" />
-            <span>Robotics Knowledge Nexus • Universal Catalog</span>
+            <span>[ ROBOTICS KNOWLEDGE NEXUS // UNIVERSAL CATALOG ]</span>
           </div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-white">
-            RoboWeaver ROS 2 Ecosystem & Ontology Index
+          <h1 className="text-2xl font-black tracking-wider text-white uppercase font-mono">
+            ROBOWEAVER ROS 2 ECOSYSTEM & ONTOLOGY INDEX
           </h1>
-          <p className="text-sm text-slate-400 leading-relaxed">
+          <p className="text-xs text-emerald-400/80 leading-relaxed font-mono">
             Universal knowledge repository indexing your robotics packages, hardware drivers, topics, and ROS 2 dependencies. Build custom multi-robot pipelines from natural language prompts.
           </p>
         </div>
 
-        <div className="flex flex-col gap-2 shrink-0">
-          <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 text-right">
-            <div className="text-xs text-slate-400">Indexed Packages</div>
-            <div className="text-2xl font-mono font-extrabold text-emerald-400">
-              {packages.length} Packages
+        <div className="flex flex-col gap-2 shrink-0 relative z-10">
+          <div className="p-4 rounded-xl bg-slate-950 border border-emerald-500/60 text-right shadow-lg shadow-emerald-500/10">
+            <div className="text-[10px] text-slate-400 uppercase tracking-widest">[ INDEXED PKG COUNT ]</div>
+            <div className="text-3xl font-mono font-black text-emerald-400">
+              {packages.length} PKGS
             </div>
-            <div className="text-[11px] text-slate-500">ROS 2 Humble / Jazzy</div>
+            <div className="text-[10px] text-emerald-400/80 uppercase font-bold">ROS 2 HUMBLE // JAZZY</div>
           </div>
         </div>
       </div>
 
       {/* AI Architecture Recommender Bar */}
-      <div className="p-6 rounded-3xl bg-slate-900/80 border border-slate-800/80 shadow-xl space-y-4">
+      <div className="p-6 rounded-xl robotic-card bg-[#060b17] border border-emerald-500/40 shadow-xl space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-emerald-400" />
-            <h3 className="text-sm font-bold text-slate-100">
-              RoboWeaver AI Pipeline Recommender
+            <Sparkles className="w-5 h-5 text-emerald-400 animate-pulse" />
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+              [ ROBOWEAVER AI PIPELINE RECOMMENDER // RAG ARCHITECTURE ENGINE ]
             </h3>
           </div>
-          <span className="text-xs text-slate-400">
-            Type a robotics task to generate an automated ROS 2 architecture
+          <span className="text-xs text-emerald-400/80 font-mono">
+            // NATURAL LANGUAGE TO ROS2 GRAPH SYNTHESIS //
           </span>
         </div>
 
@@ -125,14 +125,14 @@ export const KnowledgeNexusView: React.FC<KnowledgeNexusViewProps> = ({ packages
             value={recommenderPrompt}
             onChange={(e) => setRecommenderPrompt(e.target.value)}
             placeholder='e.g., "Connect ShopMate-R fleet with Inspire Hand RS485 dexterous grasping and TurtleBot4 card scanner"'
-            className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+            className="flex-1 bg-slate-950 border border-emerald-500/50 rounded-lg px-4 py-3 text-xs text-emerald-300 placeholder-slate-500 font-mono focus:outline-none focus:border-emerald-400 shadow-inner"
           />
           <button
             onClick={handleGenerateArchitecture}
-            className="px-6 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 shrink-0 transition-all"
+            className="px-6 py-3 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs uppercase tracking-wider shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 shrink-0 transition-all"
           >
             <Bot className="w-4 h-4" />
-            <span>Generate Architecture</span>
+            <span>[ GENERATE ARCHITECTURE ]</span>
           </button>
         </div>
 
