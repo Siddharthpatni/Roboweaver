@@ -39,6 +39,10 @@ class SystemPromptParser:
         "shadow_hand": "shadow_hand",
         "shadow": "shadow_hand",
         "robotiq": "robotiq_hand",
+        "inspire_hand": "inspire_hand_rh56f1_e2",
+        "inspire": "inspire_hand_rh56f1_e2",
+        "rh56f1": "inspire_hand_rh56f1_e2",
+        "rh56f1_e2": "inspire_hand_rh56f1_e2",
         "franka": "franka_panda",
         "panda": "franka_panda",
         "ur5e": "ur5e",
@@ -54,6 +58,8 @@ class SystemPromptParser:
         (r"(?:guide|navigat|mov|transport|driv|lead)\w*\s+(?:to|customer|item|shelf|aisle|patient|vial|station|storage)[^,\.;]*", "temi", "MOBILE_NAV"),
         # Interaction / Handover / Greet / Answer / Assist
         (r"(?:answer|greet|hand\s*over|assist|interact|receiv|customer|staff|doctor|product\s*question)[^,\.;]*", "pepper", "HANDOVER_INTERACT"),
+        # Dexterous grasping / manipulation with hand
+        (r"(?:dexterous|pinch|fist|cylindrical|inspire|rh56f1|finger|precision\s*grip)[^,\.;]*", "inspire_hand_rh56f1_e2", "PICK_AND_PLACE"),
         # Restock / Pick / Place / Grasp / Assemble
         (r"(?:restock|pick|place|grasp|shelf|top\s*shelf|item|box|assembly|vial)[^,\.;]*", "franka_panda", "PICK_AND_PLACE"),
         # Tighten bolt

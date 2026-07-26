@@ -280,6 +280,36 @@ def get_robotiq_hand_spec() -> RobotSpec:
     )
 
 
+def get_inspire_hand_spec() -> RobotSpec:
+    """Inspire Robots Dexterous Hand RH56F1-E2 (RS485 Serial Protocol)."""
+    return RobotSpec(
+        id="inspire_hand_rh56f1_e2",
+        name="Inspire Hand RH56F1-E2",
+        manufacturer="Inspire Robots",
+        dof=6,
+        payload_capacity_kg=5.0,
+        max_reach_m=0.18,
+        base_height_m=0.06,
+        joints=[
+            JointSpec("thumb_flex", "revolute", (0, 1, 0), 0.0, 1000.0, 50.0, 10.0),
+            JointSpec("thumb_abduct", "revolute", (0, 0, 1), 0.0, 1000.0, 50.0, 10.0),
+            JointSpec("index_flex", "revolute", (0, 1, 0), 0.0, 1000.0, 50.0, 10.0),
+            JointSpec("middle_flex", "revolute", (0, 1, 0), 0.0, 1000.0, 50.0, 10.0),
+            JointSpec("ring_flex", "revolute", (0, 1, 0), 0.0, 1000.0, 50.0, 10.0),
+            JointSpec("pinky_flex", "revolute", (0, 1, 0), 0.0, 1000.0, 50.0, 10.0),
+        ],
+        links=[
+            LinkSpec("palm_base_link", 0.15, 2.0),
+            LinkSpec("thumb_link", 0.06, 0.5),
+            LinkSpec("index_link", 0.08, 0.4),
+            LinkSpec("middle_link", 0.08, 0.4),
+            LinkSpec("ring_link", 0.07, 0.4),
+            LinkSpec("pinky_link", 0.06, 0.3),
+        ],
+        description="6-DOF / 6-Actuator commercial anthropomorphic dexterous hand over RS485 (115200 baud)",
+    )
+
+
 def get_generic_6dof_spec() -> RobotSpec:
     """Generic 6-DOF Robot Arm Profile."""
     return get_ur5e_spec()
@@ -297,6 +327,10 @@ ROBOT_REGISTRY: dict[str, RobotSpec] = {
     "pepper": get_pepper_robot_spec(),
     "shadow_hand": get_shadow_hand_spec(),
     "robotiq_hand": get_robotiq_hand_spec(),
+    "inspire_hand_rh56f1_e2": get_inspire_hand_spec(),
+    "inspire_hand": get_inspire_hand_spec(),
+    "rh56f1": get_inspire_hand_spec(),
+    "rh56f1_e2": get_inspire_hand_spec(),
     "generic_6dof": get_generic_6dof_spec(),
 }
 

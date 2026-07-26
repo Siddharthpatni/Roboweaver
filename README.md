@@ -178,11 +178,30 @@ print(f"Generated Multi-Robot ROS 2 package at: {package_path}")
 # ├── robot_agent_node.py
 # ├── config/
 # │   └── inter_robot_dds.yaml   (/workcell/sync_token QoS configuration)
-# └── launch/
-#     └── workcell_orchestration.launch.py  (launches /temi, /pepper, /shadow_hand, /franka_panda)
+### 4. Inspire Robots Dexterous Hand RH56F1-E2 (RS485) Driver & ROS 2 Pipeline
+
+RoboWeaver includes built-in driver and ROS 2 support for the commercial **6-DOF Inspire Hand RH56F1-E2** over RS485 Modbus RTU (`/dev/ttyUSB0` @ 115200 baud):
+
+```python
+from roboweaver.hardware import InspireHandRS485Driver
+from roboweaver.codegen import generate_inspire_hand_ros2_package
+
+# 1. Direct Python RS485 Control & Gesture Library
+driver = InspireHandRS485Driver(port="/dev/ttyUSB0", baudrate=115200)
+driver.connect()
+
+# Execute dexterous grasping postures
+driver.set_gesture("fist")
+driver.set_gesture("pinch")
+driver.set_gesture("precision_grip")
+driver.set_gesture("open")
+
+# 2. Export Standalone ROS 2 Package with Action Server & ros2_control
+pkg_path = generate_inspire_hand_ros2_package(output_dir="./ros2_ws/src")
+print(f"Generated Inspire Hand ROS 2 package at: {pkg_path}")
 ```
 
-### 4. Compiling an Individual Skill for Any Robot
+### 5. Compiling an Individual Skill for Any Robot
 
 ```python
 from roboweaver.compiler import SkillCompiler

@@ -12,6 +12,7 @@ from roboweaver.hardware.registry_robots import (
 )
 from roboweaver.hardware.kinematics_ndof import forward_kinematics_ndof, NDOFIKSolver
 from roboweaver.hardware.safety_guard import WorkspaceSafetyGuard, SafetyCheckResult
+from roboweaver.hardware.inspire_hand_rs485 import InspireHandRS485Driver, InspireHandState
 
 __all__ = [
     "RobotSpec",
@@ -28,4 +29,6 @@ __all__ = [
     "NDOFIKSolver",
     "WorkspaceSafetyGuard",
     "SafetyCheckResult",
+    "InspireHandRS485Driver",
+    "InspireHandState",
 ]
