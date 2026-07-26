@@ -170,15 +170,33 @@ def cmd_dashboard(args) -> int:
     return 0
 
 
+def cmd_build_system(args) -> int:
+    from roboweaver.fleet.prompt_builder import PromptToWorkcellBuilder
+    prompt = args.prompt
+    output_dir = getattr(args, "output", None)
+    PromptToWorkcellBuilder.build_from_prompt(prompt, output_dir=output_dir, verbose=True)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="roboweaver",
-        description="RoboWeaver Universal Developer Console — Robotics Skill Operating System",
+        description="RoboWeaver — Robotics Skill Operating System CLI",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    subparsers = parser.add_subparsers(dest="command", help="Sub-commands")
+    subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
     # robots
     subparsers.add_parser("robots", help="List all registered industrial robot hardware profiles")
+
+    # build / prompt (Prompt-to-System Multi-Robot Builder)
+    p_build = subparsers.add_parser("build", help="Build complete multi-robot workcell system from natural language prompt")
+    p_build.add_argument("prompt", type=str, help="System prompt (e.g. 'Build ShopMate-R connecting Temi, Pepper, and Franka')")
+    p_build.add_argument("--output", type=str, default=None, help="Output directory path for ROS 2 package")
+
+    p_prompt = subparsers.add_parser("prompt", help="Alias for 'build'")
+    p_prompt.add_argument("prompt", type=str, help="System prompt")
+    p_prompt.add_argument("--output", type=str, default=None, help="Output directory path for ROS 2 package")
 
     # compile
     p_compile = subparsers.add_parser("compile", help="Compile natural language instruction into a skill")
@@ -218,6 +236,8 @@ def main() -> int:
 
     if args.command == "robots":
         return cmd_robots(args)
+    elif args.command in ("build", "prompt"):
+        return cmd_build_system(args)
     elif args.command == "compile":
         return cmd_compile(args)
     elif args.command == "retarget":

@@ -164,6 +164,122 @@ def get_abb_irb120_spec() -> RobotSpec:
     )
 
 
+def get_temi_robot_spec() -> RobotSpec:
+    """Temi Autonomous Mobile Service Robot (AMR with Display & Sensor Array)."""
+    return RobotSpec(
+        id="temi",
+        name="Temi Service Robot",
+        manufacturer="Temi Robotics",
+        dof=3,
+        payload_capacity_kg=10.0,
+        max_reach_m=1.00,
+        base_height_m=0.10,
+        joints=[
+            JointSpec("base_x", "prismatic", (1, 0, 0), -100.0, 100.0, 1.2, 50.0),
+            JointSpec("base_y", "prismatic", (0, 1, 0), -100.0, 100.0, 1.2, 50.0),
+            JointSpec("base_theta", "revolute", (0, 0, 1), -math.pi, math.pi, 2.5, 30.0),
+        ],
+        links=[
+            LinkSpec("chassis_link", 0.30, 25.0),
+            LinkSpec("torso_link", 0.70, 8.0),
+            LinkSpec("screen_link", 0.20, 2.0),
+        ],
+        description="Autonomous mobile service robot with LiDAR SLAM, voice interface, and payload tray",
+    )
+
+
+def get_pepper_robot_spec() -> RobotSpec:
+    """SoftBank Pepper Humanoid Service Robot."""
+    return RobotSpec(
+        id="pepper",
+        name="SoftBank Pepper Humanoid",
+        manufacturer="SoftBank Robotics",
+        dof=17,
+        payload_capacity_kg=2.5,
+        max_reach_m=0.60,
+        base_height_m=0.12,
+        joints=[
+            # Base & Torso
+            JointSpec("wheel_fl", "continuous", (0, 1, 0), -math.pi, math.pi, 2.0, 20.0),
+            JointSpec("wheel_fr", "continuous", (0, 1, 0), -math.pi, math.pi, 2.0, 20.0),
+            JointSpec("wheel_b", "continuous", (0, 1, 0), -math.pi, math.pi, 2.0, 20.0),
+            JointSpec("hip_pitch", "revolute", (0, 1, 0), -0.5, 0.5, 1.0, 30.0),
+            # Right Arm (6 DOF)
+            JointSpec("r_shoulder_pitch", "revolute", (0, 1, 0), -2.08, 2.08, 2.0, 15.0),
+            JointSpec("r_shoulder_roll", "revolute", (1, 0, 0), -1.56, 0.01, 2.0, 15.0),
+            JointSpec("r_elbow_yaw", "revolute", (0, 0, 1), -2.08, 2.08, 2.0, 15.0),
+            JointSpec("r_elbow_roll", "revolute", (1, 0, 0), 0.01, 1.56, 2.0, 15.0),
+            JointSpec("r_wrist_yaw", "revolute", (0, 0, 1), -1.82, 1.82, 3.0, 5.0),
+            JointSpec("r_hand", "revolute", (0, 0, 1), 0.0, 1.0, 3.0, 5.0),
+            # Left Arm (6 DOF)
+            JointSpec("l_shoulder_pitch", "revolute", (0, 1, 0), -2.08, 2.08, 2.0, 15.0),
+            JointSpec("l_shoulder_roll", "revolute", (1, 0, 0), -0.01, 1.56, 2.0, 15.0),
+            JointSpec("l_elbow_yaw", "revolute", (0, 0, 1), -2.08, 2.08, 2.0, 15.0),
+            JointSpec("l_elbow_roll", "revolute", (1, 0, 0), -1.56, -0.01, 2.0, 15.0),
+            JointSpec("l_wrist_yaw", "revolute", (0, 0, 1), -1.82, 1.82, 3.0, 5.0),
+            JointSpec("l_hand", "revolute", (0, 0, 1), 0.0, 1.0, 3.0, 5.0),
+            # Head
+            JointSpec("head_yaw", "revolute", (0, 0, 1), -2.08, 2.08, 2.0, 5.0),
+        ],
+        links=[
+            LinkSpec("base_link", 0.35, 18.0),
+            LinkSpec("torso_link", 0.65, 8.0),
+            LinkSpec("r_arm_link", 0.40, 2.2),
+            LinkSpec("l_arm_link", 0.40, 2.2),
+            LinkSpec("head_link", 0.25, 1.5),
+        ],
+        description="Humanoid mobile service robot with dual arms, social interaction display, and tactile sensors",
+    )
+
+
+def get_shadow_hand_spec() -> RobotSpec:
+    """Shadow Dexterous Hand (20-DOF Multi-Finger Humanoid Hand)."""
+    return RobotSpec(
+        id="shadow_hand",
+        name="Shadow Dexterous Hand",
+        manufacturer="Shadow Robot Company",
+        dof=20,
+        payload_capacity_kg=4.0,
+        max_reach_m=0.25,
+        base_height_m=0.05,
+        joints=[
+            JointSpec(f"finger_joint_{i}", "revolute", (0, 0, 1), -0.35, 1.57, 4.0, 2.0)
+            for i in range(20)
+        ],
+        links=[
+            LinkSpec(f"finger_link_{i}", 0.04, 0.08)
+            for i in range(20)
+        ],
+        description="20-DOF anthropomorphic dexterous robotic hand with tactile fingertips",
+    )
+
+
+def get_robotiq_hand_spec() -> RobotSpec:
+    """Robotiq 3-Finger Adaptive Robot Gripper (4-DOF)."""
+    return RobotSpec(
+        id="robotiq_hand",
+        name="Robotiq 3-Finger Adaptive Hand",
+        manufacturer="Robotiq",
+        dof=4,
+        payload_capacity_kg=10.0,
+        max_reach_m=0.20,
+        base_height_m=0.08,
+        joints=[
+            JointSpec("finger_1_joint", "revolute", (0, 1, 0), 0.0, 1.22, 2.0, 5.0),
+            JointSpec("finger_2_joint", "revolute", (0, 1, 0), 0.0, 1.22, 2.0, 5.0),
+            JointSpec("finger_3_joint", "revolute", (0, 1, 0), 0.0, 1.22, 2.0, 5.0),
+            JointSpec("palm_spread_joint", "revolute", (0, 0, 1), -0.28, 0.28, 1.0, 5.0),
+        ],
+        links=[
+            LinkSpec("palm_link", 0.08, 0.9),
+            LinkSpec("f1_link", 0.07, 0.2),
+            LinkSpec("f2_link", 0.07, 0.2),
+            LinkSpec("f3_link", 0.07, 0.2),
+        ],
+        description="4-DOF adaptive dexterous robot hand for versatile grasping of complex geometries",
+    )
+
+
 def get_generic_6dof_spec() -> RobotSpec:
     """Generic 6-DOF Robot Arm Profile."""
     return get_ur5e_spec()
@@ -173,10 +289,14 @@ ROBOT_REGISTRY: dict[str, RobotSpec] = {
     "franka_panda": get_franka_panda_spec(),
     "panda": get_franka_panda_spec(),
     "ur5e": get_ur5e_spec(),
-    "ur10e": get_ur5e_spec(),  # scaled variant
+    "ur10e": get_ur5e_spec(),
     "kuka_iiwa": get_kuka_iiwa_spec(),
     "kinova_gen3": get_kinova_gen3_spec(),
     "abb_irb120": get_abb_irb120_spec(),
+    "temi": get_temi_robot_spec(),
+    "pepper": get_pepper_robot_spec(),
+    "shadow_hand": get_shadow_hand_spec(),
+    "robotiq_hand": get_robotiq_hand_spec(),
     "generic_6dof": get_generic_6dof_spec(),
 }
 
@@ -185,3 +305,4 @@ def get_robot_spec(robot_id: str) -> RobotSpec:
     """Retrieve RobotSpec by robot_id (defaults to Franka Panda)."""
     key = robot_id.lower().strip()
     return ROBOT_REGISTRY.get(key, get_franka_panda_spec())
+

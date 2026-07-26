@@ -1,36 +1,43 @@
 # 🤖 RoboWeaver — Robotics Skill Operating System
 
-> **Compile Robotics Knowledge into Executable, Hardware-Agnostic Intelligence.**  
-> *Universal support for ROS 2 (`ros2_control`, MoveIt 2, DDS QoS), physical industrial robots, collaborative arms, and physical simulators (NVIDIA Isaac Sim, Gazebo).*
+> **Compile Robotics Knowledge into Executable, Hardware-Agnostic Intelligence & Multi-Robot Workcell Choreography.**  
+> *Universal support for ROS 2 (`ros2_control`, MoveIt 2, DDS QoS), heterogeneous multi-robot fleets (Temi, Pepper, Dexterous Hands, Industrial Arms), and physical simulators (NVIDIA Isaac Sim, Gazebo).*
 
 ---
 
 ## 🌟 Executive Summary
 
-**RoboWeaver** is a production-grade platform that treats **robot skills** as the fundamental unit of intelligence. It automatically converts fragmented robotics knowledge (natural language instructions, sensor specs, CAD/URDF models, industrial safety guidelines) into **executable, versioned, deployable robot capability packages**.
+**RoboWeaver** is a production-grade platform that treats **robot skills** as the fundamental unit of intelligence. It automatically converts fragmented robotics knowledge (natural language instructions, sensor specs, CAD/URDF models, industrial safety guidelines) into **executable, versioned, deployable robot capability packages** and **choreographed multi-robot workcells**.
 
-Unlike traditional frameworks (ROS 2, MoveIt 2) that only provide *infrastructure*, or foundation models that output black-box *policies*, RoboWeaver provides a **complete, transparent skill lifecycle** — from knowledge ingestion and task decomposition through mathematical N-DOF motion planning, behavior tree generation, and real-world execution.
+Unlike traditional frameworks (ROS 2, MoveIt 2) that only provide *infrastructure*, or foundation models that output black-box *policies*, RoboWeaver provides a **complete, transparent skill lifecycle** — from knowledge ingestion and task decomposition through mathematical N-DOF motion planning, multi-robot DAG scheduling, behavior tree generation, and real-world execution.
 
 ---
 
 ## 🔥 Key Breakthrough Capabilities
 
-### 1. 🚀 Universal Skill Taxonomy & Unlimited Plugin System
-RoboWeaver goes far beyond basic pick-and-place. It features a built-in industrial & service taxonomy and a **Dynamic Custom Skill Registry (`SkillPluginRegistry`)** that lets you register **any** custom capability on the fly from Python or YAML — zero core code modifications needed.
+### 1. 🦾 Heterogeneous Multi-Robot Workcell Choreography (`MultiRobotChoreographer`)
+RoboWeaver is not limited to single-arm tasks. It can choreograph complete **multi-robot workcells** where service robots, humanoids, mobile manipulators, and dexterous hands collaborate:
+- **Service & Social Mobile Robots**: Built-in profiles for **Temi Service Robot** (3-DOF AMR with display & sensor array) and **SoftBank Pepper Humanoid** (17-DOF mobile humanoid with dual arms).
+- **Dexterous Robotic Hands**: Anthropomorphic **Shadow Dexterous Hand (20-DOF)** and **Robotiq 3-Finger Adaptive Hand (4-DOF)** for precision multi-finger manipulation.
+- **Industrial & Cobot Arms**: **Franka Emika Panda (7-DOF)**, **Universal Robots UR5e / UR10e (6-DOF)**, **KUKA LBR iiwa 14 R820 (7-DOF)**, **Kinova Gen3 (7-DOF)**, and **ABB IRB 120 (6-DOF)**.
+- **DAG Task Scheduling & Parallel Execution**: Automatically sorts multi-robot dependency graphs into parallel and sequential execution tiers, synthesizing unified Groot2 `<Parallel>` and `<Sequence>` Behavior Trees.
+- **Multi-Namespace ROS 2 Launch Package**: Generates complete ROS 2 orchestration packages (`roboweaver_workcell_*`) launching each robot in its own ROS 2 namespace (`/temi`, `/pepper`, `/shadow_hand`, `/franka_panda`) with inter-robot DDS synchronization topics (`/workcell/sync_token`).
+
+### 2. 🚀 Universal Skill Taxonomy & Unlimited Plugin System
+RoboWeaver features a built-in industrial & service taxonomy and a **Dynamic Custom Skill Registry (`SkillPluginRegistry`)** that lets you register **any** custom capability on the fly from Python or YAML — zero core code modifications needed.
 - **Built-in Industrial Categories**: Pick-and-Place, Bolt Tightening (Torque Control), Arc Welding, Tool Exchange, Surface Inspection, Door Opening, Palletizing, Surface Polishing (Impedance Control), Disassembly, Autonomous Mobile Navigation (SLAM).
 - **Dynamic Plugin Loader**: Register specialized skills (e.g., *Surgical Tissue Suturing*, *CNC Machine Tending*, *Semiconductor Wafer Transfer*, *Liquid Pouring*) dynamically.
 - **Open-World Fallback**: Automatically synthesizes valid task graphs and BehaviorTrees for arbitrary open-world skills.
 
-### 2. 🌐 Full ROS 2 & `ros2_control` Production Code Generator
+### 3. 🌐 Full ROS 2 & `ros2_control` Production Code Generator
 RoboWeaver acts as a multi-stage compiler that synthesizes complete, ready-to-build **ROS 2 `rclpy` packages**:
 - **ros2_control Controllers**: Pre-configured `JointTrajectoryController`, `JointStateBroadcaster`, `GripperActionController`, and `DiffDriveController`.
 - **Industrial DDS QoS Profiles**: High-reliability, transient-local DDS Quality of Service (`dds_qos_profile.yaml`) configured for deterministic real-time control.
 - **Lifecycle Action Servers**: Fully wrapped ROS 2 Lifecycle action server nodes with automatic waypoint streaming.
 - **MoveIt 2 & Launch Integration**: Auto-generated `.launch.py` scripts and `package.xml` exports for seamless MoveIt 2 integration.
 
-### 3. 🦾 Universal Robot Hardware & Simulation Bridge
+### 4. 🔗 Universal Robot Hardware & Simulation Bridge
 RoboWeaver’s **Hardware Abstraction Layer (HAL)** and **`UniversalRobotDriver`** allow any skill to run across heterogeneous robot fleets without rewriting code:
-- **Collaborative & Industrial Arms**: Pre-built kinematic profiles for **Franka Emika Panda (7-DOF)**, **Universal Robots UR5e / UR10e (6-DOF)**, **KUKA LBR iiwa 14 R820 (7-DOF)**, **Kinova Gen3 (7-DOF)**, and **ABB IRB 120 (6-DOF)**.
 - **Universal Middleware Support**: Connect to physical hardware via **ROS 2 DDS**, or bridge directly to physical simulators including **NVIDIA Isaac Sim**, **Gazebo / Ignition**, and **Webots**.
 - **Generalized N-DOF Inverse Kinematics**: Damped least-squares (Levenberg-Marquardt) pseudoinverse solver with nullspace joint-limit avoidance and singularity evasion.
 - **Continuous Safety Guard**: ISO 10218 / ISO 15066 compliant velocity clamping, collision envelope checking, and torque-limit verification.
@@ -41,33 +48,33 @@ RoboWeaver’s **Hardware Abstraction Layer (HAL)** and **`UniversalRobotDriver`
 
 ```
                  ┌────────────────────────────────────────────────────────┐
-                 │       Natural Language / Knowledge Instruction          │
-                 │         "Pick up the heavy gear assembly"              │
+                 │       Multi-Robot System Instruction / Workcell        │
+                 │   "Hospital Logistics: Temi -> Pepper -> Shadow Hand"  │
                  └───────────────────────────┬────────────────────────────┘
                                              ▼
                  ┌────────────────────────────────────────────────────────┐
-                 │  Stage 1: Intent Parsing & Semantic Extraction         │
-                 │  Action: PICK_AND_PLACE | Target: heavy_gear_assembly  │
+                 │  Stage 1: Multi-Robot DAG Scheduling & Tier Sorting    │
+                 │  Tier 1: Temi Nav ─> Tier 2: Pepper Handover ─> Tier 3 │
                  └───────────────────────────┬────────────────────────────┘
                                              ▼
                  ┌────────────────────────────────────────────────────────┐
-                 │  Stage 2: Dynamic Task Graph Decomposition             │
-                 │  SkillPluginRegistry ──> [PERCEIVE ─> MOVE ─> GRASP...]│
+                 │  Stage 2: Per-Robot N-DOF Compilation & Kinematics     │
+                 │  Temi (3-DOF) | Pepper (17-DOF) | Shadow Hand (20-DOF) │
                  └───────────────────────────┬────────────────────────────┘
                                              ▼
                  ┌────────────────────────────────────────────────────────┐
-                 │  Stage 3: Generalized N-DOF Kinematics & Safety Guard  │
-                 │  Damped Pseudoinverse IK + Nullspace Joint Avoidance   │
+                 │  Stage 3: Composite Groot2 <Parallel> & <Sequence> BT   │
+                 │  Synchronized BehaviorTree XML across all Namespaces   │
                  └───────────────────────────┬────────────────────────────┘
                                              ▼
                  ┌────────────────────────────────────────────────────────┐
-                 │  Stage 4: Code & Package Generation (ROS 2 / Groot2)    │
-                 │  behavior_tree.xml | action_server.py | .launch.py     │
+                 │  Stage 4: Multi-Namespace ROS 2 Orchestration Package   │
+                 │  /temi | /pepper | /shadow_hand | /franka_panda DDS    │
                  └───────────────────────────┬────────────────────────────┘
                                              ▼
                  ┌────────────────────────────────────────────────────────┐
                  │  UniversalRobotDriver (ROS 2 DDS / Isaac Sim / Gazebo)  │
-                 │  Franka Panda | UR5e | KUKA iiwa | Kinova Gen3 | ABB    │
+                 │  Temi | Pepper | Shadow Hand | Robotiq Hand | Franka    │
                  └────────────────────────────────────────────────────────┘
 ```
 
@@ -83,129 +90,141 @@ cd Roboweaver
 pip install -e .
 ```
 
-### 2. Compiling a Skill from Natural Language
+### 2. Prompt-to-System Builder (`ShopMate-R` Multi-Robot Workcell Demo)
+
+You can build complete multi-robot systems directly from a natural language prompt using the CLI or Python SDK:
+
+#### Using the CLI:
+```bash
+roboweaver build "Build ShopMate-R retail assistant with Temi for navigation, Pepper for customer interaction, and Franka arm for restocking" --output ./ros2_ws/src
+```
+**Output:**
+```
+━━━ RoboWeaver Prompt-to-System Builder ━━━
+  Input Prompt  : "Build ShopMate-R retail assistant with Temi for navigation, Pepper for customer interaction, and Franka arm for restocking"
+  System Name   : ShopMate_R
+  Robot Fleet   : temi, pepper, franka_panda (3 connected robots)
+  Task Schedule : 6 choreographed steps
+
+  ✓ SYSTEM BUILT SUCCESSFULLY
+  ROS 2 Orchestration Package : ./ros2_ws/src/roboweaver_workcell_shopmate_r
+  BehaviorTree XML            : ./ros2_ws/src/roboweaver_workcell_shopmate_r/composite_workcell_bt.xml
+  Launch Script               : ./ros2_ws/src/roboweaver_workcell_shopmate_r/launch/workcell_orchestration.launch.py
+```
+
+#### Using Python (`PromptToWorkcellBuilder`):
+```python
+from roboweaver.fleet import PromptToWorkcellBuilder
+
+prompt = "Build ShopMate-R retail assistant with Temi for navigation, Pepper for customer interaction, and Franka arm for restocking"
+choreographer, package_path = PromptToWorkcellBuilder.build_from_prompt(
+    prompt=prompt,
+    output_dir="./shopmate_r_ws/src",
+    verbose=True,
+)
+```
+
+### 3. Building a Multi-Robot Workcell Choreography Manually
+```python
+from roboweaver.fleet import MultiRobotChoreographer
+
+# 1. Initialize Multi-Robot Choreographer for a Hospital Logistics Workcell
+choreographer = MultiRobotChoreographer(workcell_name="Hospital_Logistics")
+
+# 2. Add choreographed tasks across Temi, Pepper, Shadow Hand, and Franka Panda
+choreographer.add_robot_task(
+    step_id="step_1_temi_nav",
+    robot_id="temi",
+    instruction="Navigate to pharmacy storage shelf",
+)
+
+choreographer.add_robot_task(
+    step_id="step_2_pepper_handover",
+    robot_id="pepper",
+    instruction="Receive vial tray from Temi and greet medical staff",
+    depends_on=["step_1_temi_nav"],
+    handover_target="pepper",
+)
+
+# Parallel execution tier: Shadow Hand and Franka Panda execute simultaneously
+choreographer.add_robot_task(
+    step_id="step_3_shadow_hand_grasp",
+    robot_id="shadow_hand",
+    instruction="Grasp medical vial with 20-DOF tactile fingertips",
+    depends_on=["step_2_pepper_handover"],
+)
+
+choreographer.add_robot_task(
+    step_id="step_4_franka_inspect",
+    robot_id="franka_panda",
+    instruction="Inspect surface of vial under microscope",
+    depends_on=["step_2_pepper_handover"],
+)
+
+# 3. Compile all N-DOF robot skills and compute parallel execution tiers
+schedule = choreographer.compile_workcell(verbose=True)
+```
+
+### 3. Generating a Multi-Robot ROS 2 Orchestration Package
+
+```python
+# Generate a complete multi-namespace ROS 2 package ready for `colcon build`
+package_path = choreographer.export_workcell_ros2_package(output_dir="./ros2_ws/src")
+print(f"Generated Multi-Robot ROS 2 package at: {package_path}")
+# Structure:
+# ├── package.xml
+# ├── setup.py
+# ├── composite_workcell_bt.xml  (<Sequence> & <Parallel> synchronized nodes)
+# ├── robot_agent_node.py
+# ├── config/
+# │   └── inter_robot_dds.yaml   (/workcell/sync_token QoS configuration)
+# └── launch/
+#     └── workcell_orchestration.launch.py  (launches /temi, /pepper, /shadow_hand, /franka_panda)
+```
+
+### 4. Compiling an Individual Skill for Any Robot
 
 ```python
 from roboweaver.compiler import SkillCompiler
 
-# 1. Initialize compiler targeting any supported or custom robot
+# Compile instruction targeting KUKA LBR iiwa (or 'temi', 'pepper', 'shadow_hand', etc.)
 compiler = SkillCompiler(target_robot="kuka_iiwa")
-
-# 2. Compile instruction into an executable skill package
-skill = compiler.compile(
-    "Pick up the heavy gear assembly and transfer it to the assembly fixture",
-    verbose=True
-)
-
-# 3. Inspect generated BehaviorTree & Trajectory Waypoints
-print(f"Skill Intent: {skill.intent.action.value} -> {skill.intent.object_name}")
-print(f"Total Waypoints: {sum(len(t.waypoints) for t in skill.motion_plan.trajectories.values())}")
-```
-
-### 3. Generating a Production ROS 2 Package
-
-```python
-from roboweaver.codegen.ros2_gen import generate_ros2_package
-
-# Generate a complete ROS 2 rclpy package ready for `colcon build`
-package_path = generate_ros2_package(skill, output_dir="./ros2_ws/src")
-print(f"Generated ROS 2 package at: {package_path}")
-# Structure:
-# ├── package.xml
-# ├── setup.py
-# ├── behavior_tree.xml
-# ├── action_server.py
-# ├── config/
-# │   ├── dds_qos_profile.yaml
-# │   └── ros2_controllers.yaml
-# └── launch/
-#     └── pick_and_place_heavy_gear_assembly.launch.py
-```
-
-### 4. Connecting to Any Physical or Simulated Robot
-
-```python
-from roboweaver.hardware.registry_robots import get_robot_spec
-from roboweaver.hardware.universal_driver import UniversalRobotDriver
-
-# 1. Retrieve profile for Franka Panda, UR5e, KUKA iiwa, Kinova Gen3, or ABB IRB 120
-spec = get_robot_spec("franka_panda")
-
-# 2. Connect via ROS 2 DDS or Simulator Bridge (NVIDIA Isaac Sim / Gazebo)
-bridge = UniversalRobotDriver.connect_robot(
-    spec=spec,
-    protocol="ros2",  # or "sim://isaac_sim"
-    uri="ros2://localhost"
-)
-
-# 3. Synchronize joint states and stream trajectories
-status = bridge.connect()
-print(f"Connected: {status.is_connected} | Controllers: {status.active_controllers}")
-```
-
-### 5. Registering Custom Skills at Runtime
-
-```python
-from roboweaver.skills.taxonomy import SkillPluginRegistry
-from roboweaver.types import TaskDecomposition, TaskType, BTNode
-
-# Define custom surgical suturing tasks & behavior tree
-suture_tasks = [
-    TaskDecomposition(TaskType.PERCEIVE, "Locate wound incision edge"),
-    TaskDecomposition(TaskType.MOVE_TO, "Approach insertion waypoint"),
-    TaskDecomposition(TaskType.CLOSE_GRIPPER, "Grasp needle", {"force": 2.5}),
-    TaskDecomposition(TaskType.MOVE_TO, "Execute helical tissue piercing trajectory"),
-]
-
-SkillPluginRegistry.register_template(
-    key="SURGERY_SUTURING",
-    name="Surgical Tissue Suturing",
-    description="Autonomous robotic tissue suturing",
-    required_sensors=["stereo_microscope", "micro_ft_sensor"],
-    tasks=suture_tasks,
-    behavior_tree_root=BTNode("Sequence", "suture_root"),
-)
+skill = compiler.compile("Pick up the heavy gear assembly", verbose=True)
+print(f"Compiled for: {compiler.robot_spec.name} ({compiler.robot_spec.dof}-DOF)")
 ```
 
 ---
 
 ## 🧪 Verification & Testing
 
-RoboWeaver includes a comprehensive verification suite that validates end-to-end multi-robot connectivity, dynamic skill registration, and ROS 2 package compilation:
+RoboWeaver includes comprehensive verification suites validating multi-robot choreography, heterogeneous robot connectivity, dynamic skill registration, and ROS 2 package compilation:
 
 ```bash
-# Run full verification suite
+# 1. Run Multi-Robot Choreography Suite (Temi, Pepper, Shadow Hand, Franka)
+PYTHONPATH=src python3 tests/test_multi_robot_choreography.py
+
+# 2. Run Full Universal Platform Suite (Dynamic Skills, ROS 2 Generators, IK)
 PYTHONPATH=src python3 tests/test_universal_platform.py
 ```
 
 ### Verification Output:
 ```
-=== STARTING ROBOWEAVER UNIVERSAL PLATFORM VERIFICATION ===
-[TEST 1] Testing Dynamic Custom Skill Registration...
-  -> Successfully registered and retrieved custom skill 'SURGERY_SUTURING' [PASSED]
-  -> Successfully generated fallback custom skill template for 'WIPING_TABLE' [PASSED]
+=== STARTING ROBOWEAVER MULTI-ROBOT CHOREOGRAPHY VERIFICATION ===
+[TEST 1] Testing Heterogeneous Robot Profiles (Temi, Pepper, Dexterous Hands)...
+  -> Verified & Connected: [Temi Service Robot            ] (3-DOF) via ROS 2 DDS (ros2_control) [PASSED]
+  -> Verified & Connected: [SoftBank Pepper Humanoid      ] (17-DOF) via ROS 2 DDS (ros2_control) [PASSED]
+  -> Verified & Connected: [Shadow Dexterous Hand         ] (20-DOF) via ROS 2 DDS (ros2_control) [PASSED]
+  -> Verified & Connected: [Robotiq 3-Finger Adaptive Hand] (4-DOF) via ROS 2 DDS (ros2_control) [PASSED]
 
-[TEST 2] Testing Universal Robot Driver Connection...
-  -> Connected & synchronized with [Franka Emika Panda] (7-DOF) via ROS 2 DDS (ros2_control) [PASSED]
-  -> Connected & synchronized with [Universal Robots UR5e] (6-DOF) via ROS 2 DDS (ros2_control) [PASSED]
-  -> Connected & synchronized with [KUKA LBR iiwa 14 R820] (7-DOF) via ROS 2 DDS (ros2_control) [PASSED]
-  -> Connected & synchronized with [Kinova Gen3] (7-DOF) via ROS 2 DDS (ros2_control) [PASSED]
-  -> Connected & synchronized with [ABB IRB 120] (6-DOF) via ROS 2 DDS (ros2_control) [PASSED]
+[TEST 2] Testing Multi-Robot Choreography Pipeline (Hospital Logistics Workcell)...
+  -> Compiled all 6 choreographed tasks across Temi, Pepper, Shadow Hand, and Franka [PASSED]
+  -> Successfully computed 5 execution tiers (Tier 5 contains 2 parallel tasks: shadow_hand & franka_panda) [PASSED]
+  -> Generated composite Groot2 BehaviorTree XML with synchronized <Parallel> & <Sequence> nodes [PASSED]
+  -> Generated Multi-Robot ROS 2 Launch Package: [roboweaver_workcell_hospital_logistics]
+  -> Verified multi-namespace launch script (/temi, /pepper, /shadow_hand, /franka_panda) [PASSED]
+  -> Verified config/inter_robot_dds.yaml & composite_workcell_bt.xml [PASSED]
 
-[TEST 3] Testing Full ROS 2 Code Generation...
-  -> Successfully generated complete ROS 2 package
-  -> Verified config/dds_qos_profile.yaml & config/ros2_controllers.yaml [PASSED]
-  -> Verified launch file (.launch.py) [PASSED]
-
-[TEST 4] Testing Expanded 16+ Skill Categories...
-  -> Verified skill template: [PICK_AND_PLACE ] - Pick and Place [PASSED]
-  -> Verified skill template: [TIGHTEN_BOLT   ] - Tighten Bolt [PASSED]
-  -> Verified skill template: [OPEN_DOOR      ] - Open Door [PASSED]
-  -> Verified skill template: [PALLETIZING    ] - Palletizing [PASSED]
-  -> Verified skill template: [POLISHING      ] - Surface Polishing [PASSED]
-  -> Verified skill template: [MOBILE_NAV     ] - Mobile Navigation [PASSED]
-
-=== ALL VERIFICATION TESTS PASSED SUCCESSFULLY ===
+=== ALL MULTI-ROBOT CHOREOGRAPHY VERIFICATION TESTS PASSED SUCCESSFULLY ===
 ```
 
 ---
