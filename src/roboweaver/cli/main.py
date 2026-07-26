@@ -199,7 +199,7 @@ def cmd_export(args) -> int:
 
 
 def cmd_dashboard(args) -> int:
-    from roboweaver.dashboard.server import start_dashboard
+    from roboweaver.dashboard.server import start_dashboard_server as start_dashboard
     start_dashboard(port=args.port)
     return 0
 
