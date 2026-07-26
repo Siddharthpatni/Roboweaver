@@ -126,6 +126,40 @@ def cmd_execute(args) -> int:
     return 0 if result.success else 1
 
 
+def cmd_sim(args) -> int:
+    robot_id = getattr(args, "robot", "inspire_hand").lower()
+    if robot_id in ("inspire_hand", "inspire", "rh56f1", "rh56f1_e2", "inspire_hand_rh56f1_e2"):
+        from roboweaver.simulation import InspireHandSimulator, generate_inspire_urdf
+
+        print("\n\033[1;36m━━━ RoboWeaver Real-Time Inspire Hand RH56F1-E2 (RS485) Simulation ━━━\033[0m")
+        sim = InspireHandSimulator()
+        object_key = getattr(args, "object", "medical_vial")
+        gestures_str = getattr(args, "gestures", "open,precision_grip,open")
+        gestures = [g.strip() for g in gestures_str.split(",") if g.strip()]
+
+        sim.run_manipulation_sequence(
+            object_key=object_key,
+            gesture_sequence=gestures,
+            step_delay=0.03,
+            print_frames=True,
+        )
+
+        if getattr(args, "export_urdf", None):
+            urdf_path = Path(args.export_urdf)
+            generate_inspire_urdf(urdf_path)
+            print(f"  ✓ Exported Inspire RH56F1-E2 URDF to: \033[1m{urdf_path}\033[0m")
+
+        if getattr(args, "export_html", None):
+            from roboweaver.simulation import export_html_simulation_report
+            html_path = Path(args.export_html)
+            export_html_simulation_report(html_path, object_key=object_key, gestures=gestures)
+            print(f"  ✓ Exported Interactive HTML Simulation Dashboard to: \033[1m{html_path}\033[0m\n")
+        return 0
+    else:
+        print(f"Simulation currently specialized for 'inspire_hand' (received '{robot_id}').")
+        return 1
+
+
 def cmd_list(args) -> int:
     repo = SkillRepository()
     pkgs = repo.list_packages()
@@ -158,15 +192,58 @@ def cmd_export(args) -> int:
     )
     pkg = SkillPackage(meta, skill)
     rwsp_file = pkg.export_archive(output_dir / f"{meta.id}.rwsp")
-
-    print(f"  \033[0;32m✓ Generated ROS2 Package: {ros2_pkg_dir}\033[0m")
-    print(f"  \033[0;32m✓ Exported Skill Package Archive: {rwsp_file}\033[0m\n")
+    print(f"\n\033[1;32m✓ Skill Successfully Exported\033[0m:")
+    print(f"  • ROS2 Package: \033[1m{ros2_pkg_dir}\033[0m")
+    print(f"  • Skill Package Archive: \033[1m{rwsp_file}\033[0m\n")
     return 0
 
 
 def cmd_dashboard(args) -> int:
-    from roboweaver.dashboard.server import start_dashboard_server
-    start_dashboard_server(port=args.port)
+    from roboweaver.dashboard.server import start_dashboard
+    start_dashboard(port=args.port)
+    return 0
+
+
+def cmd_nexus(args) -> int:
+    from roboweaver.knowledge.package_nexus import RoboticsPackageNexus
+    action = getattr(args, "action", "list")
+    query_str = getattr(args, "query", "")
+
+    if action == "list" or not query_str:
+        pkgs = RoboticsPackageNexus.get_all_packages()
+        print(f"\n\033[1;35m━━━ RoboWeaver Universal Robotics Package Nexus ({len(pkgs)} Cataloged Packages) ━━━\033[0m")
+        print("─" * 85)
+        for p in pkgs:
+            robots_str = ", ".join(p.compatible_robots[:3])
+            print(f"  • \033[1m{p.name:<38}\033[0m | ID: \033[36m{p.id:<18}\033[0m | Cat: {p.category.upper():<11} | Robots: {robots_str}")
+        print("─" * 85 + "\n")
+        return 0
+    elif action == "query":
+        results = RoboticsPackageNexus.query_by_keyword(query_str)
+        if not results:
+            results = RoboticsPackageNexus.query_by_category(query_str)
+        if not results:
+            results = RoboticsPackageNexus.query_by_robot(query_str)
+        print(f"\n\033[1;35m━━━ Knowledge Nexus Search Results for '{query_str}' ({len(results)} matches) ━━━\033[0m")
+        print("─" * 85)
+        for p in results:
+            print(f"  • \033[1m{p.name}\033[0m (\033[36m{p.id}\033[0m) — [{p.category.upper()}]")
+            print(f"    Description  : {p.description}")
+            print(f"    ROS 2 Topics : {', '.join(p.default_topics) or 'None'}")
+            print(f"    Dependencies : {', '.join(p.ros2_dependencies)}")
+            print("─" * 85)
+        print()
+        return 0
+    elif action == "recommend":
+        rec = RoboticsPackageNexus.recommend_stack_for_prompt(query_str)
+        print(f"\n\033[1;35m━━━ Knowledge Nexus Architecture Recommendation ━━━\033[0m")
+        print(f"  Input Prompt         : \"{query_str}\"")
+        print(f"  Matched Robot Models : {', '.join(rec['matched_robots'])}")
+        print(f"  Recommended Packages : \033[1;32m{', '.join(rec['recommended_packages'])}\033[0m")
+        print(f"  ROS 2 Topics Active  : {', '.join(rec['ros2_topics'])}")
+        print(f"  ROS 2 Actions Active : {', '.join(rec['ros2_actions'])}")
+        print(f"  package.xml Depends  : {', '.join(rec['package_xml_dependencies'])}\n")
+        return 0
     return 0
 
 
@@ -180,23 +257,30 @@ def cmd_build_system(args) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        prog="roboweaver",
-        description="RoboWeaver — Robotics Skill Operating System CLI",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="RoboWeaver: Compile Robotics Knowledge into Executable Intelligence"
     )
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
     # robots
-    subparsers.add_parser("robots", help="List all registered industrial robot hardware profiles")
+    subparsers.add_parser("robots", help="List supported robot profiles in registry")
+
+    # nexus (Universal Robotics Knowledge & Package Nexus)
+    p_nexus = subparsers.add_parser("nexus", help="Query Universal Robotics Package & Knowledge Nexus")
+    p_nexus.add_argument("action", type=str, nargs="?", default="list", choices=["list", "query", "recommend"], help="Action: list, query, or recommend")
+    p_nexus.add_argument("query", type=str, nargs="?", default="", help="Keyword, category, robot ID, or prompt string")
 
     # build / prompt (Prompt-to-System Multi-Robot Builder)
-    p_build = subparsers.add_parser("build", help="Build complete multi-robot workcell system from natural language prompt")
-    p_build.add_argument("prompt", type=str, help="System prompt (e.g. 'Build ShopMate-R connecting Temi, Pepper, and Franka')")
-    p_build.add_argument("--output", type=str, default=None, help="Output directory path for ROS 2 package")
+    p_build = subparsers.add_parser("build", aliases=["prompt"], help="Build complete multi-robot system from natural language prompt")
+    p_build.add_argument("prompt", type=str, help="System description prompt (e.g., 'Build ShopMate-R retail assistant with Temi, Pepper, and Franka')")
+    p_build.add_argument("--output", type=str, default="./ros2_ws/src", help="Output directory path for ROS 2 package")
 
-    p_prompt = subparsers.add_parser("prompt", help="Alias for 'build'")
-    p_prompt.add_argument("prompt", type=str, help="System prompt")
-    p_prompt.add_argument("--output", type=str, default=None, help="Output directory path for ROS 2 package")
+    # sim (Real-Time Kinematic & Force Simulation)
+    p_sim = subparsers.add_parser("sim", help="Run real-time kinematic and grasping force simulation")
+    p_sim.add_argument("--robot", type=str, default="inspire_hand", help="Target robot or dexterous hand profile")
+    p_sim.add_argument("--object", type=str, default="medical_vial", help="Target grasping object (medical_vial, hex_bolt, tool_handle, fragile_egg)")
+    p_sim.add_argument("--gestures", type=str, default="open,precision_grip,open", help="Comma-separated gesture sequence")
+    p_sim.add_argument("--export-urdf", type=str, default=None, help="Optional output file path to generate URDF model")
+    p_sim.add_argument("--export-html", type=str, default=None, help="Optional output file path to generate interactive HTML simulation dashboard")
 
     # compile
     p_compile = subparsers.add_parser("compile", help="Compile natural language instruction into a skill")
@@ -236,8 +320,12 @@ def main() -> int:
 
     if args.command == "robots":
         return cmd_robots(args)
+    elif args.command == "nexus":
+        return cmd_nexus(args)
     elif args.command in ("build", "prompt"):
         return cmd_build_system(args)
+    elif args.command == "sim":
+        return cmd_sim(args)
     elif args.command == "compile":
         return cmd_compile(args)
     elif args.command == "retarget":

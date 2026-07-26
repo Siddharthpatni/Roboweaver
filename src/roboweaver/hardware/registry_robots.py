@@ -310,6 +310,31 @@ def get_inspire_hand_spec() -> RobotSpec:
     )
 
 
+def get_turtlebot4_spec() -> RobotSpec:
+    """TurtleBot 4 Mobile Differential-Drive Robot with Card Scanner Payload (card_scannner_ws)."""
+    return RobotSpec(
+        id="turtlebot4",
+        name="TurtleBot 4 Card Scanner",
+        manufacturer="Clearpath / iRobot",
+        dof=2,
+        payload_capacity_kg=15.0,
+        max_reach_m=25.0,  # Mobile navigation radius
+        base_height_m=0.19,
+        joints=[
+            JointSpec("left_wheel_joint", "continuous", (0, 1, 0), -math.pi, math.pi, 10.0, 5.0),
+            JointSpec("right_wheel_joint", "continuous", (0, 1, 0), -math.pi, math.pi, 10.0, 5.0),
+            JointSpec("card_scanner_camera_joint", "fixed", (0, 0, 1), 0.0, 0.0, 0.0, 0.0),
+        ],
+        links=[
+            LinkSpec("base_link", 0.35, 10.0),
+            LinkSpec("wheel_left_link", 0.07, 0.5),
+            LinkSpec("wheel_right_link", 0.07, 0.5),
+            LinkSpec("card_scanner_payload_link", 0.10, 0.8),
+        ],
+        description="TurtleBot 4 mobile base equipped with vision/RFID card scanner payload for office/hospital logistics",
+    )
+
+
 def get_generic_6dof_spec() -> RobotSpec:
     """Generic 6-DOF Robot Arm Profile."""
     return get_ur5e_spec()
@@ -331,6 +356,10 @@ ROBOT_REGISTRY: dict[str, RobotSpec] = {
     "inspire_hand": get_inspire_hand_spec(),
     "rh56f1": get_inspire_hand_spec(),
     "rh56f1_e2": get_inspire_hand_spec(),
+    "turtlebot4": get_turtlebot4_spec(),
+    "turtlebot3": get_turtlebot4_spec(),
+    "turtlebot": get_turtlebot4_spec(),
+    "card_scanner": get_turtlebot4_spec(),
     "generic_6dof": get_generic_6dof_spec(),
 }
 
@@ -339,4 +368,5 @@ def get_robot_spec(robot_id: str) -> RobotSpec:
     """Retrieve RobotSpec by robot_id (defaults to Franka Panda)."""
     key = robot_id.lower().strip()
     return ROBOT_REGISTRY.get(key, get_franka_panda_spec())
+
 

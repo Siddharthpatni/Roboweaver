@@ -51,9 +51,16 @@ class SystemPromptParser:
         "iiwa": "kuka_iiwa",
         "kinova": "kinova_gen3",
         "abb": "abb_irb120",
+        "turtlebot": "turtlebot4",
+        "turtlebot4": "turtlebot4",
+        "turtlebot3": "turtlebot4",
+        "card_scanner": "turtlebot4",
+        "card_scannner": "turtlebot4",
     }
 
     TASK_PATTERNS = [
+        # Card Scanning / RFID / Security / Visitor Badge / Mobile Card Scanner
+        (r"(?:card|scan|rfid|badge|barcode|visitor|id\s*card|security|card_scannner|card_scanner)[^,\.;]*", "turtlebot4", "MOBILE_NAV"),
         # Navigation / Guide / Mobile
         (r"(?:guide|navigat|mov|transport|driv|lead)\w*\s+(?:to|customer|item|shelf|aisle|patient|vial|station|storage)[^,\.;]*", "temi", "MOBILE_NAV"),
         # Interaction / Handover / Greet / Answer / Assist
@@ -110,14 +117,16 @@ class SystemPromptParser:
                     assigned_robot = r_id
                     break
 
-            # If no explicit robot in clause, assign based on semantic action type
-            if not assigned_robot:
-                for pat, def_robot, _ in cls.TASK_PATTERNS:
-                    if re.search(pat, clean, re.IGNORECASE):
+            # Deduce action type and fallback robot from TASK_PATTERNS
+            action_type = "PICK_AND_PLACE"
+            for pat, def_robot, a_type in cls.TASK_PATTERNS:
+                if re.search(pat, clean, re.IGNORECASE):
+                    action_type = a_type
+                    if not assigned_robot:
                         assigned_robot = def_robot
                         if assigned_robot not in found_robots:
                             found_robots.append(assigned_robot)
-                        break
+                    break
 
             if not assigned_robot:
                 # Default fallback to first found robot or generic 6dof
@@ -139,6 +148,7 @@ class SystemPromptParser:
                 "instruction": clean.capitalize(),
                 "depends_on": depends_on,
                 "handover_target": handover_target,
+                "action": action_type,
             })
             previous_step_id = step_id
             step_idx += 1
@@ -154,6 +164,7 @@ class SystemPromptParser:
                     "instruction": f"Execute automated task for {r_id}",
                     "depends_on": depends_on,
                     "handover_target": None,
+                    "action": "MOBILE_NAV" if "turtlebot" in r_id or "temi" in r_id else "PICK_AND_PLACE",
                 })
                 previous_step_id = step_id
                 step_idx += 1

@@ -3,6 +3,7 @@
 from roboweaver.knowledge.ontology import NodeType, RelationType, KnowledgeNode, KnowledgeEdge
 from roboweaver.knowledge.graph import RoboticsKnowledgeGraph, create_default_robotics_knowledge_graph
 from roboweaver.knowledge.ingest import KnowledgeIngestor
+from roboweaver.knowledge.package_nexus import RoboticsPackageNexus, PackageSpec
 
 __all__ = [
     "NodeType",
@@ -12,4 +13,6 @@ __all__ = [
     "RoboticsKnowledgeGraph",
     "create_default_robotics_knowledge_graph",
     "KnowledgeIngestor",
+    "RoboticsPackageNexus",
+    "PackageSpec",
 ]

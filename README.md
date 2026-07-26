@@ -116,13 +116,31 @@ roboweaver build "Build ShopMate-R retail assistant with Temi for navigation, Pe
 ```python
 from roboweaver.fleet import PromptToWorkcellBuilder
 
+# ShopMate-R (Temi + Pepper + Franka Panda)
 prompt = "Build ShopMate-R retail assistant with Temi for navigation, Pepper for customer interaction, and Franka arm for restocking"
+
+# Or TurtleBot 4 Card Scanner (card_scannner_ws)
+# prompt = "Build a visitor card scanner system with TurtleBot4 to scan security ID badges and navigate to reception desk"
+
 choreographer, package_path = PromptToWorkcellBuilder.build_from_prompt(
     prompt=prompt,
     output_dir="./shopmate_r_ws/src",
     verbose=True,
 )
 ```
+
+### 3. Real-Time Interactive Physics & HTML/SVG Simulation (`roboweaver sim`)
+
+Simulate dexterous grasping physics (actuator forces, slip risk, crush hazards) and export interactive HTML5/SVG simulation dashboards:
+
+```bash
+# Run interactive simulation on Inspire RH56F1-E2 grasping a medical vial
+roboweaver sim --robot inspire_hand --object medical_vial --gestures open,precision_grip,open --export-html ./simulation_report.html --export-urdf ./inspire_hand.urdf
+```
+**Features of the Simulation Report:**
+- **Real-Time Actuator Bar Graphs**: Visualizes thumb, index, middle, ring, and pinky finger compression and forces (Newtons).
+- **Object Grasp Stability Engine**: Computes slip risk, safe grasping envelopes, and stability scores.
+- **Standalone Interactive HTML5 Dashboard**: Open `simulation_report.html` in any browser for an interactive SVG graphical report.
 
 ### 3. Building a Multi-Robot Workcell Choreography Manually
 ```python
@@ -210,6 +228,22 @@ from roboweaver.compiler import SkillCompiler
 compiler = SkillCompiler(target_robot="kuka_iiwa")
 skill = compiler.compile("Pick up the heavy gear assembly", verbose=True)
 print(f"Compiled for: {compiler.robot_spec.name} ({compiler.robot_spec.dof}-DOF)")
+```
+
+### 6. Universal Robotics Package & Knowledge Nexus (`roboweaver nexus`)
+
+RoboWeaver features a comprehensive **Knowledge Nexus** indexing ROS / ROS 2 packages, sensor drivers, navigation stacks (`nav2_bringup`, `slam_toolbox`), manipulation frameworks (`moveit2`, `ros2_control`), and custom workspaces (e.g., `card_scanner_ws`, `shopmate_r_fleet`).
+
+```bash
+# 1. List all cataloged packages in the Knowledge Nexus
+roboweaver nexus list
+
+# 2. Query packages by natural language keyword, robot, or category
+roboweaver nexus query "navigation"
+roboweaver nexus query "turtlebot4"
+
+# 3. Get an automated architecture recommendation (Packages, Topics, Actions, and package.xml Depends)
+roboweaver nexus recommend "Build a visitor card scanner system with TurtleBot4 to scan security ID badges and navigate to reception desk"
 ```
 
 ---

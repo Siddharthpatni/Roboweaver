@@ -21,10 +21,32 @@ def test_shopmate_r_prompt_parsing():
     print("  -> Verified ShopMate-R Prompt Parsing (Temi, Pepper, Franka Panda) [PASSED]")
 
 
+def test_card_scanner_turtlebot_prompt():
+    """Verify parsing and system generation for TurtleBot 4 Card Scanner (card_scannner_ws)."""
+    prompt = "Build a visitor card scanner system with TurtleBot4 to scan security ID badges and navigate to reception desk"
+    parsed = SystemPromptParser.parse(prompt)
+    assert "turtlebot4" in parsed.robots
+    assert any(t["action"] == "MOBILE_NAV" for t in parsed.tasks)
+
+    out_dir = Path("local_test_prompt_out")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        choreographer, pkg_path = PromptToWorkcellBuilder.build_from_prompt(
+            prompt, output_dir=out_dir, verbose=False
+        )
+        assert pkg_path is not None
+        assert pkg_path.exists()
+        launch_txt = (pkg_path / "launch" / "workcell_orchestration.launch.py").read_text(encoding="utf-8")
+        assert "namespace='/turtlebot4'" in launch_txt
+        print("  -> Verified TurtleBot 4 Card Scanner Prompt Parsing & ROS 2 Package Generation [PASSED]")
+    finally:
+        shutil.rmtree(out_dir, ignore_errors=True)
+
+
 def test_build_system_from_prompt():
     """Verify end-to-end multi-robot system compilation and ROS 2 package export from text prompt."""
     prompt = "Build ShopMate-R retail assistant with Temi for navigation, Pepper for customer interaction, and Franka arm for restocking"
-    out_dir = Path("/Users/siddharthpatni/.gemini/antigravity-ide/scratch/roboweaver/test_prompt_output")
+    out_dir = Path("local_test_prompt_out")
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
         choreographer, pkg_path = PromptToWorkcellBuilder.build_from_prompt(
@@ -48,5 +70,6 @@ def test_build_system_from_prompt():
 if __name__ == "__main__":
     print("=== STARTING ROBOWEAVER PROMPT-TO-SYSTEM BUILDER VERIFICATION ===")
     test_shopmate_r_prompt_parsing()
+    test_card_scanner_turtlebot_prompt()
     test_build_system_from_prompt()
     print("\n=== ALL PROMPT-TO-SYSTEM BUILDER TESTS PASSED SUCCESSFULLY ===")

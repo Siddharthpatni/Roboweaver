@@ -130,10 +130,30 @@ def test_all_16_skill_categories():
         print(f"  -> Verified skill template: [{cat:15s}] - {tmpl.name} [PASSED]")
 
 
+def test_robotics_package_nexus():
+    """Verify Universal Robotics Package & Knowledge Nexus queries and recommendations."""
+    print("\n[TEST 5] Testing Universal Robotics Package & Knowledge Nexus...")
+    from roboweaver.knowledge.package_nexus import RoboticsPackageNexus
+    pkgs = RoboticsPackageNexus.get_all_packages()
+    assert len(pkgs) >= 11
+    assert RoboticsPackageNexus.get_package("card_scanner_ws") is not None
+    assert RoboticsPackageNexus.get_package("shopmate_r_fleet") is not None
+
+    rec = RoboticsPackageNexus.recommend_stack_for_prompt(
+        "Build a visitor card scanner system with TurtleBot4 to scan security ID badges"
+    )
+    assert "card_scanner_ws" in rec["package_ids"]
+    assert "nav2_bringup" in rec["package_ids"]
+    assert "turtlebot4" in rec["matched_robots"]
+    assert "/card_scanner/badge_id" in rec["ros2_topics"]
+    print("  -> Verified Knowledge Nexus Package Index & TurtleBot Card Scanner Recommendations [PASSED]")
+
+
 if __name__ == "__main__":
     print("=== STARTING ROBOWEAVER UNIVERSAL PLATFORM VERIFICATION ===")
     test_dynamic_custom_skill_registration()
     test_universal_robot_driver_connection()
     test_full_ros2_package_generation()
     test_all_16_skill_categories()
+    test_robotics_package_nexus()
     print("\n=== ALL VERIFICATION TESTS PASSED SUCCESSFULLY ===")
