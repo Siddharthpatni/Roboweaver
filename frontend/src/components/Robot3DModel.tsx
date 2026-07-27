@@ -1,12 +1,19 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Grid, ContactShadows } from '@react-three/drei';
+import { OrbitControls, Grid, ContactShadows, Bounds } from '@react-three/drei';
 import * as THREE from 'three';
 import { Loader2, AlertTriangle, RotateCcw, Box } from 'lucide-react';
 import { RoboWeaverAPI } from '../lib/api';
 import { RobotProfile, RobotModel } from '../types';
+import { FrankaMeshModel } from './FrankaMeshModel';
+
+// Robots with real CAD mesh assets wired up (see public/models/<id>/NOTICE.md
+// for provenance). Every other robot still renders a real backend-driven
+// kinematic chain, just as tapered-cylinder geometry rather than its actual
+// CAD shape -- labeled as such below so nothing is overclaimed.
+const CAD_MODEL_ROBOTS = new Set(['franka_panda']);
 
 type Vec3Tuple = [number, number, number];
 
@@ -150,7 +157,14 @@ export const Robot3DModel: React.FC = () => {
     RoboWeaverAPI.robotModel(robotId)
       .then((m) => {
         setModel(m);
-        setQ(new Array(m.dof).fill(0));
+        // The Franka arm's all-zeros configuration is a valid but visually
+        // unrecognizable fold; open on its real published "ready" pose instead
+        // (the same default used in Franka's own MoveIt/libfranka examples).
+        setQ(
+          CAD_MODEL_ROBOTS.has(robotId) && m.dof === 7
+            ? [0, -0.785, 0, -2.356, 0, 1.571, 0.785]
+            : new Array(m.dof).fill(0)
+        );
         setError(false);
       })
       .catch(() => setError(true));
@@ -192,7 +206,9 @@ export const Robot3DModel: React.FC = () => {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2">
           <Box className="w-4 h-4 text-slate-500" />
-          <h3 className="text-[13px] font-semibold text-slate-200">3D kinematic model</h3>
+          <h3 className="text-[13px] font-semibold text-slate-200">
+            {CAD_MODEL_ROBOTS.has(robotId) ? 'CAD model' : '3D kinematic schematic'}
+          </h3>
           {loading && <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />}
         </div>
         <div className="flex items-center gap-2">
@@ -250,9 +266,28 @@ export const Robot3DModel: React.FC = () => {
             infiniteGrid
             position={[0, -0.021, 0]}
           />
-          {positions.length > 0 && <RobotMesh positions={positions} />}
+          {positions.length > 0 &&
+            // Bounds auto-fits the camera to whatever renders inside it, so every
+            // robot frames correctly regardless of its real-world scale -- no
+            // per-robot magic camera numbers. Keyed on robotId so switching robots
+            // re-fits instead of keeping the previous robot's framing.
+            (CAD_MODEL_ROBOTS.has(robotId) ? (
+              // positions is only ever non-empty once q.length === model.dof (see the
+              // debounced FK effect above), so q is already correctly sized here.
+              // Bounds sits inside Suspense so it fits against the real CAD mesh once
+              // loaded, not the smaller procedural fallback shown while it streams in.
+              <Suspense fallback={<RobotMesh positions={positions} />}>
+                <Bounds key={robotId} fit clip margin={1.05}>
+                  <FrankaMeshModel q={q} />
+                </Bounds>
+              </Suspense>
+            ) : (
+              <Bounds key={robotId} fit clip margin={1.05}>
+                <RobotMesh positions={positions} />
+              </Bounds>
+            ))}
           <ContactShadows position={[0, -0.02, 0]} opacity={0.55} scale={2.4} blur={2.2} far={1.2} color="#000000" />
-          <OrbitControls enableDamping dampingFactor={0.1} target={[0, 0.4, 0]} />
+          <OrbitControls enableDamping dampingFactor={0.1} />
         </Canvas>
       </div>
 
