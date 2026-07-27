@@ -38,6 +38,39 @@ def forward_kinematics_ndof(spec: RobotSpec, q: Sequence[float]) -> Transform3D:
     return curr_tf
 
 
+def forward_kinematics_chain_ndof(spec: RobotSpec, q: Sequence[float]) -> list[Vec3]:
+    """Every joint position along the kinematic chain, base to end-effector.
+
+    Same per-link composition as forward_kinematics_ndof (kept as the single source
+    of truth for the math), except it returns the full chain of positions instead of
+    only the final transform -- what a 3D viewer needs to draw each link as a real
+    segment between consecutive joint origins, driven by this robot's actual RobotSpec
+    geometry rather than a generic N-DOF cartoon.
+    """
+    n = min(spec.dof, len(q))
+    curr_tf = Transform3D(Mat3.identity(), Vec3(0, 0, spec.base_height_m))
+    positions = [curr_tf.pos]
+
+    for i in range(n):
+        joint = spec.joints[i]
+        link = spec.links[i] if i < len(spec.links) else None
+        length = link.length if link else 0.15
+
+        angle = q[i]
+        axis = joint.axis
+
+        if axis == (0, 0, 1) or axis == (0, 0, -1):
+            rot = Mat3.rot_z(angle if axis[2] > 0 else -angle)
+        else:
+            rot = Mat3.rot_y(angle if axis[1] > 0 else -angle)
+
+        step_tf = Transform3D(rot, rot.mul_vec(Vec3(0, 0, length)))
+        curr_tf = curr_tf.compose(step_tf)
+        positions.append(curr_tf.pos)
+
+    return positions
+
+
 class NDOFIKSolver:
     """Generalized N-DOF Inverse Kinematics Solver."""
 

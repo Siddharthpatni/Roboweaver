@@ -16,8 +16,18 @@ from roboweaver.fleet import MultiRobotChoreographer
 
 
 def test_heterogeneous_service_and_dexterous_robots():
-    """Verify profiles and connections for Temi, Pepper, Shadow Hand, and Robotiq Hand."""
+    """Verify profiles for Temi, Pepper, Shadow Hand, and Robotiq Hand, and honest bridge status.
+
+    rclpy isn't pip-installable, so without a real ROS 2 distro the bridge must honestly report
+    is_connected=False rather than fake a live DDS link — see ROS2HardwareBridge.connect().
+    """
     print("[TEST 1] Testing Heterogeneous Robot Profiles (Temi, Pepper, Dexterous Hands)...")
+
+    try:
+        import rclpy  # noqa: F401
+        rclpy_available = True
+    except ImportError:
+        rclpy_available = False
 
     new_robots = [
         ("temi", 3, "Temi Service Robot"),
@@ -31,10 +41,11 @@ def test_heterogeneous_service_and_dexterous_robots():
         assert spec.name == expected_name
         bridge = UniversalRobotDriver.connect_robot(spec, protocol="ros2", uri="ros2://localhost")
         status = bridge.connect()
-        assert status.is_connected
+        assert status.is_connected == rclpy_available
         assert status.dof == expected_dof
         bridge.disconnect()
-        print(f"  -> Verified & Connected: [{spec.name:30s}] ({spec.dof}-DOF) via {status.protocol} [PASSED]")
+        label = "LIVE" if status.is_connected else "NOT CONNECTED (rclpy unavailable, honest fallback)"
+        print(f"  -> Verified [{spec.name:30s}] ({spec.dof}-DOF) bridge status: {label} via {status.protocol} [PASSED]")
 
 
 def test_multi_robot_choreography_pipeline():

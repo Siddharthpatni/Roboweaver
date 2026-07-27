@@ -20,6 +20,13 @@ class Action(Enum):
     TOOL_EXCHANGE = "TOOL_EXCHANGE"
     INSPECT = "INSPECT"
     WELD = "WELD"
+    PEG_INSERT = "PEG_INSERT"
+    POUR = "POUR"
+    PACKAGE = "PACKAGE"
+    CNC_LOAD = "CNC_LOAD"
+    SURGERY_ASSIST = "SURGERY_ASSIST"
+    SORT = "SORT"
+    CLEAN = "CLEAN"
 
 
 @dataclass
@@ -134,3 +141,5 @@ class ExecutionResult:
     cycle_time: float
     joint_limits_respected: bool
     frames: list[str] = field(default_factory=list)
+    telemetry_frame_count: int = 0
+    recovery_events: list[str] = field(default_factory=list)

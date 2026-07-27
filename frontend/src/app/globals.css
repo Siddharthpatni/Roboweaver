@@ -1,8 +1,37 @@
 @import "tailwindcss";
 
+/* Stark palette: the classic Mark III red/gold. Remaps the "emerald" scale used
+   throughout the app to Stark gold so every existing emerald-* utility class repaints
+   without touching each component. Cyan is intentionally absent from this palette —
+   it appears in exactly one place in the whole app: the arc-reactor core dot in the
+   Sidebar logo (Sidebar.tsx), nowhere else. */
+@theme {
+  --color-emerald-50: #fff8e6;
+  --color-emerald-100: #ffecb3;
+  --color-emerald-200: #ffdd7a;
+  --color-emerald-300: #ffc94d;
+  --color-emerald-400: #ffb300;
+  --color-emerald-500: #e0960a;
+  --color-emerald-600: #b8760a;
+  --color-emerald-700: #8f5a08;
+  --color-emerald-800: #5c3a06;
+  --color-emerald-900: #3d2600;
+  --color-emerald-950: #1f1300;
+
+  --color-cyan-300: #ffc94d;
+  --color-cyan-400: #ffb300;
+  --color-cyan-500: #e0960a;
+
+  --color-rose-400: #ff5449;
+  --color-rose-500: #d6291c;
+}
+
 :root {
-  --background: #090d16;
-  --foreground: #f8fafc;
+  --background: #08090b;
+  --foreground: #f2ede6;
+  --stark-red: #a3120a;
+  --stark-red-light: #d81f10;
+  --arc-cyan: #22d3ee;
 }
 
 body {
@@ -12,105 +41,105 @@ body {
   overflow-x: hidden;
 }
 
-/* Custom scrollbar for code diffs and tables */
+/* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0f172a;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: #3d2f1a;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: #ffb30055;
 }
 
-@keyframes pulse-subtle {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+@keyframes fade-in {
+  0% { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes scanline-move {
-  0% { transform: translateY(-100%); }
-  100% { transform: translateY(1000%); }
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
 }
 
-@keyframes radar-sweep {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+/* The literal arc reactor: a small cyan-white glow. This is the ONLY place cyan is
+   used anywhere in the app (Sidebar.tsx logo core) — everything else is red/gold. */
+@keyframes arc-pulse {
+  0%, 100% { box-shadow: 0 0 6px 1px rgba(34, 211, 238, 0.6), 0 0 0 rgba(34, 211, 238, 0); }
+  50% { box-shadow: 0 0 13px 3px rgba(34, 211, 238, 0.9), 0 0 24px 7px rgba(34, 211, 238, 0.2); }
 }
 
-.animate-pulse-subtle {
-  animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+.animate-arc-pulse {
+  animation: arc-pulse 2.4s ease-in-out infinite;
 }
 
-.animate-radar {
-  animation: radar-sweep 8s linear infinite;
+/* Subtle HUD texture for main content areas — true black with a faint gold grid line,
+   no color wash over the background itself. */
+.bg-app-surface {
+  background-color: #060606;
+  background-image:
+    linear-gradient(rgba(255, 179, 0, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 179, 0, 0.04) 1px, transparent 1px);
+  background-size: 34px 34px;
 }
 
-/* High-tech Robotic HUD Grid Background */
-.bg-robotic-grid {
-  background-color: #04070e;
-  background-image: 
-    linear-gradient(rgba(16, 185, 129, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(16, 185, 129, 0.04) 1px, transparent 1px),
-    radial-gradient(circle at 50% 50%, rgba(6, 182, 212, 0.08) 0%, transparent 70%);
-  background-size: 32px 32px, 32px 32px, 100% 100%;
-  background-position: -1px -1px, -1px -1px, 0 0;
-}
-
-/* Robotic Cyberpunk/Mecha Chamfer Card styling */
-.robotic-card {
+/* Standard content card — true black panel, thin gold edge, no brown/muddy tint */
+.app-card {
   position: relative;
-  background: rgba(9, 15, 28, 0.85);
-  border: 1px solid rgba(16, 185, 129, 0.25);
-  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.6), inset 0 0 15px rgba(16, 185, 129, 0.04);
+  background: #0e0e10;
+  border: 1px solid rgba(255, 179, 0, 0.14);
+  border-radius: 0.75rem;
+  box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.7);
 }
 
-.robotic-card::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 8px;
-  height: 8px;
-  border-top: 2px solid #10b981;
-  border-left: 2px solid #10b981;
-  pointer-events: none;
+/* Recessed well (inputs, code blocks, log panels) */
+.app-well {
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 179, 0, 0.09);
 }
 
-.robotic-card::after {
-  content: "";
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  width: 8px;
-  height: 8px;
-  border-bottom: 2px solid #10b981;
-  border-right: 2px solid #10b981;
-  pointer-events: none;
-}
-
-/* Cybernetic Glowing Text */
-.text-glow-emerald {
-  text-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
-}
-
-.text-glow-cyan {
-  text-shadow: 0 0 10px rgba(6, 182, 212, 0.5);
-}
-
-/* Monospace Tech Tag */
-.tech-tag {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  letter-spacing: 0.05em;
+/* Small uppercase eyebrow / kicker label */
+.kicker {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
+  color: #d9962e;
 }
 
+/* Monospace for IDs, data readouts, and code — not for general UI copy */
+.font-data {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
 
+/* Tasteful HUD corner brackets — gold top-left, red bottom-right, used sparingly on
+   the hero panel only. */
+.hud-corners::before,
+.hud-corners::after {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+
+.hud-corners::before {
+  top: -1px;
+  left: -1px;
+  border-top: 2px solid rgba(255, 179, 0, 0.7);
+  border-left: 2px solid rgba(255, 179, 0, 0.7);
+}
+
+.hud-corners::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 2px solid rgba(163, 18, 10, 0.8);
+  border-right: 2px solid rgba(163, 18, 10, 0.8);
+}

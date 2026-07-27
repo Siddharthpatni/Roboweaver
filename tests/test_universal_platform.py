@@ -67,23 +67,42 @@ def test_dynamic_custom_skill_registration():
 
 
 def test_universal_robot_driver_connection():
-    """Verify that UniversalRobotDriver connects to any robot profile via ROS 2 & Sim."""
-    print("\n[TEST 2] Testing Universal Robot Driver Connection...")
+    """Verify that UniversalRobotDriver honestly reports ROS 2 bridge status — it does not fake success.
+
+    rclpy requires a full ROS 2 distro install (not pip-installable), so in this plain Python test
+    environment the bridge must honestly report `is_connected=False` rather than pretending a live
+    DDS connection exists. This locks in the honest-failure contract: if rclpy ever becomes
+    importable (a real ROS 2 workspace), this same bridge would report `is_connected=True` instead —
+    see ROS2HardwareBridge.connect() in hardware/universal_driver.py.
+    """
+    print("\n[TEST 2] Testing Universal Robot Driver Connection (honest rclpy-unavailable path)...")
+
+    try:
+        import rclpy  # noqa: F401
+        rclpy_available = True
+    except ImportError:
+        rclpy_available = False
 
     robots = ["franka_panda", "ur5e", "kuka_iiwa", "kinova_gen3", "abb_irb120"]
     for r_id in robots:
         spec = get_robot_spec(r_id)
         bridge = UniversalRobotDriver.connect_robot(spec, protocol="ros2", uri="ros2://localhost")
         status = bridge.connect()
-        assert status.is_connected
         assert status.dof == spec.dof
-        assert "joint_trajectory_controller" in status.active_controllers
+        assert status.is_connected == rclpy_available
 
-        # Test sending trajectory
-        success = bridge.send_trajectory([[0.1] * spec.dof, [0.2] * spec.dof])
-        assert success
+        if rclpy_available:
+            assert "joint_trajectory_controller" in status.active_controllers
+            success = bridge.send_trajectory([[0.1] * spec.dof, [0.2] * spec.dof])
+            assert success
+        else:
+            assert "rclpy" in status.message.lower()
+            # Honest bridge must refuse to claim a trajectory was sent when nothing is connected.
+            success = bridge.send_trajectory([[0.1] * spec.dof, [0.2] * spec.dof])
+            assert success is False
+
         bridge.disconnect()
-        print(f"  -> Connected & synchronized with [{spec.name}] ({spec.dof}-DOF) via {status.protocol} [PASSED]")
+        print(f"  -> [{spec.name}] ({spec.dof}-DOF) bridge honestly reports is_connected={status.is_connected} via {status.protocol} [PASSED]")
 
 
 def test_full_ros2_package_generation():
@@ -130,6 +149,52 @@ def test_all_16_skill_categories():
         print(f"  -> Verified skill template: [{cat:15s}] - {tmpl.name} [PASSED]")
 
 
+def test_simulation_bridge_honest_tcp_reachability():
+    """Verify SimulationHardwareBridge does a genuine TCP probe, not a fabricated success.
+
+    No Isaac Sim/Gazebo process is available in this test environment, so we prove the bridge
+    is honest in both directions: it must report is_connected=False against a closed port, and
+    is_connected=True against a real listening TCP socket we spin up ourselves.
+    """
+    print("\n[TEST 4b] Testing Simulation Bridge honest TCP reachability probe...")
+    import socket
+    import threading
+
+    spec = get_robot_spec("franka_panda")
+
+    # Closed port: nothing is listening, must honestly report not connected.
+    bridge = UniversalRobotDriver.connect_robot(spec, protocol="sim", uri="gazebo://localhost:55999")
+    status = bridge.connect()
+    assert status.is_connected is False
+    assert "no simulator" in status.message.lower() or "unreachable" in status.protocol.lower()
+
+    # Real listener: must honestly report connected.
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("localhost", 0))
+    port = srv.getsockname()[1]
+    srv.listen(1)
+
+    def accept_loop():
+        while True:
+            try:
+                conn, _ = srv.accept()
+                conn.close()
+            except OSError:
+                break
+
+    t = threading.Thread(target=accept_loop, daemon=True)
+    t.start()
+    try:
+        bridge2 = UniversalRobotDriver.connect_robot(spec, protocol="sim", uri=f"gazebo://localhost:{port}")
+        status2 = bridge2.connect()
+        assert status2.is_connected is True
+    finally:
+        srv.close()
+
+    print("  -> Verified honest TCP reachability: unreachable=False, reachable=True [PASSED]")
+
+
 def test_robotics_package_nexus():
     """Verify Universal Robotics Package & Knowledge Nexus queries and recommendations."""
     print("\n[TEST 5] Testing Universal Robotics Package & Knowledge Nexus...")
@@ -154,6 +219,7 @@ if __name__ == "__main__":
     test_dynamic_custom_skill_registration()
     test_universal_robot_driver_connection()
     test_full_ros2_package_generation()
+    test_simulation_bridge_honest_tcp_reachability()
     test_all_16_skill_categories()
     test_robotics_package_nexus()
     print("\n=== ALL VERIFICATION TESTS PASSED SUCCESSFULLY ===")

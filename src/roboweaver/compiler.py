@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from dataclasses import dataclass
+
 from roboweaver.hardware import RobotSpec, NDOFIKSolver, get_robot_spec, get_franka_panda_spec
 from roboweaver.skills import IndustrialSkillCategory, get_industrial_skill_template
 from roboweaver.math3d import Mat3, Transform3D, Vec3
@@ -28,6 +30,36 @@ from roboweaver.types import (
     TaskGraph,
     TaskType,
 )
+from roboweaver.ir import RoboIR, CompilerDiagnostic, SkillCompilationError, build_ir, check_required_capabilities
+
+# Single source of truth for Action -> IndustrialSkillCategory (was duplicated in
+# _decompose_tasks and _compile_behavior_tree; the same drift risk that let
+# Action.PLACE go unproducible for a whole compile stage -- see docs/REDESIGN.md).
+ACTION_CATEGORY_MAP: dict[Action, IndustrialSkillCategory] = {
+    Action.PICK: IndustrialSkillCategory.PICK_AND_PLACE,
+    Action.PLACE: IndustrialSkillCategory.PICK_AND_PLACE,
+    Action.TIGHTEN: IndustrialSkillCategory.TIGHTEN_BOLT,
+    Action.OPEN_DOOR: IndustrialSkillCategory.OPEN_DOOR,
+    Action.TOOL_EXCHANGE: IndustrialSkillCategory.TOOL_EXCHANGE,
+    Action.INSPECT: IndustrialSkillCategory.INSPECT_SURFACE,
+    Action.WELD: IndustrialSkillCategory.WELD_SEAM,
+    Action.PEG_INSERT: IndustrialSkillCategory.PEGGING,
+    Action.POUR: IndustrialSkillCategory.POURING_LIQUID,
+    Action.PACKAGE: IndustrialSkillCategory.PACKAGING,
+    Action.CNC_LOAD: IndustrialSkillCategory.CNC_LOADING,
+    Action.SURGERY_ASSIST: IndustrialSkillCategory.SURGERY_ASSIST,
+    Action.SORT: IndustrialSkillCategory.SORTING,
+    Action.CLEAN: IndustrialSkillCategory.CLEANING,
+}
+
+
+@dataclass
+class CompilationResult:
+    """Bundles a compiled skill with the RoboIR (Stage 05) it was compiled from and
+    any Compiler Debugger diagnostics (ir/diagnostics.py) raised while checking it."""
+    skill: CompiledSkill
+    ir: RoboIR
+    diagnostics: list[CompilerDiagnostic]
 
 
 class SkillCompiler:
@@ -80,6 +112,32 @@ class SkillCompiler:
             behavior_tree=behavior_tree,
         )
 
+    def compile_with_diagnostics(self, instruction: str, verbose: bool = True) -> CompilationResult:
+        """Stage 05 (RoboIR Generation) + Compiler Debugger, on top of Stage 04's
+        SkillIntent and Stage 06's compiled skill (compile()).
+
+        Raises SkillCompilationError if a required capability (e.g. sensing.force_torque)
+        isn't declared on the target robot -- a compiler that silently produced a skill
+        the robot can't execute would be worse than refusing to compile it. Non-blocking
+        warnings (e.g. missing perception) are returned on the CompilationResult instead.
+        """
+        skill = self.compile(instruction, verbose=verbose)
+        ir = build_ir(skill.intent, self.robot_spec, raw_instruction=instruction)
+        diagnostics = check_required_capabilities(ir, self.robot_spec)
+
+        errors = [d for d in diagnostics if d.severity == "error"]
+        if errors:
+            if verbose:
+                for d in errors:
+                    print(f"\n\033[1;31m✗ {d.code}\033[0m {d.message}\n  {d.reason}")
+            raise SkillCompilationError(errors)
+
+        if verbose:
+            for d in diagnostics:
+                print(f"\n\033[1;33m⚠ {d.code}\033[0m {d.message}")
+
+        return CompilationResult(skill=skill, ir=ir, diagnostics=diagnostics)
+
     def _parse_intent(self, instruction: str) -> SkillIntent:
         inst_lower = instruction.lower()
 
@@ -95,6 +153,12 @@ class SkillCompiler:
             action = Action.TOOL_EXCHANGE
             obj_name = "gripper_v2"
             params = {"dock_slot": 1}
+        elif "clean" in inst_lower or "wipe" in inst_lower:
+            # Checked before the generic "surface" keyword below, which would
+            # otherwise steal "clean the work surface" into INSPECT.
+            action = Action.CLEAN
+            obj_name = "work_surface"
+            params = {"force_n": 5.0}
         elif "inspect" in inst_lower or "surface" in inst_lower:
             action = Action.INSPECT
             obj_name = "machine_panel"
@@ -103,24 +167,56 @@ class SkillCompiler:
             action = Action.WELD
             obj_name = "steel_bracket"
             params = {"current_a": 120.0, "speed_mm_s": 5.0}
+        elif "peg" in inst_lower or "insert" in inst_lower or "insertion" in inst_lower:
+            action = Action.PEG_INSERT
+            obj_name = "alignment_peg"
+            params = {"force_limit_n": 8.0}
+        elif "pour" in inst_lower:
+            action = Action.POUR
+            obj_name = "liquid_container"
+            params = {"tilt_deg": 100.0}
+        elif "pack" in inst_lower or "carton" in inst_lower:
+            action = Action.PACKAGE
+            obj_name = "shipment_item"
+            params = {}
+        elif "cnc" in inst_lower or "machine tend" in inst_lower or "chuck" in inst_lower:
+            action = Action.CNC_LOAD
+            obj_name = "workpiece"
+            params = {}
+        elif "surgery" in inst_lower or "surgical" in inst_lower:
+            action = Action.SURGERY_ASSIST
+            obj_name = "surgical_instrument"
+            params = {}
+        elif "sort" in inst_lower or "classify" in inst_lower:
+            action = Action.SORT
+            obj_name = "item"
+            params = {}
         else:
             action = Action.PICK
-            match = re.search(r"(?:pick\s+up\s+the\s+|pick\s+)([\w\s]+)", inst_lower)
-            obj_name = match.group(1).strip().replace(" ", "_") if match else "red_cube"
             params = {"approach_height": 0.12, "lift_height": 0.18, "grip_force": 10.0, "settle_time": 0.5}
+
+            # Compound pick-and-place: "pick <source> ... place it (in|into|on) <destination>".
+            # Checked before the plain-pick regex below, which would otherwise greedily
+            # capture the whole remainder ("the red cube and place it into the blue
+            # bin") as one malformed object name -- see docs/REDESIGN.md's audit of
+            # this exact bug.
+            compound = re.search(
+                r"pick(?:\s+up)?\s+(?:the\s+)?(.+?)\s+and\s+place\s+(?:it|them)?\s*"
+                r"(?:into|in|on)\s+(?:the\s+)?(.+?)[\.\!\s]*$",
+                inst_lower,
+            )
+            if compound:
+                action = Action.PLACE
+                obj_name = compound.group(1).strip().replace(" ", "_")
+                params["destination_object"] = compound.group(2).strip().replace(" ", "_")
+            else:
+                match = re.search(r"(?:pick\s+up\s+the\s+|pick\s+)([\w\s]+)", inst_lower)
+                obj_name = match.group(1).strip().replace(" ", "_") if match else "red_cube"
 
         return SkillIntent(action=action, object_name=obj_name, parameters=params)
 
     def _decompose_tasks(self, intent: SkillIntent) -> TaskGraph:
-        category_map = {
-            Action.PICK: IndustrialSkillCategory.PICK_AND_PLACE,
-            Action.TIGHTEN: IndustrialSkillCategory.TIGHTEN_BOLT,
-            Action.OPEN_DOOR: IndustrialSkillCategory.OPEN_DOOR,
-            Action.TOOL_EXCHANGE: IndustrialSkillCategory.TOOL_EXCHANGE,
-            Action.INSPECT: IndustrialSkillCategory.INSPECT_SURFACE,
-            Action.WELD: IndustrialSkillCategory.WELD_SEAM,
-        }
-        cat = category_map.get(intent.action, IndustrialSkillCategory.PICK_AND_PLACE)
+        cat = ACTION_CATEGORY_MAP.get(intent.action, IndustrialSkillCategory.PICK_AND_PLACE)
         tmpl = get_industrial_skill_template(cat, intent.object_name)
         return TaskGraph(tasks=tmpl.tasks)
 
@@ -171,15 +267,7 @@ class SkillCompiler:
         return MotionPlan(trajectories=trajectories, ik_results=ik_results, robot_model=self.robot_spec.id)
 
     def _compile_behavior_tree(self, intent: SkillIntent, task_graph: TaskGraph) -> BTNode:
-        cat_map = {
-            Action.PICK: IndustrialSkillCategory.PICK_AND_PLACE,
-            Action.TIGHTEN: IndustrialSkillCategory.TIGHTEN_BOLT,
-            Action.OPEN_DOOR: IndustrialSkillCategory.OPEN_DOOR,
-            Action.TOOL_EXCHANGE: IndustrialSkillCategory.TOOL_EXCHANGE,
-            Action.INSPECT: IndustrialSkillCategory.INSPECT_SURFACE,
-            Action.WELD: IndustrialSkillCategory.WELD_SEAM,
-        }
-        cat = cat_map.get(intent.action, IndustrialSkillCategory.PICK_AND_PLACE)
+        cat = ACTION_CATEGORY_MAP.get(intent.action, IndustrialSkillCategory.PICK_AND_PLACE)
         tmpl = get_industrial_skill_template(cat, intent.object_name)
         return tmpl.behavior_tree_root
 

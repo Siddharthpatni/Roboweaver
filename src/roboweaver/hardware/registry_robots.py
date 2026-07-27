@@ -185,6 +185,7 @@ def get_temi_robot_spec() -> RobotSpec:
             LinkSpec("screen_link", 0.20, 2.0),
         ],
         description="Autonomous mobile service robot with LiDAR SLAM, voice interface, and payload tray",
+        has_force_torque_sensor=False,
     )
 
 
@@ -332,6 +333,7 @@ def get_turtlebot4_spec() -> RobotSpec:
             LinkSpec("card_scanner_payload_link", 0.10, 0.8),
         ],
         description="TurtleBot 4 mobile base equipped with vision/RFID card scanner payload for office/hospital logistics",
+        has_force_torque_sensor=False,
     )
 
 

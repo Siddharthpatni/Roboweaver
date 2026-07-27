@@ -10,7 +10,7 @@ from roboweaver.hardware.registry_robots import (
     get_kinova_gen3_spec,
     get_abb_irb120_spec,
 )
-from roboweaver.hardware.kinematics_ndof import forward_kinematics_ndof, NDOFIKSolver
+from roboweaver.hardware.kinematics_ndof import forward_kinematics_ndof, forward_kinematics_chain_ndof, NDOFIKSolver
 from roboweaver.hardware.safety_guard import WorkspaceSafetyGuard, SafetyCheckResult
 from roboweaver.hardware.inspire_hand_rs485 import InspireHandRS485Driver, InspireHandState
 
@@ -26,6 +26,7 @@ __all__ = [
     "get_kinova_gen3_spec",
     "get_abb_irb120_spec",
     "forward_kinematics_ndof",
+    "forward_kinematics_chain_ndof",
     "NDOFIKSolver",
     "WorkspaceSafetyGuard",
     "SafetyCheckResult",

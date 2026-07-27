@@ -13,6 +13,8 @@ from typing import Sequence
 from roboweaver.types import CompiledSkill, ExecutionResult, TaskType
 from roboweaver.hardware import forward_kinematics_ndof, get_robot_spec, get_franka_panda_spec
 from roboweaver.math3d import Vec3
+from roboweaver.runtime.telemetry import TelemetryRecorder
+from roboweaver.runtime.recovery import RecoveryEngine, FailureMode
 
 
 class SkillRuntime:
@@ -41,12 +43,23 @@ class SkillRuntime:
         self.frames: list[str] = []
         self.step_count = 0
         self.dt = 0.01
+        self._current_task_desc = ""
+
+        # Stage 13 (Monitoring): real telemetry recording and failure recovery,
+        # wired into the actual execution path instead of existing only as
+        # unit-tested-in-isolation modules nothing calls -- see docs/REDESIGN.md's
+        # audit of this exact gap.
+        self.telemetry = TelemetryRecorder()
+        self.recovery = RecoveryEngine()
+        self.recovery_log: list = []
 
     def execute(self, skill: CompiledSkill, verbose: bool = True) -> ExecutionResult:
         """Execute a compiled skill and return result."""
         self.frames = []
         self.step_count = 0
         self.qpos = [0.0] * self.robot_spec.dof
+        self.telemetry = TelemetryRecorder()
+        self.recovery_log = []
 
         initial_cube_z = self.cube_pos.z
 
@@ -61,6 +74,7 @@ class SkillRuntime:
         total_tasks = len(skill.task_graph.tasks)
 
         for i, task in enumerate(skill.task_graph.tasks):
+            self._current_task_desc = task.description
             if verbose:
                 progress = int(40 * (i + 1) / total_tasks)
                 bar = "█" * progress + "░" * (40 - progress)
@@ -81,6 +95,14 @@ class SkillRuntime:
                 dist = (ee_pos - self.cube_pos).norm()
                 if dist < 0.15:
                     self.is_grasped = True
+                else:
+                    retry_count = sum(
+                        1 for p in self.recovery_log if p.failure_mode == FailureMode.GRASP_FAILED
+                    )
+                    plan = self.recovery.diagnose(FailureMode.GRASP_FAILED, context={"retry_count": retry_count})
+                    self.recovery_log.append(plan)
+                    if verbose:
+                        print(f"\n  \033[33m⚠ Grasp failed:\033[0m {plan.reason} -> {plan.recommended_action.value}")
                 self._idle(steps=40)
 
             elif task.type == TaskType.MOVE_TO:
@@ -111,6 +133,12 @@ class SkillRuntime:
         limits_ok = self._check_joint_limits()
         success = height_gained > 0.03
 
+        if not limits_ok:
+            plan = self.recovery.diagnose(FailureMode.JOINT_LIMIT_VIOLATED, context={"retry_count": 0})
+            self.recovery_log.append(plan)
+            if verbose:
+                print(f"\n  \033[31m✗ Joint limit violated:\033[0m {plan.reason} -> {plan.recommended_action.value}")
+
         return ExecutionResult(
             success=success,
             initial_object_height=initial_cube_z,
@@ -119,6 +147,10 @@ class SkillRuntime:
             cycle_time=cycle_time,
             joint_limits_respected=limits_ok,
             frames=self.frames,
+            telemetry_frame_count=len(self.telemetry.frames),
+            recovery_events=[
+                f"{p.failure_mode.value} -> {p.recommended_action.value}: {p.reason}" for p in self.recovery_log
+            ],
         )
 
     def save_video(self, path: str, fps: int = 30) -> None:
@@ -158,6 +190,16 @@ class SkillRuntime:
 
         if self.is_grasped:
             self.cube_pos = ee_pos
+
+        self.telemetry.record(
+            timestamp=self.step_count * self.dt,
+            step=self.step_count,
+            task_description=self._current_task_desc,
+            ee_pos=(ee_pos.x, ee_pos.y, ee_pos.z),
+            joint_angles=list(self.qpos),
+            gripper_state="closed" if self.gripper_pos < 0.02 else "open",
+            is_grasped=self.is_grasped,
+        )
 
         if self.step_count % 5 == 0:
             frame_str = (

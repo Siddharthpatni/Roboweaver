@@ -34,6 +34,8 @@ class IndustrialSkillCategory(Enum):
     PACKAGING = "PACKAGING"
     CNC_LOADING = "CNC_LOADING"
     SURGERY_ASSIST = "SURGERY_ASSIST"
+    SORTING = "SORTING"
+    CLEANING = "CLEANING"
     CUSTOM_SKILL = "CUSTOM_SKILL"
 
 
@@ -341,6 +343,167 @@ def get_industrial_skill_template(
             ],
         )
         return IndustrialSkillTemplate(category, "Mobile Navigation", f"Autonomous mobile navigation to {target_name}", ["lidar", "imu", "odom"], tasks, bt)
+
+    elif category == IndustrialSkillCategory.PEGGING:
+        tasks = [
+            TaskDecomposition(TaskType.PERCEIVE, f"Locate peg {target_name} and target hole"),
+            TaskDecomposition(TaskType.MOVE_TO, f"Approach peg {target_name}"),
+            TaskDecomposition(TaskType.CLOSE_GRIPPER, f"Grasp peg {target_name}", {"force": 12.0}),
+            TaskDecomposition(TaskType.MOVE_TO, "Align peg axis with hole centerline"),
+            TaskDecomposition(TaskType.MOVE_TO, "Execute compliant insertion with search spiral", {"force_limit_n": 8.0}),
+            TaskDecomposition(TaskType.WAIT, "Verify full insertion depth", {"duration": 0.3}),
+            TaskDecomposition(TaskType.OPEN_GRIPPER, "Release peg"),
+        ]
+        bt = BTNode(
+            "Sequence",
+            f"peg_insert_{target_name}",
+            children=[
+                BTNode("Action", "Locate peg and hole"),
+                BTNode("Action", f"Grasp peg {target_name}"),
+                BTNode("Action", "Align peg with hole"),
+                BTNode("Action", "Compliant spiral insertion"),
+                BTNode("Condition", "Verify insertion depth"),
+                BTNode("Action", "Release peg"),
+            ],
+        )
+        return IndustrialSkillTemplate(category, "Peg-in-Hole Insertion", f"Precision compliant insertion of {target_name}", ["ft_sensor", "camera"], tasks, bt)
+
+    elif category == IndustrialSkillCategory.POURING_LIQUID:
+        tasks = [
+            TaskDecomposition(TaskType.PERCEIVE, f"Locate container {target_name} and receiving vessel"),
+            TaskDecomposition(TaskType.MOVE_TO, f"Approach container {target_name}"),
+            TaskDecomposition(TaskType.CLOSE_GRIPPER, f"Grasp container {target_name}", {"force": 10.0}),
+            TaskDecomposition(TaskType.MOVE_TO, "Position container above receiving vessel"),
+            TaskDecomposition(TaskType.MOVE_TO, "Execute controlled tilt-pour trajectory", {"tilt_deg": 100.0}),
+            TaskDecomposition(TaskType.WAIT, "Pour to target volume", {"duration": 2.0}),
+            TaskDecomposition(TaskType.MOVE_TO, "Return container to upright pose"),
+            TaskDecomposition(TaskType.OPEN_GRIPPER, "Release container"),
+        ]
+        bt = BTNode(
+            "Sequence",
+            f"pour_{target_name}",
+            children=[
+                BTNode("Action", "Locate container and vessel"),
+                BTNode("Action", f"Grasp container {target_name}"),
+                BTNode("Action", "Position above receiving vessel"),
+                BTNode("Action", "Controlled tilt-pour"),
+                BTNode("Action", "Return to upright"),
+                BTNode("Action", "Release container"),
+            ],
+        )
+        return IndustrialSkillTemplate(category, "Liquid Pouring", f"Controlled tilt-pour from {target_name}", ["camera", "load_cell"], tasks, bt)
+
+    elif category == IndustrialSkillCategory.PACKAGING:
+        tasks = [
+            TaskDecomposition(TaskType.PERCEIVE, f"Locate item {target_name} and open carton"),
+            TaskDecomposition(TaskType.MOVE_TO, f"Approach {target_name}"),
+            TaskDecomposition(TaskType.CLOSE_GRIPPER, f"Grasp {target_name}", {"force": 15.0}),
+            TaskDecomposition(TaskType.MOVE_TO, "Transfer to packaging cavity"),
+            TaskDecomposition(TaskType.MOVE_TO, "Lower item into cavity along guided path"),
+            TaskDecomposition(TaskType.OPEN_GRIPPER, "Release item into package"),
+            TaskDecomposition(TaskType.MOVE_TO, "Actuate carton flap closer"),
+            TaskDecomposition(TaskType.WAIT, "Verify package sealed", {"duration": 0.3}),
+        ]
+        bt = BTNode(
+            "Sequence",
+            f"package_{target_name}",
+            children=[
+                BTNode("Action", f"Locate {target_name} and carton"),
+                BTNode("Action", f"Grasp {target_name}"),
+                BTNode("Action", "Lower into packaging cavity"),
+                BTNode("Action", "Release into package"),
+                BTNode("Action", "Close carton flap"),
+                BTNode("Condition", "Verify package sealed"),
+            ],
+        )
+        return IndustrialSkillTemplate(category, "Packaging", f"Pack {target_name} into shipping carton", ["camera", "gripper"], tasks, bt)
+
+    elif category == IndustrialSkillCategory.CNC_LOADING:
+        tasks = [
+            TaskDecomposition(TaskType.PERCEIVE, f"Locate workpiece {target_name} and CNC chuck"),
+            TaskDecomposition(TaskType.MOVE_TO, f"Approach workpiece {target_name}"),
+            TaskDecomposition(TaskType.CLOSE_GRIPPER, f"Grasp workpiece {target_name}", {"force": 40.0}),
+            TaskDecomposition(TaskType.WAIT, "Wait for CNC door open signal", {"duration": 0.5}),
+            TaskDecomposition(TaskType.MOVE_TO, "Insert workpiece into CNC chuck"),
+            TaskDecomposition(TaskType.OPEN_GRIPPER, "Release workpiece into chuck"),
+            TaskDecomposition(TaskType.WAIT, "Wait for chuck clamp confirmation", {"duration": 0.5}),
+            TaskDecomposition(TaskType.MOVE_TO, "Retract arm clear of tool envelope"),
+        ]
+        bt = BTNode(
+            "Sequence",
+            f"cnc_load_{target_name}",
+            children=[
+                BTNode("Action", f"Locate workpiece {target_name} and chuck"),
+                BTNode("Action", f"Grasp workpiece {target_name}"),
+                BTNode("Condition", "CNC door open"),
+                BTNode("Action", "Insert into chuck"),
+                BTNode("Condition", "Chuck clamp confirmed"),
+                BTNode("Action", "Retract clear of tool envelope"),
+            ],
+        )
+        return IndustrialSkillTemplate(category, "CNC Machine Tending", f"Load {target_name} into CNC chuck", ["camera", "plc_io"], tasks, bt)
+
+    elif category == IndustrialSkillCategory.SURGERY_ASSIST:
+        tasks = [
+            TaskDecomposition(TaskType.PERCEIVE, f"Track instrument {target_name} and surgical site"),
+            TaskDecomposition(TaskType.MOVE_TO, f"Position instrument {target_name} at approach vector"),
+            TaskDecomposition(TaskType.MOVE_TO, "Execute tremor-filtered micro-positioning"),
+            TaskDecomposition(TaskType.WAIT, "Hold steady for surgeon confirmation", {"duration": 1.0}),
+            TaskDecomposition(TaskType.MOVE_TO, "Retract instrument to safe standby pose"),
+        ]
+        bt = BTNode(
+            "Sequence",
+            f"surgery_assist_{target_name}",
+            children=[
+                BTNode("Action", f"Track instrument {target_name} and site"),
+                BTNode("Action", "Position at approach vector"),
+                BTNode("Action", "Tremor-filtered micro-positioning"),
+                BTNode("Condition", "Hold for surgeon confirmation"),
+                BTNode("Action", "Retract to standby"),
+            ],
+        )
+        return IndustrialSkillTemplate(category, "Surgical Assistance", f"Tremor-filtered assistive positioning of {target_name}", ["stereo_camera", "ft_sensor"], tasks, bt)
+
+    elif category == IndustrialSkillCategory.SORTING:
+        tasks = [
+            TaskDecomposition(TaskType.PERCEIVE, f"Classify item {target_name} by visual features"),
+            TaskDecomposition(TaskType.MOVE_TO, f"Approach {target_name}"),
+            TaskDecomposition(TaskType.CLOSE_GRIPPER, f"Grasp {target_name}", {"force": 12.0}),
+            TaskDecomposition(TaskType.MOVE_TO, "Transfer to classified sorting bin"),
+            TaskDecomposition(TaskType.OPEN_GRIPPER, "Release into sorting bin"),
+        ]
+        bt = BTNode(
+            "Sequence",
+            f"sort_{target_name}",
+            children=[
+                BTNode("Action", f"Classify {target_name}"),
+                BTNode("Action", f"Grasp {target_name}"),
+                BTNode("Action", "Transfer to sorting bin"),
+                BTNode("Action", "Release into bin"),
+            ],
+        )
+        return IndustrialSkillTemplate(category, "Sorting", f"Classify and sort {target_name} into correct bin", ["camera", "classifier"], tasks, bt)
+
+    elif category == IndustrialSkillCategory.CLEANING:
+        tasks = [
+            TaskDecomposition(TaskType.PERCEIVE, f"Scan contamination map of {target_name}"),
+            TaskDecomposition(TaskType.MOVE_TO, f"Approach surface of {target_name}"),
+            TaskDecomposition(TaskType.MOVE_TO, "Execute compliant wiping raster pattern", {"force_n": 5.0}),
+            TaskDecomposition(TaskType.WAIT, "Verify surface cleanliness", {"duration": 0.3}),
+            TaskDecomposition(TaskType.MOVE_TO, "Retract cleaning tool"),
+        ]
+        bt = BTNode(
+            "Sequence",
+            f"clean_{target_name}",
+            children=[
+                BTNode("Action", "Scan contamination map"),
+                BTNode("Action", "Approach surface"),
+                BTNode("Action", "Compliant wiping raster"),
+                BTNode("Condition", "Verify cleanliness"),
+                BTNode("Action", "Retract tool"),
+            ],
+        )
+        return IndustrialSkillTemplate(category, "Surface Cleaning", f"Compliant wipe-clean of {target_name}", ["ft_sensor", "camera"], tasks, bt)
 
     else:
         return _create_generic_custom_template(str(category), target_name)

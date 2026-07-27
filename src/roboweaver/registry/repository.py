@@ -6,10 +6,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 from roboweaver.registry.package import SkillPackage, SkillPackageMetadata
-from roboweaver.types import CompiledSkill
 
 
 class SkillRepository:
@@ -55,24 +53,19 @@ class SkillRepository:
         return self.packages.get(package_id)
 
     def _load_all(self) -> None:
-        """Load registered packages from disk."""
+        """Load registered packages from disk.
+
+        Reconstructs the full compiled skill via SkillPackage.from_dict(), not just
+        metadata -- a package registered before a process restart used to come back
+        as an empty metadata shell (skill=None) because to_dict()/reload didn't
+        round-trip the compiled body. See docs/REDESIGN.md's audit of this bug.
+        """
         for f in self.registry_dir.glob("*.json"):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
-                meta_dict = data.get("metadata", {})
-                meta = SkillPackageMetadata(
-                    id=meta_dict.get("id", f.stem),
-                    name=meta_dict.get("name", f.stem),
-                    version=meta_dict.get("version", "1.0.0"),
-                    description=meta_dict.get("description", ""),
-                    action=meta_dict.get("action", "PICK"),
-                    target_object=meta_dict.get("target_object", "object"),
-                    author=meta_dict.get("author", "RoboWeaver"),
-                    license=meta_dict.get("license", "Apache-2.0"),
-                    compatible_robots=meta_dict.get("compatible_robots", ["Generic 6-DOF Arm"]),
-                    payload_capacity_kg=meta_dict.get("payload_capacity_kg", 2.0),
-                    tags=meta_dict.get("tags", []),
-                )
-                self.packages[meta.id] = SkillPackage(meta, None)  # Metadata shell
+                pkg = SkillPackage.from_dict(data)
+                if not pkg.metadata.id:
+                    pkg.metadata.id = f.stem
+                self.packages[pkg.metadata.id] = pkg
             except Exception:
                 pass

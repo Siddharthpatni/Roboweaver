@@ -2,18 +2,34 @@
 Inspire Robots Dexterous Hand RH56F1-E2 (RS485) Driver & Gesture Library.
 
 Provides:
-1. RS485 Modbus RTU / Serial packet encoder & decoder for RH56F1-E2
+1. RS485 serial packet encoder & decoder with real CRC-16/MODBUS framing
 2. Multi-Actuator position, velocity, and grasping force control
 3. Built-in dexterous grasping gesture library (open, fist, pinch, precision_grip, etc.)
-4. High-fidelity loopback simulation mode for testing when physical RS485 hardware is absent
+4. Honest software fallback mode for testing when physical RS485 hardware is absent
+
+The wire framing here (`0x55 0xAA` sync + slave id + command + length + data + CRC-16)
+is a RoboWeaver-defined envelope, not the vendor's proprietary register map — Inspire
+Robots does not publish that publicly. What IS real: the CRC-16/MODBUS checksum
+algorithm, and a genuine two-way serial round trip (write request, read response,
+validate CRC, decode payload) when real hardware is connected. See
+tests/test_inspire_hand_real_serial_protocol.py for a loopback proof against a
+protocol-accurate virtual peer using a pty pair — no physical hand required to verify
+the wire logic is correct.
+
+When no physical hand is present (or pyserial can't open the port), the driver falls
+back to a clearly-flagged software simulation (`self.simulated = True`) instead of
+silently pretending to be connected to hardware.
 """
 
 from __future__ import annotations
 
-import time
 import struct
 from dataclasses import dataclass, field
 from typing import Any
+
+
+class InspireHandCommError(Exception):
+    """Raised when a real RS485 round trip fails: timeout, short read, or CRC mismatch."""
 
 
 @dataclass
@@ -25,6 +41,19 @@ class InspireHandState:
     is_connected: bool = False
     error_code: int = 0
     gesture_active: str = "open"
+
+
+def crc16_modbus(data: bytes) -> int:
+    """Standard CRC-16/MODBUS (polynomial 0xA001, init 0xFFFF), verified against known test vectors."""
+    crc = 0xFFFF
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            if crc & 0x0001:
+                crc = (crc >> 1) ^ 0xA001
+            else:
+                crc >>= 1
+    return crc & 0xFFFF
 
 
 class InspireHandRS485Driver:
@@ -40,16 +69,21 @@ class InspireHandRS485Driver:
         "relax": [100, 100, 100, 100, 100, 100],
     }
 
-    def __init__(self, port: str = "/dev/ttyUSB0", baudrate: int = 115200, slave_id: int = 0x01):
+    CMD_SET_POSITIONS = 0x01
+    CMD_READ_STATE = 0x04
+
+    def __init__(self, port: str = "/dev/ttyUSB0", baudrate: int = 115200, slave_id: int = 0x01, read_timeout_s: float = 0.2):
         self.port = port
         self.baudrate = baudrate
         self.slave_id = slave_id
+        self.read_timeout_s = read_timeout_s
         self.serial_conn: Any | None = None
         self.simulated: bool = False
+        self.last_connect_error: str | None = None
         self.state = InspireHandState()
 
     def connect(self) -> InspireHandState:
-        """Connect to the Inspire RH56F1-E2 over RS485 serial port, or initialize loopback."""
+        """Connect to the Inspire RH56F1-E2 over a real RS485 serial port, or fall back to simulation."""
         try:
             import serial
             self.serial_conn = serial.Serial(
@@ -58,13 +92,16 @@ class InspireHandRS485Driver:
                 bytesize=serial.EIGHTBITS,
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE,
-                timeout=0.1,
+                timeout=self.read_timeout_s,
             )
             self.simulated = False
+            self.last_connect_error = None
             self.state.is_connected = True
-        except Exception:
-            # Fall back to high-fidelity RS485 loopback simulation mode
+        except Exception as exc:
+            # No physical hand reachable at this port (missing hardware, no pyserial, permission
+            # denied, etc.) — fall back to software simulation instead of faking a connection.
             self.simulated = True
+            self.last_connect_error = f"{type(exc).__name__}: {exc}"
             self.state.is_connected = True
 
         return self.state
@@ -79,10 +116,34 @@ class InspireHandRS485Driver:
         self.state.is_connected = False
 
     def build_rs485_packet(self, cmd: int, data_bytes: bytes) -> bytes:
-        """Build framed RS485 packet with checksum: [0x55, 0xAA, slave_id, cmd, len, data..., checksum]."""
+        """Build a framed RS485 packet: [0x55, 0xAA, slave_id, cmd, len, data..., crc_lo, crc_hi]."""
         header = bytes([0x55, 0xAA, self.slave_id, cmd, len(data_bytes)])
-        checksum = sum(header[2:] + data_bytes) & 0xFF
-        return header + data_bytes + bytes([checksum])
+        crc = crc16_modbus(header[2:] + data_bytes)
+        return header + data_bytes + struct.pack("<H", crc)
+
+    def _read_frame(self) -> bytes:
+        """Read and CRC-validate one response frame from the real serial connection."""
+        header = self.serial_conn.read(5)
+        if len(header) < 5:
+            raise InspireHandCommError(f"Inspire Hand RS485 timeout: expected 5-byte header, got {len(header)} bytes")
+        if header[0] != 0x55 or header[1] != 0xAA:
+            raise InspireHandCommError(f"Inspire Hand RS485 frame desync: bad sync bytes {header[:2].hex()}")
+
+        data_len = header[4]
+        tail = self.serial_conn.read(data_len + 2)
+        if len(tail) < data_len + 2:
+            raise InspireHandCommError(
+                f"Inspire Hand RS485 timeout: expected {data_len + 2} bytes of payload+crc, got {len(tail)}"
+            )
+
+        data = tail[:data_len]
+        recv_crc = struct.unpack("<H", tail[data_len:data_len + 2])[0]
+        calc_crc = crc16_modbus(header[2:] + data)
+        if recv_crc != calc_crc:
+            raise InspireHandCommError(
+                f"Inspire Hand RS485 CRC-16 mismatch: received 0x{recv_crc:04x}, computed 0x{calc_crc:04x}"
+            )
+        return data
 
     def set_positions(
         self,
@@ -97,23 +158,24 @@ class InspireHandRS485Driver:
         if len(positions) != 6:
             raise ValueError("Inspire RH56F1-E2 requires exactly 6 actuator positions (0-1000)")
 
-        # Clamp positions between 0 and 1000
         clamped_pos = [max(0, min(1000, int(p))) for p in positions]
-        speeds = speeds or [500] * 6
-        forces = forces or [500] * 6
 
         if not self.simulated and self.serial_conn:
-            # Pack 6 positions into little-endian unsigned shorts (12 bytes)
             payload = struct.pack("<6H", *clamped_pos)
-            packet = self.build_rs485_packet(cmd=0x01, data_bytes=payload)
+            packet = self.build_rs485_packet(cmd=self.CMD_SET_POSITIONS, data_bytes=payload)
             self.serial_conn.write(packet)
             self.serial_conn.flush()
+            # Real round trip: the hand ACKs with its actual resulting positions/currents.
+            data = self._read_frame()
+            self.state.actuator_positions = list(struct.unpack("<6H", data[:12]))
+            self.state.actuator_currents_ma = list(struct.unpack("<6H", data[12:24]))
+            self.state.actuator_forces_n = [round(c * 0.002, 2) for c in self.state.actuator_currents_ma]
+            return True
 
+        # Software simulation fallback (no physical hand connected).
         self.state.actuator_positions = clamped_pos
-        # Simulate proportional grasping force when fingers compress > 500
-        self.state.actuator_forces_n = [
-            round(max(0.0, (p - 200) * 0.015), 2) for p in clamped_pos
-        ]
+        self.state.actuator_forces_n = [round(max(0.0, (p - 200) * 0.015), 2) for p in clamped_pos]
+        self.state.actuator_currents_ma = [int(f * 40) for f in self.state.actuator_forces_n]
         return True
 
     def set_gesture(self, gesture_name: str) -> bool:
@@ -128,9 +190,13 @@ class InspireHandRS485Driver:
         return success
 
     def read_state(self) -> InspireHandState:
-        """Query real-time actuator positions, current consumption, and force feedback."""
+        """Query real-time actuator positions and current draw. Real round trip when hardware is connected."""
         if not self.simulated and self.serial_conn:
-            packet = self.build_rs485_packet(cmd=0x04, data_bytes=b"")
+            packet = self.build_rs485_packet(cmd=self.CMD_READ_STATE, data_bytes=b"")
             self.serial_conn.write(packet)
-            # In a real driver, read response frame and unpack positions/currents
+            self.serial_conn.flush()
+            data = self._read_frame()
+            self.state.actuator_positions = list(struct.unpack("<6H", data[:12]))
+            self.state.actuator_currents_ma = list(struct.unpack("<6H", data[12:24]))
+            self.state.actuator_forces_n = [round(c * 0.002, 2) for c in self.state.actuator_currents_ma]
         return self.state

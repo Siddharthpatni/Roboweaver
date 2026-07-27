@@ -1,311 +1,298 @@
 'use client';
 
-import React, { useState } from 'react';
-import { 
-  Cpu, 
-  Activity, 
-  Play, 
-  Pause, 
-  RotateCcw, 
-  ShieldCheck, 
-  AlertTriangle, 
-  Zap, 
-  Thermometer, 
-  Sliders, 
-  Hand,
-  Radio
-} from 'lucide-react';
-import { SimRobotState } from '../types';
-import { INITIAL_SIM_ROBOT } from '../data/mockData';
+import React, { useEffect, useState, useCallback } from 'react';
+import { ShieldCheck, AlertTriangle, Cable, Hand, Radio, Loader2 } from 'lucide-react';
+import { RoboWeaverAPI } from '../lib/api';
+import { SimObjectProfile, SimulateResult } from '../types';
 import { Robotic3DViewport } from './Robotic3DViewport';
+import { Robot3DModel } from './Robot3DModel';
+
+const FINGER_LABELS = ['Thumb Flex', 'Thumb Abduct', 'Index Finger', 'Middle Finger', 'Ring Finger', 'Pinky Finger'];
+
+const GRASP_STATE_MAP: Record<string, 'Open' | 'Precision Grip' | 'Pinch' | 'Power Grasp'> = {
+  open: 'Open',
+  precision_grip: 'Precision Grip',
+  pinch: 'Pinch',
+  fist: 'Power Grasp',
+  point: 'Power Grasp',
+  cylindrical_grip: 'Power Grasp',
+  relax: 'Open',
+};
 
 export const LiveSimulationView: React.FC = () => {
-  const [robot, setRobot] = useState<SimRobotState>(INITIAL_SIM_ROBOT);
-  const [isSimulating, setIsSimulating] = useState(true);
-  const [simLogs, setSimLogs] = useState<string[]>([
-    '[14:05:01] ROS 2 Node /inspire_hand_driver initialized on /dev/ttyUSB0 (115200 baud)',
-    '[14:05:02] Modbus CRC-16 Check: Passed. All 6 actuators reporting normal torque limits.',
-    '[14:05:05] Grasp mode set to [Precision Grip]. Thumb + Index contact confirmed (24.0 N).'
-  ]);
+  const [gestures, setGestures] = useState<string[]>([]);
+  const [objects, setObjects] = useState<SimObjectProfile[]>([]);
+  const [gesture, setGesture] = useState('precision_grip');
+  const [objectKey, setObjectKey] = useState('medical_vial');
+  const [result, setResult] = useState<SimulateResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [logs, setLogs] = useState<string[]>([]);
 
-  const addLog = (msg: string) => {
+  const addLog = useCallback((msg: string) => {
     const timeStr = new Date().toTimeString().split(' ')[0];
-    setSimLogs((prev) => [`[${timeStr}] ${msg}`, ...prev.slice(0, 8)]);
+    setLogs((prev) => [`[${timeStr}] ${msg}`, ...prev.slice(0, 8)]);
+  }, []);
+
+  useEffect(() => {
+    Promise.all([RoboWeaverAPI.simulateGestures(), RoboWeaverAPI.simulateObjects()])
+      .then(([g, o]) => {
+        setGestures(g);
+        setObjects(o);
+      })
+      .catch(() => setError(true));
+  }, []);
+
+  const runSimulation = useCallback(
+    async (g: string, o: string) => {
+      try {
+        const data = await RoboWeaverAPI.simulate(g, o);
+        setResult(data);
+        setError(false);
+        addLog(
+          data.is_simulated
+            ? `${g} on ${o} — software simulation (${data.connect_fallback_reason ?? 'no RS485 hardware detected'})`
+            : `${g} on ${o} — real RS485 hardware round trip confirmed`
+        );
+        addLog(`Total actuator force ${data.total_force_n.toFixed(1)} N — ${data.object_status}`);
+      } catch {
+        setError(true);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [addLog]
+  );
+
+  useEffect(() => {
+    // Standard mount-time data fetch (React's documented pattern for effects without a
+    // fetching library). The static rule can't see that all setState calls inside
+    // runSimulation happen after its first `await`, so this is a deliberate, safe exception.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    runSimulation(gesture, objectKey);
+    // Intentionally mount-only: re-running on every gesture/objectKey change would duplicate
+    // the fetch already triggered by handleGestureChange/handleObjectChange below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleGestureChange = (g: string) => {
+    setGesture(g);
+    setLoading(true);
+    runSimulation(g, objectKey);
   };
 
-  const handleGraspChange = (mode: 'Open' | 'Precision Grip' | 'Pinch' | 'Power Grasp') => {
-    let updatedFingers = [...robot.fingers];
-    let slipRisk = 12.0;
-
-    if (mode === 'Open') {
-      updatedFingers = updatedFingers.map((f) => ({ ...f, angleDeg: 0, forceN: 0, contact: false }));
-      slipRisk = 0.0;
-    } else if (mode === 'Precision Grip') {
-      updatedFingers = [
-        { name: 'Thumb (Rot)', angleDeg: 42, forceN: 18.5, targetN: 20.0, contact: true },
-        { name: 'Thumb (Flex)', angleDeg: 55, forceN: 22.1, targetN: 22.0, contact: true },
-        { name: 'Index Finger', angleDeg: 68, forceN: 24.0, targetN: 25.0, contact: true },
-        { name: 'Middle Finger', angleDeg: 65, forceN: 21.8, targetN: 22.0, contact: true },
-        { name: 'Ring Finger', angleDeg: 30, forceN: 4.2, targetN: 5.0, contact: false },
-        { name: 'Little Finger', angleDeg: 28, forceN: 2.1, targetN: 2.0, contact: false },
-      ];
-      slipRisk = 14.2;
-    } else if (mode === 'Pinch') {
-      updatedFingers = [
-        { name: 'Thumb (Rot)', angleDeg: 60, forceN: 25.0, targetN: 25.0, contact: true },
-        { name: 'Thumb (Flex)', angleDeg: 75, forceN: 28.0, targetN: 28.0, contact: true },
-        { name: 'Index Finger', angleDeg: 78, forceN: 26.5, targetN: 27.0, contact: true },
-        { name: 'Middle Finger', angleDeg: 10, forceN: 0.0, targetN: 0.0, contact: false },
-        { name: 'Ring Finger', angleDeg: 10, forceN: 0.0, targetN: 0.0, contact: false },
-        { name: 'Little Finger', angleDeg: 10, forceN: 0.0, targetN: 0.0, contact: false },
-      ];
-      slipRisk = 8.5;
-    } else if (mode === 'Power Grasp') {
-      updatedFingers = updatedFingers.map((f) => ({
-        ...f,
-        angleDeg: 88,
-        forceN: 35.0,
-        targetN: 35.0,
-        contact: true
-      }));
-      slipRisk = 3.1;
-    }
-
-    setRobot((prev) => ({
-      ...prev,
-      graspState: mode,
-      slipRiskPercentage: slipRisk,
-      fingers: updatedFingers
-    }));
-    addLog(`Commanded Modbus RTU Grasp Preset: [${mode}]. Updated actuator force targets.`);
+  const handleObjectChange = (o: string) => {
+    setObjectKey(o);
+    setLoading(true);
+    runSimulation(gesture, o);
   };
 
-  const handleReset = () => {
-    setRobot(INITIAL_SIM_ROBOT);
-    addLog('Reset simulation kinematics to default Precision Grip state.');
-  };
+  const graspState = GRASP_STATE_MAP[gesture] ?? 'Open';
 
   return (
-    <div className="flex flex-col h-full w-full bg-robotic-grid text-slate-100 overflow-y-auto p-6 space-y-6">
-      {/* Mecha Robotic HUD Header Banner */}
-      <div className="robotic-card p-6 rounded-3xl border border-emerald-500/30 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="space-y-2 max-w-2xl">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono font-bold">
-            <Cpu className="w-3.5 h-3.5 animate-pulse" />
-            <span>// ROBO_OS_V4 // 3D DIGITAL TWIN & RS485 TELEMETRY</span>
-          </div>
-          <h1 className="text-2xl font-black tracking-wider text-white uppercase font-mono text-glow-emerald">
-            [SYS_SIM] Interactive 3D Kinematic Digital Twin
-          </h1>
-          <p className="text-xs text-slate-400 font-mono leading-relaxed">
-            REAL-TIME 3D CANVAS VIEWPORT • 6-DOF ACTUATOR ANGLES • SLIP RISK FORCE VECTOR PREDICTION • TURTLEBOT 4 & FRANKA CHOREOGRAPHY
+    <div className="h-full overflow-y-auto">
+      <div className="max-w-6xl mx-auto p-8 space-y-6">
+        <div>
+          <span className="kicker">Digital Twin</span>
+          <h1 className="text-[19px] font-semibold text-white mt-1">Inspire Hand grasp physics</h1>
+          <p className="text-[13px] text-slate-400 mt-1.5 leading-relaxed max-w-2xl">
+            Every gesture below runs the real <code className="font-data text-slate-300">InspireHandSimulator</code> grasp
+            stability engine on the backend — actuator forces, current draw, and slip risk are computed, not hand-typed.
           </p>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
-          <button
-            onClick={() => setIsSimulating(!isSimulating)}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-mono font-bold text-xs uppercase shadow-lg transition-all ${
-              isSimulating
-                ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-500/20'
-                : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20'
+        {error && (
+          <div className="flex items-center gap-2.5 px-4 py-3 rounded-lg bg-rose-500/[0.07] border border-rose-500/20 text-rose-300 text-[13px]">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>Could not reach the RoboWeaver backend. Start it with: roboweaver dashboard --port 8080</span>
+          </div>
+        )}
+
+        {result && (
+          <div
+            className={`flex items-center gap-2.5 px-4 py-2.5 rounded-lg border text-[12.5px] font-medium ${
+              result.is_simulated
+                ? 'bg-amber-500/[0.07] border-amber-500/20 text-amber-300'
+                : 'bg-emerald-500/[0.07] border-emerald-500/20 text-emerald-300'
             }`}
           >
-            {isSimulating ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-            <span>{isSimulating ? '[ PAUSE TELEMETRY ]' : '[ RESUME TELEMETRY ]'}</span>
-          </button>
+            <Radio className={`w-3.5 h-3.5 shrink-0 ${result.is_simulated ? '' : 'animate-pulse'}`} />
+            <span>
+              {result.is_simulated
+                ? `Software simulation — no physical hand detected (${result.connect_fallback_reason ?? 'unknown'})`
+                : 'Real RS485 hardware — CRC-16 verified round trip'}
+            </span>
+          </div>
+        )}
 
-          <button
-            onClick={handleReset}
-            className="p-2.5 rounded-xl bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-300"
-            title="Reset Simulation"
-          >
-            <RotateCcw className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
+        <Robotic3DViewport graspState={graspState} actuatorPositions={result?.actuator_positions} />
 
-      {/* 3D Interactive Digital Twin Viewport */}
-      <Robotic3DViewport graspState={robot.graspState} />
-
-      {/* Main Simulation Control Cards Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Hand Visualization & Actuator Status (8 cols) */}
-        <div className="lg:col-span-8 space-y-6">
-          {/* Actuator Fingers Card */}
-          <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl space-y-5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Hand className="w-5 h-5 text-emerald-400" />
-                <h3 className="text-base font-bold text-slate-100">
-                  6-DOF Actuator Finger Telemetry & Tactile Feedback
-                </h3>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          <div className="lg:col-span-8 space-y-5">
+            <div className="app-card p-5 space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <Hand className="w-4 h-4 text-slate-500" />
+                  <h3 className="text-[13px] font-semibold text-slate-200">Actuator telemetry</h3>
+                </div>
+                {loading && <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />}
               </div>
-              <span className="text-xs font-mono text-slate-400">
-                Grasp Mode:{' '}
-                <span className="text-emerald-400 font-semibold">{robot.graspState}</span>
-              </span>
-            </div>
 
-            {/* Grasp Presets Bar */}
-            <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800/80">
-              <span className="text-xs text-slate-400 font-semibold mr-2">Grasp Presets:</span>
-              {(['Open', 'Precision Grip', 'Pinch', 'Power Grasp'] as const).map((mode) => {
-                const isCurrent = robot.graspState === mode;
-                return (
-                  <button
-                    key={mode}
-                    onClick={() => handleGraspChange(mode)}
-                    className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all ${
-                      isCurrent
-                        ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
-                        : 'bg-slate-950 text-slate-300 hover:text-white border border-slate-800'
-                    }`}
-                  >
-                    {mode}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* 6 Finger Bars Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-              {robot.fingers.map((finger, idx) => (
-                <div
-                  key={idx}
-                  className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800/80 space-y-3"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold font-mono text-slate-200">
-                      {finger.name}
-                    </span>
-                    <span
-                      className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
-                        finger.contact
-                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                          : 'bg-slate-800 text-slate-500'
+              <div className="space-y-2.5 pt-1 border-t border-white/[0.06]">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11.5px] text-slate-500 font-medium mr-1">Gesture</span>
+                  {gestures.map((g) => (
+                    <button
+                      key={g}
+                      onClick={() => handleGestureChange(g)}
+                      className={`px-2.5 py-1 rounded-md text-[11.5px] font-medium capitalize transition-colors ${
+                        gesture === g
+                          ? 'bg-emerald-500/15 text-emerald-300'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
                       }`}
                     >
-                      {finger.contact ? 'In Contact' : 'No Contact'}
-                    </span>
-                  </div>
-
-                  {/* Joint Angle Bar */}
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-[11px] text-slate-400">
-                      <span>Joint Angle</span>
-                      <span className="font-mono text-slate-200 font-semibold">
-                        {finger.angleDeg}°
-                      </span>
-                    </div>
-                    <div className="h-2 w-full bg-slate-900 rounded-full overflow-hidden border border-slate-800">
-                      <div
-                        className="h-full bg-gradient-to-r from-teal-500 to-emerald-400 rounded-full transition-all duration-300"
-                        style={{ width: `${Math.min(100, (finger.angleDeg / 90) * 100)}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Tactile Force Bar */}
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-[11px] text-slate-400">
-                      <span>Tactile Force</span>
-                      <span className="font-mono text-emerald-400 font-semibold">
-                        {finger.forceN.toFixed(1)} N / {finger.targetN.toFixed(1)} N
-                      </span>
-                    </div>
-                    <div className="h-2 w-full bg-slate-900 rounded-full overflow-hidden border border-slate-800">
-                      <div
-                        className="h-full bg-gradient-to-r from-purple-500 to-indigo-400 rounded-full transition-all duration-300"
-                        style={{ width: `${Math.min(100, (finger.forceN / 40) * 100)}%` }}
-                      />
-                    </div>
-                  </div>
+                      {g.replace(/_/g, ' ')}
+                    </button>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11.5px] text-slate-500 font-medium mr-1">Object</span>
+                  {objects.map((o) => (
+                    <button
+                      key={o.id}
+                      onClick={() => handleObjectChange(o.id)}
+                      className={`px-2.5 py-1 rounded-md text-[11.5px] font-medium transition-colors ${
+                        objectKey === o.id
+                          ? 'bg-violet-500/15 text-violet-300'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
+                      }`}
+                    >
+                      {o.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-          {/* ROS 2 Topic Console & Modbus Log Stream */}
-          <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl space-y-3">
-            <div className="flex items-center justify-between">
+              {result && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                  {FINGER_LABELS.map((label, idx) => {
+                    const pos = result.actuator_positions[idx] ?? 0;
+                    const force = result.actuator_forces_n[idx] ?? 0;
+                    const current = result.actuator_currents_ma[idx] ?? 0;
+                    return (
+                      <div key={label} className="app-well rounded-lg p-3.5 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[12px] font-medium text-slate-200">{label}</span>
+                          <span
+                            className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                              force > 0 ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/[0.04] text-slate-500'
+                            }`}
+                          >
+                            {force > 0 ? 'Contact' : 'No contact'}
+                          </span>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[10.5px] text-slate-500">
+                            <span>Position</span>
+                            <span className="font-data text-slate-300">{pos} / 1000</span>
+                          </div>
+                          <div className="h-1.5 w-full bg-black/30 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                              style={{ width: `${Math.min(100, pos / 10)}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[10.5px] text-slate-500">
+                            <span>Force / current</span>
+                            <span className="font-data text-slate-300">
+                              {force.toFixed(1)} N · {current} mA
+                            </span>
+                          </div>
+                          <div className="h-1.5 w-full bg-black/30 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-violet-500 rounded-full transition-all duration-300"
+                              style={{ width: `${Math.min(100, (force / 40) * 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="app-card p-5 space-y-3">
               <div className="flex items-center gap-2">
-                <Radio className="w-4 h-4 text-emerald-400 animate-pulse" />
-                <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider">
-                  Live ROS 2 & RS485 Modbus Telemetry Stream
-                </h3>
+                <Radio className="w-4 h-4 text-slate-500" />
+                <h3 className="text-[13px] font-semibold text-slate-200">Simulation event log</h3>
               </div>
-              <span className="text-[10px] font-mono text-emerald-400">115200 Baud • CRC OK</span>
+              <div className="app-well rounded-lg p-3.5 font-data text-[11.5px] text-slate-400 space-y-1 max-h-44 overflow-y-auto">
+                {logs.length === 0 && <span className="text-slate-600">No events yet.</span>}
+                {logs.map((log, idx) => (
+                  <div key={idx} className="flex items-start gap-2">
+                    <span className="text-emerald-600 select-none">›</span>
+                    <span className="break-all">{log}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="lg:col-span-4 space-y-5">
+            <div className="app-card p-5 space-y-4">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-slate-500" />
+                <h3 className="text-[13px] font-semibold text-slate-200">Grasp stability</h3>
+              </div>
+
+              <div className="app-well rounded-lg py-5 text-center space-y-1.5">
+                <div className="text-3xl font-semibold font-data text-emerald-400">
+                  {result ? (result.slip_risk * 100).toFixed(1) : '--'}%
+                </div>
+                <div className="text-[11px] text-slate-500">Calculated slip risk</div>
+                <div className="inline-block mt-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 text-[11px] font-medium">
+                  {result?.object_status ?? 'Awaiting simulation'}
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-1 border-t border-white/[0.06] text-[12.5px]">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Object</span>
+                  <span className="font-data text-slate-300">{result?.object_name ?? '—'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Stability score</span>
+                  <span className="font-data text-slate-300">
+                    {result ? `${(result.stability_score * 100).toFixed(0)}%` : '—'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Total actuator force</span>
+                  <span className="font-data text-slate-300">{result ? `${result.total_force_n.toFixed(1)} N` : '—'}</span>
+                </div>
+              </div>
             </div>
 
-            <div className="p-4 rounded-2xl bg-[#090d16] border border-slate-800/80 font-mono text-xs text-slate-300 space-y-1.5 max-h-44 overflow-y-auto">
-              {simLogs.map((log, idx) => (
-                <div key={idx} className="flex items-start gap-2">
-                  <span className="text-emerald-500 select-none">&gt;</span>
-                  <span className="break-all">{log}</span>
-                </div>
-              ))}
+            <div className="app-card p-5 space-y-2.5">
+              <div className="flex items-center gap-2">
+                <Cable className="w-4 h-4 text-slate-500" />
+                <h3 className="text-[13px] font-semibold text-slate-200">Wire protocol</h3>
+              </div>
+              <p className="text-[12px] text-slate-400 leading-relaxed">
+                Requests are framed with real CRC-16/MODBUS checksums over RS485 (115200 baud, 8N1). When no
+                physical hand answers, the driver honestly falls back to a software grasp-physics model instead
+                of faking a hardware link — see{' '}
+                <code className="font-data text-slate-300">tests/test_inspire_hand_real_serial_protocol.py</code>{' '}
+                for a proof against a virtual serial loopback.
+              </p>
             </div>
           </div>
         </div>
 
-        {/* Right Column: Hardware Metrics & Slip Risk (4 cols) */}
-        <div className="lg:col-span-4 space-y-6">
-          {/* Slip Risk & Stability Card */}
-          <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl space-y-5">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-emerald-400" />
-              <h3 className="text-base font-bold text-slate-100">Grasp Stability & Slip Risk</h3>
-            </div>
-
-            <div className="flex flex-col items-center justify-center p-6 rounded-2xl bg-slate-950 border border-slate-800 text-center">
-              <div className="text-4xl font-extrabold font-mono text-emerald-400">
-                {robot.slipRiskPercentage.toFixed(1)}%
-              </div>
-              <div className="text-xs text-slate-400 mt-1">Calculated Slip Probability</div>
-              <div className="mt-3 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
-                Stable • Friction Margin OK
-              </div>
-            </div>
-
-            <div className="space-y-3 pt-2 border-t border-slate-800/80 text-xs">
-              <div className="flex justify-between text-slate-300">
-                <span>Protocol</span>
-                <span className="font-mono text-slate-200">{robot.protocol}</span>
-              </div>
-              <div className="flex justify-between text-slate-300">
-                <span>Bus Interface</span>
-                <span className="font-mono text-slate-200">{robot.bus}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Environmental Sensors */}
-          <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl space-y-4">
-            <div className="flex items-center gap-2">
-              <Thermometer className="w-5 h-5 text-purple-400" />
-              <h3 className="text-base font-bold text-slate-100">Environmental Sensors</h3>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center">
-                <div className="text-xs text-slate-400">Motor Temp</div>
-                <div className="text-xl font-mono font-bold text-white mt-1">
-                  {robot.temperature} °C
-                </div>
-                <div className="text-[10px] text-emerald-400 mt-0.5">Optimal Range</div>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center">
-                <div className="text-xs text-slate-400">Bus Voltage</div>
-                <div className="text-xl font-mono font-bold text-white mt-1">
-                  {robot.voltage} V
-                </div>
-                <div className="text-[10px] text-emerald-400 mt-0.5">Nominal 24V</div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <Robot3DModel />
       </div>
     </div>
   );

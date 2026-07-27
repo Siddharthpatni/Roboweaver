@@ -3,7 +3,9 @@ name = "roboweaver"
 version = "0.1.0"
 description = "Compile Robotics Knowledge into Executable Intelligence"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "pyserial>=3.5",
+]
 
 [project.optional-dependencies]
 sim = [
@@ -17,7 +19,7 @@ roboweaver = "roboweaver.cli.main:main"
 
 [build-system]
 requires = ["setuptools>=68"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
