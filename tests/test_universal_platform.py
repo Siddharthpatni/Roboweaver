@@ -10,6 +10,7 @@ Verifies:
 
 import os
 import shutil
+import tempfile
 from pathlib import Path
 from roboweaver.skills.taxonomy import (
     IndustrialSkillCategory,
@@ -112,8 +113,7 @@ def test_full_ros2_package_generation():
     compiler = SkillCompiler(target_robot="kuka_iiwa")
     skill = compiler.compile("Pick up the heavy gear assembly", verbose=False)
 
-    out_dir = Path("/Users/siddharthpatni/.gemini/antigravity-ide/scratch/roboweaver/test_output_tmp")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(tempfile.mkdtemp(prefix="roboweaver_test_ros2pkg_"))
     try:
         pkg_path = generate_ros2_package(skill, out_dir)
         assert pkg_path.exists()

@@ -9,6 +9,7 @@ Verifies:
 """
 
 import shutil
+import tempfile
 from pathlib import Path
 from roboweaver.hardware.registry_robots import get_robot_spec
 from roboweaver.hardware.universal_driver import UniversalRobotDriver
@@ -124,8 +125,7 @@ def test_multi_robot_choreography_pipeline():
     print("  -> Generated composite Groot2 BehaviorTree XML with synchronized <Parallel> & <Sequence> nodes [PASSED]")
 
     # 4. Test Multi-Robot ROS 2 Launch Package Export
-    out_dir = Path("/Users/siddharthpatni/.gemini/antigravity-ide/scratch/roboweaver/test_output_tmp_choreography")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(tempfile.mkdtemp(prefix="roboweaver_test_choreography_"))
     try:
         pkg_path = choreographer.export_workcell_ros2_package(out_dir)
         assert pkg_path.exists()

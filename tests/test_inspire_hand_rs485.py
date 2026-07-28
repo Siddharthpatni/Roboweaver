@@ -10,6 +10,7 @@ Verifies:
 """
 
 import shutil
+import tempfile
 from pathlib import Path
 from roboweaver.hardware import get_robot_spec, InspireHandRS485Driver
 from roboweaver.codegen.inspire_ros2_gen import generate_inspire_hand_ros2_package
@@ -55,8 +56,7 @@ def test_inspire_hand_rs485_driver_and_gestures():
 def test_inspire_hand_ros2_package_generation():
     """Verify generating complete ROS 2 package for Inspire RH56F1-E2."""
     print("\n[TEST 3] Testing Inspire RH56F1-E2 ROS 2 Package Generation...")
-    out_dir = Path("/Users/siddharthpatni/.gemini/antigravity-ide/scratch/roboweaver/test_inspire_ros2_ws")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(tempfile.mkdtemp(prefix="roboweaver_test_inspire_ros2ws_"))
     try:
         pkg = generate_inspire_hand_ros2_package(
             output_dir=out_dir,
@@ -90,8 +90,7 @@ def test_inspire_hand_prompt_builder():
     assert "inspire_hand_rh56f1_e2" in parsed.robots
     assert "franka_panda" in parsed.robots
 
-    out_dir = Path("/Users/siddharthpatni/.gemini/antigravity-ide/scratch/roboweaver/test_inspire_workcell")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(tempfile.mkdtemp(prefix="roboweaver_test_inspire_workcell_"))
     try:
         choreographer, pkg_path = PromptToWorkcellBuilder.build_from_prompt(
             prompt, output_dir=out_dir, verbose=False
