@@ -201,6 +201,21 @@ export const Robotic3DViewport: React.FC<Robotic3DViewportProps> = ({
     const ringBend = bendOf(4, stateBend * 0.6);
     const pinkyBend = bendOf(5, stateBend * 0.4);
 
+    // Thumb lateral rotation (abduction) is the RH56F1-E2R-T1's second thumb
+    // actuator, published range 60-180 deg (Patni, "Interfacing and Use Cases
+    // for a Five-Finger Dexterous Hand Attached to a UR5e," Table III) -- a real
+    // DOF this model previously ignored entirely. A gripping gesture abducts the
+    // thumb toward opposition; an open hand keeps it closer to the palm.
+    const thumbAbductFraction = bendOf(1, state === 'Open' ? 0.15 : 0.75);
+    const thumbAbductDeg = 60 + thumbAbductFraction * 120;
+    const thumbYaw = ((thumbAbductDeg - 60) / 120) * (Math.PI * 0.46);
+    const cosThumbYaw = Math.cos(thumbYaw);
+    const sinThumbYaw = Math.sin(thumbYaw);
+    const rotateThumbYaw = (dx: number, dz: number): [number, number] => [
+      dx * cosThumbYaw + dz * sinThumbYaw,
+      -dx * sinThumbYaw + dz * cosThumbYaw,
+    ];
+
     // Palm 8 corners
     const c: Point3D[] = [
       { x: -25, y: -20, z: -10 }, // 0
@@ -239,22 +254,36 @@ export const Robotic3DViewport: React.FC<Robotic3DViewportProps> = ({
     ];
 
     fingers.forEach((f) => {
-      const pBase = { x: f.baseX, y: f.baseY, z: f.baseZ };
+      // The thumb's base and flexion plane both swing with lateral rotation --
+      // everything else about its kinematics (coupled 2-joint flexion from one
+      // actuator, same as the four fingers) is unchanged.
+      const pBase = f.isThumb
+        ? (() => {
+            const [rx, rz] = rotateThumbYaw(f.baseX, f.baseZ);
+            return { x: rx, y: f.baseY, z: rz };
+          })()
+        : { x: f.baseX, y: f.baseY, z: f.baseZ };
       const len1 = 25;
       const len2 = 20;
 
       const theta1 = f.isThumb ? f.bend * 1.1 : f.bend * 1.25;
+      const flexDx = f.isThumb ? Math.cos(theta1) * len1 * 0.5 : 0;
+      const flexDz = -Math.sin(theta1) * len1;
+      const [midDx, midDz] = f.isThumb ? rotateThumbYaw(flexDx, flexDz) : [flexDx, flexDz];
       const pMid = {
-        x: pBase.x + (f.isThumb ? Math.cos(theta1) * len1 * 0.5 : 0),
+        x: pBase.x + midDx,
         y: pBase.y + Math.cos(theta1) * len1,
-        z: pBase.z - Math.sin(theta1) * len1,
+        z: pBase.z + midDz,
       };
 
       const theta2 = theta1 * 1.4;
+      const tipDx = f.isThumb ? 6 : 0;
+      const tipDz = -Math.sin(theta2) * len2;
+      const [tipRDx, tipRDz] = f.isThumb ? rotateThumbYaw(tipDx, tipDz) : [tipDx, tipDz];
       const pTip = {
-        x: pMid.x + (f.isThumb ? 6 : 0),
+        x: pMid.x + tipRDx,
         y: pMid.y + Math.cos(theta2) * len2,
-        z: pMid.z - Math.sin(theta2) * len2,
+        z: pMid.z + tipRDz,
       };
 
       draw3DThickLine(ctx, pBase, pMid, '#ffb300', '#8a5c00', f.width, w, h);
