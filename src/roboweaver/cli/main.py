@@ -117,8 +117,11 @@ def cmd_compile(args) -> int:
             "tasks": [{"type": t.type.value, "description": t.description} for t in skill.task_graph.tasks],
             "diagnostics": [d.to_dict() for d in result.diagnostics],
         }
-        if explain_passes and result.pipeline is not None:
-            out["pipeline"] = result.pipeline.to_dict()
+        if explain_passes:
+            if result.skill_pipeline is not None:
+                out["skill_pipeline"] = result.skill_pipeline.to_dict()
+            if result.pipeline is not None:
+                out["pipeline"] = result.pipeline.to_dict()
         print(json.dumps(out, indent=2))
         return 0
 
@@ -129,15 +132,23 @@ def cmd_compile(args) -> int:
         for d in result.diagnostics:
             print(f"    \033[33m{d.code}\033[0m {d.message}")
 
-    if explain_passes and result.pipeline is not None:
-        print(f"\n  \033[1;36mPass Manager\033[0m (opt-level {opt_level.value}):")
-        for rec in result.pipeline.records:
-            status = "skipped" if rec.skipped else ("modified" if rec.modified else "unchanged")
-            print(
-                f"    • {rec.pass_name:<24} {rec.timing_s * 1000:>7.3f}ms  "
-                f"[{status}]  {len(rec.diagnostics)} diagnostic(s)"
-            )
-        print(f"    Total: {result.pipeline.total_timing_s() * 1000:.3f}ms across {len(result.pipeline.records)} pass(es)")
+    if explain_passes:
+        def _print_pass_table(title: str, records) -> None:
+            print(f"\n  \033[1;36m{title}\033[0m (opt-level {opt_level.value}):")
+            for rec in records:
+                status = "skipped" if rec.skipped else ("modified" if rec.modified else "unchanged")
+                metrics_note = f"  {rec.metrics}" if rec.metrics else ""
+                print(
+                    f"    • {rec.pass_name:<28} {rec.timing_s * 1000:>7.3f}ms  "
+                    f"[{status}]  {len(rec.diagnostics)} diagnostic(s){metrics_note}"
+                )
+
+        if result.skill_pipeline is not None:
+            _print_pass_table("Optimization Pipeline (CompiledSkill)", result.skill_pipeline.records)
+            print(f"    Total: {result.skill_pipeline.total_timing_s() * 1000:.3f}ms across {len(result.skill_pipeline.records)} pass(es)")
+        if result.pipeline is not None:
+            _print_pass_table("RoboIR Pipeline", result.pipeline.records)
+            print(f"    Total: {result.pipeline.total_timing_s() * 1000:.3f}ms across {len(result.pipeline.records)} pass(es)")
 
     repo = SkillRepository()
     meta = SkillPackageMetadata(

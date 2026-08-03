@@ -11,18 +11,17 @@ Multi-stage pipeline:
 from __future__ import annotations
 
 import re
-from typing import Any, Sequence
+from typing import Any
 
 from dataclasses import dataclass
 
-from roboweaver.hardware import RobotSpec, NDOFIKSolver, get_robot_spec, get_franka_panda_spec
+from roboweaver.hardware import RobotSpec, get_robot_spec, get_franka_panda_spec
 from roboweaver.skills import IndustrialSkillCategory, get_industrial_skill_template
-from roboweaver.math3d import Mat3, Transform3D, Vec3
+from roboweaver.math3d import Mat3, Transform3D
 from roboweaver.types import (
     Action,
     BTNode,
     CompiledSkill,
-    IKSolution,
     MotionPlan,
     MotionSegment,
     SkillIntent,
@@ -42,6 +41,14 @@ from roboweaver.ir import (
     CapabilityPass,
     SafetyPass,
 )
+from roboweaver.optimize import (
+    SkillPassManager,
+    SkillPipelineTrace,
+    CompiledSkillVerificationPass,
+    WaypointDecimationPass,
+    RedundantSegmentElisionPass,
+)
+from roboweaver.optimize.motion_cache import compute_pick_place_primitives
 from roboweaver.nlu import OllamaIntentParser, OllamaParseResult
 
 # Single source of truth for Action -> IndustrialSkillCategory (was duplicated in
@@ -72,13 +79,19 @@ class CompilationResult:
 
     `pipeline` is additive (default None) -- the PipelineTrace the Pass Manager
     (ir/pass_manager.py) produced running RoboIRVerificationPass/CapabilityPass/
-    SafetyPass over `ir`. Every existing caller reads `.skill`/`.ir`/`.diagnostics` by
-    name, so this field can't break anything; `.diagnostics` is still the same flat
-    list it always was (trace.diagnostics()), not a breaking change to that shape."""
+    SafetyPass over `ir`. `skill_pipeline` is the same idea for the optimization
+    pipeline (optimize/pass_manager.py) that runs over `skill` *before* `ir` is even
+    built -- see compile_with_diagnostics(). Every existing caller reads
+    `.skill`/`.ir`/`.diagnostics` by name, so these additive fields can't break
+    anything; `.diagnostics` is still the same flat list it always was
+    (skill_pipeline.diagnostics() + ir_pipeline.diagnostics()), not a breaking change
+    to that shape. `skill` is the (possibly optimized) CompiledSkill the optimization
+    pipeline produced, not necessarily the same object compile() returned."""
     skill: CompiledSkill
     ir: RoboIR
     diagnostics: list[CompilerDiagnostic]
     pipeline: PipelineTrace | None = None
+    skill_pipeline: SkillPipelineTrace | None = None
 
 
 class SkillCompiler:
@@ -170,10 +183,21 @@ class SkillCompiler:
             behavior_tree=behavior_tree,
         )
 
-    # Default pipeline order: verify the IR's own structural shape before checking it
-    # against a robot's declared capabilities, then run the (data-heavier) safety
-    # checks last. See ir/pass_manager.py / ir/passes.py for what each pass does.
+    # Default RoboIR pipeline order: verify the IR's own structural shape before
+    # checking it against a robot's declared capabilities, then run the (data-heavier)
+    # safety checks last. See ir/pass_manager.py / ir/passes.py for what each does.
     _DEFAULT_PASSES = (RoboIRVerificationPass, CapabilityPass, SafetyPass)
+
+    # Default CompiledSkill (optimization) pipeline: verify structure, optimize,
+    # verify structure again -- the same before/after pattern RoboIRVerificationPass
+    # established, proving the optimizers didn't break anything they touched. See
+    # optimize/passes.py.
+    _DEFAULT_SKILL_PASSES = (
+        CompiledSkillVerificationPass,
+        WaypointDecimationPass,
+        RedundantSegmentElisionPass,
+        CompiledSkillVerificationPass,
+    )
 
     def compile_with_diagnostics(
         self,
@@ -181,25 +205,49 @@ class SkillCompiler:
         verbose: bool = True,
         optimization_level: OptimizationLevel = OptimizationLevel.O1,
     ) -> CompilationResult:
-        """Stage 05 (RoboIR Generation) + Pass Manager (ir/pass_manager.py), on top of
-        Stage 04's SkillIntent and Stage 06's compiled skill (compile()).
+        """Stage 05 (RoboIR Generation) + both Pass Managers, on top of Stage 04's
+        SkillIntent and Stage 06's compiled skill (compile()).
+
+        Pipeline order matters here: the CompiledSkill optimization pipeline
+        (optimize/pass_manager.py) runs *before* build_ir()/the RoboIR pipeline, so
+        that SafetyPass verifies the final, possibly-optimized trajectories -- not
+        the pre-optimization ones. RoboIR is built from the optimized skill's intent
+        (unaffected by optimization today, but this keeps the ordering correct as
+        RoboIR eventually absorbs more of CompiledSkill -- docs/COMPILER_ROADMAP.md
+        Phase 2's deferred list).
 
         Raises SkillCompilationError if a required capability (e.g. sensing.force_torque)
         isn't declared on the target robot -- a compiler that silently produced a skill
         the robot can't execute would be worse than refusing to compile it. Non-blocking
         warnings (e.g. missing perception) are returned on the CompilationResult instead.
 
-        `optimization_level` is plumbed through to every pass's PassContext but, as of
-        this phase, gates zero registered passes -- no real optimization pass exists
-        yet (docs/COMPILER_ROADMAP.md Phase 4). Passing it is forward-compatible, not
-        yet behavior-changing.
+        `optimization_level` at O0 disables WaypointDecimationPass/
+        RedundantSegmentElisionPass (matching GCC/LLVM convention) -- the first real
+        payoff of the plumbing Phase 2 added.
         """
         skill = self.compile(instruction, verbose=verbose)
-        initial_ir = build_ir(skill.intent, self.robot_spec, raw_instruction=instruction)
+
+        skill_pass_manager = SkillPassManager([cls() for cls in self._DEFAULT_SKILL_PASSES])
+        skill_trace = skill_pass_manager.run(skill, self.robot_spec, optimization_level)
+        optimized_skill = skill_trace.final_skill
+
+        initial_ir = build_ir(optimized_skill.intent, self.robot_spec, raw_instruction=instruction)
 
         pass_manager = PassManager([cls() for cls in self._DEFAULT_PASSES])
-        trace = pass_manager.run(initial_ir, skill, self.robot_spec, optimization_level)
-        diagnostics = trace.diagnostics()
+        trace = pass_manager.run(initial_ir, optimized_skill, self.robot_spec, optimization_level)
+
+        # CompiledSkillVerificationPass runs both before and after optimization
+        # (verify-before/after, see _DEFAULT_SKILL_PASSES) -- a real, unmodified gap
+        # like RW502 fires identically both times. Deduped here for a clean
+        # user-facing diagnostics list; skill_trace itself (CompilationResult.
+        # skill_pipeline) still records both raw runs for inspection.
+        seen: set[tuple[str, str, str]] = set()
+        diagnostics: list[CompilerDiagnostic] = []
+        for d in skill_trace.diagnostics() + trace.diagnostics():
+            key = (d.code, d.message, d.reason)
+            if key not in seen:
+                seen.add(key)
+                diagnostics.append(d)
 
         errors = [d for d in diagnostics if d.severity == "error"]
         if errors:
@@ -212,7 +260,10 @@ class SkillCompiler:
             for d in diagnostics:
                 print(f"\n\033[1;33m⚠ {d.code}\033[0m {d.message}")
 
-        return CompilationResult(skill=skill, ir=trace.final_ir, diagnostics=diagnostics, pipeline=trace)
+        return CompilationResult(
+            skill=optimized_skill, ir=trace.final_ir, diagnostics=diagnostics,
+            pipeline=trace, skill_pipeline=skill_trace,
+        )
 
     # ── Synonym / keyword scoring table ──────────────────────────────────
     # Each Action maps to a list of (keyword, score) pairs.  The parser
@@ -377,62 +428,45 @@ class SkillCompiler:
         return TaskGraph(tasks=tmpl.tasks)
 
     def _plan_motion(self, intent: SkillIntent, task_graph: TaskGraph, verbose: bool = True) -> MotionPlan:
+        """Stage 3: IK + trajectory generation for the standard 3-pose pick/place
+        motion (grasp/approach/lift). The numeric computation itself is memoized per
+        robot in optimize/motion_cache.py -- see that module's docstring for why
+        caching by robot_spec.id alone is honest today (every compile plans against
+        the same fixed target poses, since no perception system derives a real
+        per-object pose yet). This method only does the object-name labeling and
+        verbose printing; the IK/trajectory math lives in motion_cache.py so
+        WaypointDecimationPass (optimize/passes.py) can reuse the identical
+        velocity-limit formula instead of a second, drifting copy."""
         if verbose:
             print(f"\n\033[1;36m━━━ STAGE 3/4: Motion Planning ({self.robot_spec.name}) \033[0m")
 
-        solver = NDOFIKSolver(self.robot_spec)
-        ik_results = {}
-        trajectories = {}
-
-        # Default pose targets
-        grasp_target = Vec3(0.35, 0.0, 0.13)
-        approach_target = Vec3(0.35, 0.0, 0.25)
-        lift_target = Vec3(0.35, 0.0, 0.31)
-
-        ok1, q_grasp, res1, iters1 = solver.solve(grasp_target)
-        if verbose:
-            print(f"  ✓ IK Grasp pose ({intent.object_name})    (residual: {res1:.4f}m, {iters1} iters)")
-
-        ok2, q_approach, res2, iters2 = solver.solve(approach_target)
-        if verbose:
-            print(f"  ✓ IK Approach pose                   (residual: {res2:.4f}m, {iters2} iters)")
-
-        ok3, q_lift, res3, iters3 = solver.solve(lift_target)
-        if verbose:
-            print(f"  ✓ IK Lift/Retract pose                (residual: {res3:.4f}m, {iters3} iters)")
-
-        ik_results["grasp"] = IKSolution(joint_angles=q_grasp, residual=res1, iterations=iters1, success=ok1)
-        ik_results["approach"] = IKSolution(joint_angles=q_approach, residual=res2, iterations=iters2, success=ok2)
-        ik_results["lift"] = IKSolution(joint_angles=q_lift, residual=res3, iterations=iters3, success=ok3)
-
-        # Generate smooth trajectories. The zero configuration isn't a valid seed for
-        # every robot -- Franka's panda_joint4 range (-3.0718, -0.0698) doesn't include
-        # 0 -- so "home" clamps into each joint's declared range rather than assuming 0
-        # is always reachable (RW302, ir/safety.py, caught this the first time it ran).
-        # Bounded to `dof`, not len(joints): some registry entries (turtlebot4) list
-        # more joints than their declared dof (a fixed, non-actuated camera joint is
-        # included in the joints list) -- the same bound get_joint_limits()/
-        # get_max_velocities() callers already apply everywhere else in this codebase.
-        home_q = [
-            max(j.lower_limit, min(j.upper_limit, 0.0)) for j in self.robot_spec.joints[: self.robot_spec.dof]
-        ]
-
-        dur_approach = self._min_safe_duration(home_q, q_approach, default=1.0)
-        dur_grasp = self._min_safe_duration(q_approach, q_grasp, default=0.4)
-        dur_lift = self._min_safe_duration(q_grasp, q_lift, default=0.5)
-
-        traj_approach = self._generate_min_jerk_traj(home_q, q_approach, steps=100)
-        traj_grasp = self._generate_min_jerk_traj(q_approach, q_grasp, steps=40)
-        traj_lift = self._generate_min_jerk_traj(q_grasp, q_lift, steps=50)
-
-        trajectories[f"Approach above {intent.object_name}"] = MotionSegment(home_q, q_approach, traj_approach, dur_approach)
-        trajectories[f"Grasp pose at {intent.object_name}"] = MotionSegment(q_approach, q_grasp, traj_grasp, dur_grasp)
-        trajectories["Lift target to transfer height"] = MotionSegment(q_grasp, q_lift, traj_lift, dur_lift)
+        primitives, cache_hit = compute_pick_place_primitives(self.robot_spec)
+        note = " \033[2m(cached)\033[0m" if cache_hit else ""
 
         if verbose:
-            print(f"\n  → Trajectory: home → approach    ({dur_approach:.2f}s, {len(traj_approach)} waypoints)")
-            print(f"  → Trajectory: approach → grasp   ({dur_grasp:.2f}s, {len(traj_grasp)} waypoints)")
-            print(f"  → Trajectory: grasp → lift       ({dur_lift:.2f}s, {len(traj_lift)} waypoints)")
+            print(f"  ✓ IK Grasp pose ({intent.object_name}){note}    (residual: {primitives.ik_grasp.residual:.4f}m, {primitives.ik_grasp.iterations} iters)")
+            print(f"  ✓ IK Approach pose{note}                   (residual: {primitives.ik_approach.residual:.4f}m, {primitives.ik_approach.iterations} iters)")
+            print(f"  ✓ IK Lift/Retract pose{note}                (residual: {primitives.ik_lift.residual:.4f}m, {primitives.ik_lift.iterations} iters)")
+
+        ik_results = {
+            "grasp": primitives.ik_grasp, "approach": primitives.ik_approach, "lift": primitives.ik_lift,
+        }
+        trajectories = {
+            f"Approach above {intent.object_name}": MotionSegment(
+                primitives.home_q, primitives.ik_approach.joint_angles, primitives.traj_approach, primitives.dur_approach
+            ),
+            f"Grasp pose at {intent.object_name}": MotionSegment(
+                primitives.ik_approach.joint_angles, primitives.ik_grasp.joint_angles, primitives.traj_grasp, primitives.dur_grasp
+            ),
+            "Lift target to transfer height": MotionSegment(
+                primitives.ik_grasp.joint_angles, primitives.ik_lift.joint_angles, primitives.traj_lift, primitives.dur_lift
+            ),
+        }
+
+        if verbose:
+            print(f"\n  → Trajectory: home → approach    ({primitives.dur_approach:.2f}s, {len(primitives.traj_approach)} waypoints)")
+            print(f"  → Trajectory: approach → grasp   ({primitives.dur_grasp:.2f}s, {len(primitives.traj_grasp)} waypoints)")
+            print(f"  → Trajectory: grasp → lift       ({primitives.dur_lift:.2f}s, {len(primitives.traj_lift)} waypoints)")
 
         return MotionPlan(trajectories=trajectories, ik_results=ik_results, robot_model=self.robot_spec.id)
 
@@ -440,36 +474,6 @@ class SkillCompiler:
         cat = ACTION_CATEGORY_MAP.get(intent.action, IndustrialSkillCategory.PICK_AND_PLACE)
         tmpl = get_industrial_skill_template(cat, intent.object_name)
         return tmpl.behavior_tree_root
-
-    def _min_safe_duration(self, start_q: Sequence[float], end_q: Sequence[float], default: float) -> float:
-        """Shortest duration for a min-jerk blend between start_q and end_q that keeps
-        every joint's peak velocity within its declared max_velocity (ir/safety.py's
-        RW304 checks the result of this, finite-difference, against the same limits).
-
-        The min-jerk profile s(t) = 10t^3 - 15t^4 + 6t^5 has its peak slope ds/dt = 1.875
-        at t=0.5, so peak joint velocity = 1.875 * |delta_q_j| / duration. A 10% margin
-        covers the gap between that closed-form peak and the discrete finite-difference
-        estimate RW304 computes over a finite number of waypoints.
-        """
-        max_vels = self.robot_spec.get_max_velocities()
-        required = default
-        for j in range(min(len(start_q), len(end_q), len(max_vels))):
-            if max_vels[j] <= 0:
-                continue
-            delta = abs(end_q[j] - start_q[j])
-            needed = (1.875 * delta / max_vels[j]) * 1.1
-            required = max(required, needed)
-        return required
-
-    def _generate_min_jerk_traj(self, start_q: list[float], end_q: list[float], steps: int = 50) -> list[list[float]]:
-        waypoints = []
-        n = len(start_q)
-        for i in range(steps + 1):
-            t = i / steps
-            s = 10 * (t ** 3) - 15 * (t ** 4) + 6 * (t ** 5)
-            wp = [start_q[j] + s * (end_q[j] - start_q[j]) for j in range(n)]
-            waypoints.append(wp)
-        return waypoints
 
     def _print_bt(self, node: BTNode, prefix: str = "", is_last: bool = True) -> None:
         connector = "└─ " if is_last else "├─ "

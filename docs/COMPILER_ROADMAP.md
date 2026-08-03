@@ -14,29 +14,32 @@ codebase's documentation convention (REDESIGN.md §11): every "done" claim is ci
 file and, where relevant, by test; every phase states what's still open rather than
 letting a partial implementation read as complete.
 
-**Written 2026-08-03**, when Phase 2 below was completed. Phases 3–14 are recorded as
-they were scoped that day and haven't been started — a future session should treat
-each phase's description as a starting brief, not a fixed spec, and re-verify the
-codebase state before resuming (this file decays like any other design doc, see
-top-level `CLAUDE.md`/session norms on trusting current code over stale memory).
+**Written 2026-08-03**, when Phase 2 was completed; **updated 2026-08-04** when Phase
+3 and Phase 4 were completed together (they turned out to share one architectural
+decision — see Phase 3's writeup). Phases 5–14 are recorded as they were scoped on
+2026-08-03 and haven't been started — a future session should treat each phase's
+description as a starting brief, not a fixed spec, and re-verify the codebase state
+before resuming (this file decays like any other design doc, see top-level
+`CLAUDE.md`/session norms on trusting current code over stale memory).
 
-## Maturity scorecard (baseline, 2026-08-03)
+## Maturity scorecard
 
-Self-assessed against LLVM/MLIR/TVM/TensorRT as a reference point, before Phase 2's
-work landed. Re-score after each phase rather than trusting this snapshot.
+Self-assessed against LLVM/MLIR/TVM/TensorRT as a reference point. Re-score after each
+phase rather than trusting this snapshot.
 
-| Area | Maturity (baseline) |
+| Area | Maturity |
 |---|---|
 | Compiler pipeline | 8.5/10 |
 | RoboIR | 8/10 → improved by Phase 2 (frozen, pass-managed, diffable) |
-| Safety verification | 8.5/10 |
+| Safety verification | 8.5/10 → Phase 4's WaypointDecimationPass is independently re-verified against it (see below) |
 | Runtime execution | 8/10 |
 | Runtime recovery | 8.5/10 |
-| Multi-robot support | 7.5/10 |
+| Multi-robot support | 7.5/10 → 8/10: Phase 3 added real cycle/resource-conflict detection over the DAG |
 | Backend abstraction | 8/10 |
 | Code generation | 8/10 |
 | Knowledge layer | 7.5/10 |
-| Optimization framework | 4/10 → plumbing added by Phase 2 (OptimizationLevel), zero real passes yet |
+| Optimization framework | 4/10 → 6/10: 2 real optimization passes + a motion-plan cache, gated by `OptimizationLevel` for the first time |
+| Static analysis | (new row) 5/10: 2 real CompiledSkill checks (RW501/502/505) + 3 real choreography DAG checks (RW601/602/605); collision/dynamics-dependent checks still deferred |
 | Formal verification | 3/10 |
 | Benchmarking | 2/10 |
 | Plugin ecosystem | 3/10 |
@@ -124,25 +127,129 @@ numbering at Phase 2 to match the original planning conversation; there is no ga
   round, to keep the change scoped; a natural, low-effort follow-up
   (`dashboard/server.py`'s `/api/compile` already has `result` in scope).
 
-## Phase 3 — Static Analysis — Not started
+## Phase 3 — Static Analysis — **Done** (2026-08-04, jointly with Phase 4)
 
-Expand `ir/safety.py` beyond its current 6 checks (reachability, workspace/floor,
-joint limits, payload, velocity, manipulability/singularity) toward: collision proof,
-cycle/deadlock detection over the task graph, execution-graph validation, resource
-conflicts, timing analysis, and reachability certificates. Explicitly not:
-battery/thermal estimation or cable/tool collision without a real geometry/dynamics
-model to back them — this codebase's stated ethos (see `ir/safety.py`'s own
-docstring) refuses to check a fabricated value against a real limit.
+**Architectural finding that shaped both phases:** RoboIR still has no task/motion/
+behavior-tree fields (Phase 2's own deferred list), so any check touching tasks,
+waypoints, or timing has to operate on `CompiledSkill`, not `RoboIR`. Rather than
+genericize `ir/pass_manager.py::PassManager` (which would mean renaming already-
+shipped, already-tested API — `PassRecord.ir_before/ir_after`,
+`PipelineTrace.initial_ir/final_ir`, `CompilationResult.ir` — across `compiler.py`,
+`cli/main.py`, `ir/diff.py`, `tests/test_pass_manager.py` — for a mostly-cosmetic
+genericity benefit), a second, small, symmetric Pass Manager was built for
+`CompiledSkill`: `src/roboweaver/optimize/pass_manager.py` (`SkillPass`,
+`SkillPassContext`, `SkillPassResult`, `SkillPassRecord`, `SkillPipelineTrace`,
+`SkillPassManager` — identical shape to `ir/pass_manager.py`, deliberately not shared
+code). Phase 3's static-analysis passes and Phase 4's optimization passes both run
+through it, which is why they shipped together.
 
-## Phase 4 — Compiler Optimizations — Not started
+Also found: **the task graph is a flat list, not a graph** (`TaskGraph.tasks:
+list[Task]`, no dependency edges) — cycle/deadlock/resource-conflict detection don't
+structurally apply to a single skill. They do apply, for real, to
+`fleet/choreographer.py::WorkcellSchedule` (a genuine multi-robot DAG with
+`depends_on` edges), which is where those checks actually landed.
 
-The first *real* optimization passes: waypoint merge, trajectory smoothing,
-redundant-motion removal, gripper-delay elimination, joint-energy reduction,
-payload-aware optimization, motion-cache reuse. Each should report real
-before/after metrics (moves removed, time saved, path/energy/joint-travel reduction)
-computed from the actual trajectories, not estimated. This is what finally gives
-`OptimizationLevel` (Phase 2) something to gate, and `ir/diff.py`'s `diff_trace()`
-its first genuinely non-empty diffs.
+**Real, cited by file:**
+
+- **`CompiledSkillVerificationPass`** (`src/roboweaver/optimize/passes.py`) —
+  `RW501` (error): empty `task_graph.tasks`. `RW502` (warning): a `MOVE_TO` task whose
+  description matches no key in `motion_plan.trajectories`/`ik_results` — surfaced a
+  real, pervasive, pre-existing bug: `compiler.py::_plan_motion` only ever plans the
+  fixed 3-pose pick/place motion regardless of skill category, so most non-pick/place
+  templates' `MOVE_TO` tasks (and even `PICK_AND_PLACE`'s own "Transfer to dropoff
+  location") have no matching motion data — `runtime/engine.py::execute()` silently
+  no-ops for them today. Warning, not error, for the same reason `RW201` (missing
+  perception) is a warning: making a pervasive, disclosed, not-yet-fixed gap a
+  blocking error would refuse to compile nearly the whole registry. `RW505` (warning):
+  a trajectory segment consuming >60% of the real, computed total cycle time — a
+  genuine timing-analysis signal, not estimated. Runs both before and after Phase 4's
+  optimization passes (regression guard + proof-of-no-breakage), same pattern as
+  `ir/passes.py::RoboIRVerificationPass`.
+- **Choreography DAG static analysis** (`src/roboweaver/fleet/choreography_verification.py`,
+  new — reuses the existing `CompilerDiagnostic` type, no new diagnostic type needed):
+  `RW605` (error) dangling `depends_on` reference; `RW601` (error) cyclic dependency,
+  with the actual cyclic step ids in `reason` (a structured version of
+  `WorkcellSchedule.get_execution_tiers()`'s pre-existing bare `raise ValueError`,
+  which is untouched — this is additive); `RW602` (error) the same `robot_id`
+  assigned to more than one step within a concurrent execution tier — a real
+  correctness bug (a robot can't run two steps at once) nothing checked before.
+  Wired into `MultiRobotChoreographer.compile_workcell()`, raising the existing
+  `SkillCompilationError` on any error-severity finding.
+  **Not checked, and why:** `handover_target` (`WorkcellTaskStep`) turned out, on
+  inspection, to be write-only everywhere it's touched (`dashboard/server.py`,
+  `fleet/prompt_builder.py`) — set but never read or acted on by any real logic. Its
+  one concrete usage (`tests/test_multi_robot_choreography.py`) sets it to a
+  *robot_id*, not a step_id, contradicting the "target step" semantics a validator
+  would have assumed. Validating a field no consuming code has pinned down would be
+  guessing, not checking — deferred until `handover_target` is actually consumed by
+  something.
+  **Also not checked:** collision proof, cable/tool collision, battery/thermal
+  estimation — no geometry or dynamics model exists (unchanged since `ir/safety.py`'s
+  own docstring ruled these out).
+- **Tests.** `tests/test_choreography_verification.py` — 6 tests (clean DAG, cycle,
+  resource conflict, conflict-resolved-by-dependency, dangling reference, end-to-end
+  `compile_workcell()` refusal).
+
+## Phase 4 — Compiler Optimizations — **Done** (2026-08-04, jointly with Phase 3)
+
+**Real, cited by file** (`src/roboweaver/optimize/passes.py` unless noted):
+
+- **`WaypointDecimationPass`** — real trajectory compression: for each segment,
+  finds the largest *uniform* stride (keep every Nth waypoint) that (a) evenly
+  divides the segment's waypoint-count-minus-one, so the true final waypoint always
+  lands exactly on-stride and every kept interval spans an identical amount of time —
+  keeping `ir/safety.py::_check_velocity_limits`'s uniform-time-stepping assumption
+  valid on the decimated result, which is exactly why this rules out non-uniform
+  methods like Ramer-Douglas-Peucker here — (b) leaves at least 10 waypoints, and (c)
+  keeps every joint's finite-difference velocity within
+  `robot_spec.get_max_velocities()`, computed in-pass with the same formula RW304
+  uses, so the choice is self-verifying. Reports real `waypoints_before`/
+  `waypoints_after`/`pct_reduction` metrics — 82.9% (193→33 waypoints) on the
+  standard Franka pick/place demo. `tests/test_optimize_passes.py` re-runs
+  `ir/safety.py::check_safety()` on the decimated result and asserts RW304 stays
+  clean — proof, not assumption. Gated by `OptimizationLevel`: a no-op at O0, the
+  **first pass that gives Phase 2's `OptimizationLevel` plumbing something real to
+  gate.**
+- **`RedundantSegmentElisionPass`** — collapses a trajectory segment to its two
+  endpoints (zero duration) when `start_pose`≈`end_pose`. Doesn't fire on today's
+  standard demo poses (real, non-trivial deltas) — proven with a synthetic
+  near-zero-delta segment in tests, not assumed to fire "by luck". Also gated by
+  `OptimizationLevel`.
+- **Motion-plan cache** (`src/roboweaver/optimize/motion_cache.py`, new) — every
+  compile today plans against the same 3 fixed Cartesian poses (no perception system
+  derives a real per-object pose yet), so the IK+trajectory computation is, honestly,
+  a pure function of `robot_spec.id` alone right now. `compute_pick_place_primitives()`
+  memoizes it per robot; `compiler.py::_plan_motion` became a thin wrapper (labels the
+  cached primitives with the object name, unchanged verbose output plus a
+  `(cached)` note). Measured effect: the full test suite (containing many repeated
+  compiles per robot) dropped from ~25s to ~14s. **Documented limitation, not
+  hidden:** the cache key must include the target pose, not just `robot_spec.id`,
+  once perception is ever wired in — it will silently serve a stale plan otherwise.
+- **Pipeline ordering fix.** `compiler.py::compile_with_diagnostics()` now runs the
+  optimization pipeline (`SkillPassManager`) *before* `build_ir()`/the RoboIR pipeline,
+  so `SafetyPass` verifies the final, optimized trajectories — not pre-optimization
+  ones. `CompilationResult` gained one more additive field, `skill_pipeline:
+  SkillPipelineTrace | None` (same backward-compatible pattern as Phase 2's
+  `pipeline`). Duplicate diagnostics from `CompiledSkillVerificationPass` running
+  twice are deduped in the final `.diagnostics` list; the raw two-run trace is still
+  available via `.skill_pipeline` for inspection.
+- **CLI.** `roboweaver compile --explain-passes` now prints both pipelines
+  (optimization, then RoboIR); `--opt-level O0` visibly shows the two optimization
+  passes as `[skipped]`.
+- **Tests.** `tests/test_optimize_passes.py` — 9 tests.
+
+**Deferred, and why (not fabricated):**
+
+- **Joint-energy reduction / payload-aware optimization** — need a dynamics/mass
+  model RoboWeaver doesn't have (the same gap `ir/safety.py` already documents for
+  torque limits).
+- **"Trajectory smoothing"** — nothing to smooth: `compiler.py` already generates
+  min-jerk (quintic) trajectories, which are smooth by construction.
+- **Gripper-delay elimination** — would mean shortening a `WAIT` task's duration with
+  no real data to justify the new number; the same class of fabrication this
+  codebase's existing passes refuse to produce.
+- **The roadmap's literal MOVE/GRASP/WAIT-level diff mockup** — still blocked on
+  RoboIR absorbing task/motion data (Phase 2's deferred list), unchanged.
 
 ## Phase 5 — Backend Architecture — Not started
 

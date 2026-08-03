@@ -21,8 +21,10 @@ from typing import Any
 
 from roboweaver.compiler import SkillCompiler
 from roboweaver.hardware import get_robot_spec, RobotSpec
+from roboweaver.ir import SkillCompilationError
 from roboweaver.types import CompiledSkill, BTNode
 from roboweaver.codegen.groot2 import export_groot2_xml
+from roboweaver.fleet.choreography_verification import check_choreography
 
 
 @dataclass
@@ -112,7 +114,24 @@ class MultiRobotChoreographer:
         )
 
     def compile_workcell(self, verbose: bool = True) -> WorkcellSchedule:
-        """Compile all task steps for each target robot embodiment."""
+        """Compile all task steps for each target robot embodiment.
+
+        Runs check_choreography() (fleet/choreography_verification.py) first --
+        a cyclic dependency, dangling depends_on reference, or a robot double-booked
+        within a concurrent execution tier is a real scheduling bug that should
+        refuse to compile, the same way SkillCompiler.compile_with_diagnostics()
+        refuses on a blocking RoboIR diagnostic."""
+        diagnostics = check_choreography(self.schedule)
+        errors = [d for d in diagnostics if d.severity == "error"]
+        if errors:
+            if verbose:
+                for d in errors:
+                    print(f"\n\033[1;31m✗ {d.code}\033[0m {d.message}\n  {d.reason}")
+            raise SkillCompilationError(errors)
+        if verbose:
+            for d in diagnostics:
+                print(f"\n\033[1;33m⚠ {d.code}\033[0m {d.message}")
+
         if verbose:
             print(f"\n\033[1;35m━━━ Multi-Robot Choreography Pipeline: [{self.workcell_name}] ━━━\033[0m")
             print(f"  Total Choreographed Steps: {len(self.schedule.steps)}")
