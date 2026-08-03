@@ -215,39 +215,46 @@ def _check_velocity_limits(skill: CompiledSkill, robot_spec: RobotSpec) -> list[
     return out
 
 
-def _check_manipulability(skill: CompiledSkill, robot_spec: RobotSpec) -> list[CompilerDiagnostic]:
-    """Yoshikawa manipulability index at each solved IK configuration, from a real
+def compute_manipulability(robot_spec: RobotSpec, q: Sequence[float]) -> float:
+    """Yoshikawa manipulability index at configuration `q`, from a real
     finite-difference positional Jacobian -- the same construction NDOFIKSolver uses
-    internally, recomputed here at the final solved configuration rather than during
-    the solve."""
+    internally. Standalone (not private to _check_manipulability) so
+    optimize/cost_model.py (docs/COMPILER_ROADMAP.md v2 vision, item 8) can reuse
+    the exact same math instead of a second, drifting copy."""
     from roboweaver.hardware.kinematics_ndof import forward_kinematics_ndof
 
+    q = list(q)
+    n = robot_spec.dof
+    base_pos = forward_kinematics_ndof(robot_spec, q).pos
+
+    jac_rows = [[0.0] * n for _ in range(3)]
+    for j in range(n):
+        q_plus = list(q)
+        q_plus[j] += _JACOBIAN_EPS
+        p_plus = forward_kinematics_ndof(robot_spec, q_plus).pos
+        jac_rows[0][j] = (p_plus.x - base_pos.x) / _JACOBIAN_EPS
+        jac_rows[1][j] = (p_plus.y - base_pos.y) / _JACOBIAN_EPS
+        jac_rows[2][j] = (p_plus.z - base_pos.z) / _JACOBIAN_EPS
+
+    # det(J J^T) for a 3xN Jacobian via the Gram matrix -- avoids needing a
+    # general NxN determinant routine for redundant (N>3) arms.
+    gram = [[sum(jac_rows[r][k] * jac_rows[c][k] for k in range(n)) for c in range(3)] for r in range(3)]
+    det = (
+        gram[0][0] * (gram[1][1] * gram[2][2] - gram[1][2] * gram[2][1])
+        - gram[0][1] * (gram[1][0] * gram[2][2] - gram[1][2] * gram[2][0])
+        + gram[0][2] * (gram[1][0] * gram[2][1] - gram[1][1] * gram[2][0])
+    )
+    return math.sqrt(max(det, 0.0))
+
+
+def _check_manipulability(skill: CompiledSkill, robot_spec: RobotSpec) -> list[CompilerDiagnostic]:
+    """Yoshikawa manipulability index at each solved IK configuration, recomputed
+    here at the final solved configuration rather than during the solve."""
     out = []
     for name, ik in skill.motion_plan.ik_results.items():
         if not ik.success:
             continue
-        q = list(ik.joint_angles)
-        n = robot_spec.dof
-        base_pos = forward_kinematics_ndof(robot_spec, q).pos
-
-        jac_rows = [[0.0] * n for _ in range(3)]
-        for j in range(n):
-            q_plus = list(q)
-            q_plus[j] += _JACOBIAN_EPS
-            p_plus = forward_kinematics_ndof(robot_spec, q_plus).pos
-            jac_rows[0][j] = (p_plus.x - base_pos.x) / _JACOBIAN_EPS
-            jac_rows[1][j] = (p_plus.y - base_pos.y) / _JACOBIAN_EPS
-            jac_rows[2][j] = (p_plus.z - base_pos.z) / _JACOBIAN_EPS
-
-        # det(J J^T) for a 3xN Jacobian via the Gram matrix -- avoids needing a
-        # general NxN determinant routine for redundant (N>3) arms.
-        gram = [[sum(jac_rows[r][k] * jac_rows[c][k] for k in range(n)) for c in range(3)] for r in range(3)]
-        det = (
-            gram[0][0] * (gram[1][1] * gram[2][2] - gram[1][2] * gram[2][1])
-            - gram[0][1] * (gram[1][0] * gram[2][2] - gram[1][2] * gram[2][0])
-            + gram[0][2] * (gram[1][0] * gram[2][1] - gram[1][1] * gram[2][0])
-        )
-        manipulability = math.sqrt(max(det, 0.0))
+        manipulability = compute_manipulability(robot_spec, ik.joint_angles)
 
         if manipulability < _MANIPULABILITY_WARN_THRESHOLD:
             out.append(

@@ -16,11 +16,17 @@ letting a partial implementation read as complete.
 
 **Written 2026-08-03**, when Phase 2 was completed; **updated 2026-08-04** when Phase
 3 and Phase 4 were completed together (they turned out to share one architectural
-decision — see Phase 3's writeup). Phases 5–14 are recorded as they were scoped on
-2026-08-03 and haven't been started — a future session should treat each phase's
-description as a starting brief, not a fixed spec, and re-verify the codebase state
-before resuming (this file decays like any other design doc, see top-level
-`CLAUDE.md`/session norms on trusting current code over stale memory).
+decision — see Phase 3's writeup); **updated again 2026-08-04** when the original
+Phase 5–14 roadmap below was superseded, before any of it was built, by a more
+ambitious 14-item "v2 vision" the user proposed after seeing Phase 13 (plugin
+registry) — see "v2 Vision (replaces Phase 5–14)" below for what was actually built
+under that revised scope, and why several of its most ambitious pieces (a compiler
+that has *learned* from executions, live Isaac/Gazebo/Webots simulator integration,
+SMT/temporal-logic proofs) are real infrastructure with an honestly-empty or
+bounded payload today, not the full capability as originally described. A future
+session should treat every "not started"/"deferred" item as a starting brief, not a
+fixed spec, and re-verify the codebase state before resuming (this file decays like
+any other design doc).
 
 ## Maturity scorecard
 
@@ -38,11 +44,17 @@ phase rather than trusting this snapshot.
 | Backend abstraction | 8/10 |
 | Code generation | 8/10 |
 | Knowledge layer | 7.5/10 |
-| Optimization framework | 4/10 → 6/10: 2 real optimization passes + a motion-plan cache, gated by `OptimizationLevel` for the first time |
-| Static analysis | (new row) 5/10: 2 real CompiledSkill checks (RW501/502/505) + 3 real choreography DAG checks (RW601/602/605); collision/dynamics-dependent checks still deferred |
-| Formal verification | 3/10 |
-| Benchmarking | 2/10 |
-| Plugin ecosystem | 3/10 |
+| Optimization framework | 4/10 → 7/10: 2 real optimization passes + a motion-plan cache + a real cost model/Pareto filter (v2 item 8) |
+| Static analysis | 5/10 → 6/10: RW501/502/505/506 (CompiledSkill) + RW601/602/605 (choreography DAG) + RW507 (bounded forbidden-zone, v2 item 10); collision/dynamics-dependent checks still deferred |
+| Formal verification | 3/10 → 4/10: a real, bounded, discrete check (v2 item 10) — explicitly not a temporal-logic/SMT proof |
+| Benchmarking | 2/10 → 5/10: RoboBench (v2 item 11) is real compile-time measurement over every distinct robot × every NL-reachable skill category — not simulator-execution benchmarking |
+| Plugin ecosystem | 3/10 → 7/10: a real `PluginRegistry` (v2 item 3) backs both robot bridges and `RobotBackend`s; `CodegenBackend`/`DigitalTwin` both registry-based |
+| RoboIR (task/motion layer) | (new row) 3/10: real summary fields only (v2 item 1) — not the full task/motion/BT absorption |
+| Capability ontology | (new row) 6/10: real `CapabilityClaim`s with confidence/verified grounded in declared `RobotSpec` fields (v2 item 2) |
+| Digital twin | (new row) 4/10: one fully-real twin (native execution), one honest reachability-only placeholder (v2 item 4) |
+| Execution memory | (new row) 5/10: real, persisted, queryable — zero accumulated history yet (v2 item 6) |
+| Safety kernel | (new row) 5/10: real, mandatory at the one new enforcement point that exists (`deploy()`); not (yet) mandatory at `SkillRuntime.execute()` (v2 item 9) |
+| Self-improvement | (new row) 2/10: a real, tested mechanism (v2 item 12) that honestly returns nothing until real usage data exists |
 
 ## Phase 1 — Existing Foundation
 
@@ -251,72 +263,190 @@ structurally apply to a single skill. They do apply, for real, to
 - **The roadmap's literal MOVE/GRASP/WAIT-level diff mockup** — still blocked on
   RoboIR absorbing task/motion data (Phase 2's deferred list), unchanged.
 
-## Phase 5 — Backend Architecture — Not started
+## v2 Vision (replaces Phase 5–14) — **Done** (2026-08-04)
 
-Generalize beyond ROS 2 + simulation: MoveIt, Isaac, Drake, Webots, MuJoCo, CuRobo,
-BehaviorTree.CPP, and industrial controller dialects (ABB RAPID, KUKA KRL, URScript,
-Fanuc TP) as pluggable lowering targets from RoboIR/CompiledSkill.
+The original Phase 5–14 outline above (backend architecture, runtime improvements,
+execution memory, knowledge graph, cost model, compiler reports, benchmark suite,
+formal verification, plugin system, research features) was replaced, before any of
+it was built, by a 14-item vision the user proposed: RoboIR unification, a
+capability ontology, a richer plugin contract, a digital twin interface, episodic
+execution memory, case-based recovery, multi-objective optimization, a "safety
+kernel," bounded formal verification, a benchmark suite, a self-improving-compiler
+mechanism, industrial deployment packaging, and research extensions. Kept here as a
+map from the old numbering (some items reused directly) plus what's genuinely new.
+Every item below follows the same discipline as Phase 2/3/4: real, tested,
+cited-by-file work, gaps stated honestly rather than stubbed silently or faked.
 
-## Phase 6 — Runtime Improvements — Not started
+**1 — RoboIR stabilization (Stage 1, not the full migration).**
+`ir/schema.py`: `TaskSummary`, `MotionSummary` (frozen), `RoboIR` gains
+`task_summary`/`motion_summary: ... | None = None` (additive). `ir/builder.py::
+build_ir()` gains an optional `skill: CompiledSkill | None = None` param that
+populates real summaries from the real task graph/motion plan when passed;
+`compiler.py::compile_with_diagnostics()` passes the optimized skill.
+**Explicitly not done:** full raw-waypoint/BT absorption into RoboIR — still lives
+on `CompiledSkill`; the roadmap's literal MOVE/GRASP/WAIT-level IR diff still isn't
+real for the same reason it wasn't after Phase 2.
 
-Replace `runtime/recovery.py`'s retry-branch model with a recovery *tree*: evaluate
-candidate recovery actions by probability of success, cost, and safety, then choose
-the best one — recovery becomes planning, not branching. Overlaps with
-`docs/REDESIGN.md`'s own Phase 2 (deployment/runtime) — reconcile scope with that doc
-before starting.
+**2 — Capability ontology.** `ir/schema.py::CapabilityClaim(name, confidence,
+verified, source)`. `ir/builder.py` constructs real claims: manipulation
+capabilities always `verified=True/confidence=1.0` (every `RobotSpec` has an IK
+solver by construction); `sensing.force_torque`'s `confidence`/`verified` come
+directly from the real `robot_spec.has_force_torque_sensor` field (confirmed
+identical on both a robot that has one and one that doesn't,
+`tests/test_roboir_v2.py`); `perception.*` stays honestly `verified=False/
+confidence=0.5` — formalizes the RW102/RW201 distinction that already existed
+ad hoc, doesn't invent a new one.
 
-## Phase 7 — Execution Memory — Not started
+**3 — Plugin framework.** `plugins/registry.py::PluginRegistry` (generic, name-keyed,
+`register()`/`get()`/`names()`) is the shared primitive. First consumer:
+`hardware/universal_driver.py::UniversalRobotDriver.connect_robot()`'s old if/elif
+bridge dispatch, refactored to registry lookup with zero behavior change (same
+substring-alias matching, same ROS2 default — regression-checked per-protocol-string
+in `tests/test_plugin_registry.py`). Second, richer consumer:
+`plugins/backend.py::RobotBackend` ABC (`metadata()`, `capabilities()`, `validate()`,
+`compile()`, `deploy()`) with two real implementations — `Ros2Backend` (wraps the
+unmodified `generate_ros2_package()`) and `UrScriptBackend`
+(`codegen/urscript_gen.py`, new — real, syntactically valid URScript `movej()`/
+`sleep()`/`set_digital_out()` from the compiled skill's real task graph and
+trajectories, same integrity level as `urdf_gen.py`'s real-geometry generation).
+`roboweaver export --backend {ros2,urscript}` — also fixed `cmd_export` to route
+through `compile_with_diagnostics()` instead of bare `compile()`, the same
+"don't validate on only one front-end" gap `cmd_compile` already had fixed.
+**Explicitly not built:** MoveIt/Isaac/Drake/Webots/CuRobo/BehaviorTree.CPP/ABB
+RAPID/KUKA KRL/Fanuc TP backends — unverifiable against real controllers/engines
+here; adding one later is a registry entry, not a rewrite.
 
-Turn `runtime/telemetry.py`'s frame-by-frame logs into queryable experience: skill →
-robot → environment → failure → recovery → outcome → confidence. Only after this
-exists should the compiler start citing historical success rates as a hint — and only
-if genuinely computed from recorded outcomes, never fabricated.
+**4 — Digital twin interface.** `simulation_backends/twin.py::DigitalTwin` ABC.
+`NativeTwin` is real — wraps the already-working `runtime.engine.SkillRuntime`
+(real kinematics, grasp physics, telemetry). `RemoteTwin` wraps the existing,
+already-honest `SimulationHardwareBridge` (TCP-reachability probe only) and
+`execute()` returns `success=False` with a message stating plainly that no real
+physics ran — never fabricates an Isaac/Gazebo/Webots outcome for engines this
+environment can't reach. Both registered in a `PluginRegistry[type[DigitalTwin]]`
+(classes, not instances — each twin holds mutable per-use state from `load_robot()`).
 
-## Phase 8 — Knowledge Graph — Not started
+**5 — Simulation validation.** `runtime/validation.py::validate_in_simulation()`
+defaults to `NativeTwin`. Wired as the second step of `RobotBackend.deploy()`
+(item 3): raises `DeploymentRefused` (carrying the real `ExecutionResult`) if the
+real simulation run didn't succeed, before any bridge connect is attempted. Proven
+against a **real, naturally-occurring failure** — compiling `"Tighten the M8 bolt"`
+for `franka_panda` genuinely fails in `NativeTwin` today (item 1's/Phase 3's RW502
+gap: `_plan_motion` never produces a trajectory for TIGHTEN's task descriptions, so
+the arm never moves toward the target and the grasp genuinely fails) — not a
+constructed scenario. `skip_simulation_check` is an explicit, visible opt-out for
+this one step (e.g. tests exercising just the connect/send path).
 
-Extend `knowledge/graph.py`/`ontology.py`/`package_nexus.py` from lookup tables toward
-a real traversable graph: robot → capabilities → tools → controllers → sensors →
-objects → tasks → failures → recoveries → optimizations → benchmarks.
+**6 — Execution memory.** `runtime/memory.py::ExecutionMemoryStore` — real,
+persisted (JSONL, one file per robot, `registry/repository.py`'s existing
+local-file convention). `record()`/`query()`/`success_rate()` (returns `None`, never
+a fabricated `0.0`, with no history). `SkillRuntime.__init__` gains
+`memory_store: ExecutionMemoryStore | None = None` — **opt-in**, confirmed the
+232-test suite creates no `.execution_memory` directory by default
+(`tests/test_execution_memory.py`).
 
-## Phase 9 — Cost Model — Not started
+**7 — Failure intelligence (case-based recovery).** `runtime/recovery.py` v3:
+`RecoveryCandidate(action, estimated_success_probability, cost_s, safety_score,
+offset_m, reason)` — declared priors, stated as authored estimates, not learned.
+`RecoveryEngine.plan()` scores candidates by `probability * safety_score / cost_s`,
+excludes already-attempted actions (auto-derived from `retry_count` for backward
+compatibility), and boosts a candidate's probability with a **real** historical rate
+from `ExecutionMemoryStore.recovery_action_success_rate()` when real records exist
+— `RecoveryPlan.used_historical_data` tells a caller which happened.
+`RecoveryEngine.diagnose()` is now a thin, signature-preserving wrapper around
+`plan()`; both of `runtime/engine.py`'s call sites are unaffected (regression-checked
+against the pre-existing `test_ir.py::test_telemetry_and_recovery_are_wired...`).
 
-Every compiled plan reports execution time, energy, joint wear, collision risk,
-accuracy, payload margin, success probability, manipulator utilization — computed from
-real data (trajectories, dynamics where available), enabling multi-objective planning.
-Depends on Phase 4 (optimizations) and Phase 7 (execution memory) for real numbers to
-report rather than placeholders.
+**8 — Optimization engine.** `ir/safety.py::compute_manipulability()` extracted
+from `_check_manipulability` (one implementation, shared). `optimize/cost_model.py`:
+`CompiledSkillCost` (cycle time, payload margin, total joint travel, manipulability
+margin, optional real historical success rate) — every field computed from data
+already in scope. `pareto_front()` — a real dominated-solution filter (standard
+Pareto-dominance definition), explicitly not a continuous-frontier solver.
+`compare_robots()` ranks by a weighted sum (default equal weights) and reports the
+real Pareto subset; a robot that genuinely can't compile the instruction (e.g.
+missing a declared capability) is reported in `skipped` with the real blocking
+reason, never silently dropped. `roboweaver compare INSTRUCTION --robots ...`.
 
-## Phase 10 — Compiler Reports — Not started
+**9 — Safety kernel.** `plugins/safety_kernel.py::SafetyKernel.enforce()` raises the
+existing `SkillCompilationError` on any error-severity diagnostic — mandatory,
+non-bypassable at `RobotBackend.deploy()` (brand-new code, breaks nothing existing).
+**Documented honestly:** `compile_with_diagnostics()` already refuses to return a
+`CompilationResult` with an error diagnostic, so on the normal path `enforce()` can
+never actually fire — its real value is defense in depth against a `CompilationResult`
+that reached `deploy()` some other way (proven in tests via a manually-tampered
+result). **Not** made mandatory on `SkillRuntime.execute()` — pure simulation, called
+directly with a bare `CompiledSkill` throughout the existing CLI/fleet/test suite,
+never the real hardware boundary; forcing that path through the compile pipeline
+would be an unrelated breaking change. Stated plainly, not silently scoped down.
 
-A structured compile report per skill: robot, compiler version, IR version, compile
-time, safety score, optimization score, simulation result, recovery score, warnings,
-diagnostics, certificates. Natural home: `PipelineTrace.to_dict()` (Phase 2) extended
-with the cost-model fields from Phase 9 once those exist.
+**10 — Formal verification, bounded.** `optimize/passes.py`: `RW506` (warning) —
+an empty composite BT node or an unnamed leaf; deliberately not a "reachability"
+check, since every node in a real tree is reachable from the root by construction
+(that would be a vacuous, always-passing check). `optimize/formal.py::
+check_forbidden_zone_violations()` — real, bounded: every compiled waypoint checked
+against a **declared** forbidden joint-range zone, `[]` honestly returned if none is
+declared. **Explicitly not attempted:** an SMT/temporal-logic proof of a
+continuous-time property — needs a new solver dependency (e.g. `z3-solver`, not
+added here without an explicit decision) and nonlinear real arithmetic over
+trigonometric forward kinematics, genuinely research-grade work. Cycle detection /
+"no deadlock" over the real multi-robot DAG was already delivered in Phase 3
+(`RW601`/`RW602`/`RW605`) and isn't redone here.
 
-## Phase 11 — Benchmark Suite ("RoboBench") — Not started
+**11 — Multi-robot benchmark ("RoboBench").** `benchmark/robobench.py::
+run_benchmark()` — real compile-pipeline measurement (latency, success/failure,
+diagnostic counts, waypoint `pct_reduction`) over every distinct registered robot ×
+every skill category the compiler's NL pipeline can actually reach. **Discovered,
+not assumed:** of the 17 `IndustrialSkillCategory` templates with real,
+hand-authored task graphs, only **13** are reachable through `SkillCompiler.compile()`
+at all — `PALLETIZING`, `POLISHING`, `DISASSEMBLY`, and `MOBILE_NAV` have no entry in
+`compiler.py::ACTION_CATEGORY_MAP`, so no natural-language instruction can ever route
+to them through the real pipeline (only reachable by calling
+`skills.taxonomy.get_industrial_skill_template()` directly — dead code from the
+compiler's perspective). This benchmark only exercises the 13 reachable ones; the
+other 4 are a discovered gap, not silently routed around. `roboweaver benchmark
+[--json] [--output FILE]`. Explicitly scoped down from "100 skills × 20 robots × 5
+simulators" (no simulators exist here) — stated in the report's own `scope` field.
 
-The single biggest missing piece per the original assessment: N skills × M robots ×
-K simulators, measuring compile/planning/execution latency, optimization gain,
-recovery success, collision rate, energy, trajectory quality, determinism, memory.
-Without this, every performance claim in this project remains anecdotal.
+**12 — Self-learning compiler mechanism.** `optimize/learning.py::
+suggest_parameter_adjustments()` — real analysis (low success rate, frequent
+recovery-action pattern, frequent joint-limit violations) over real
+`ExecutionMemoryStore` records, `None` below `min_samples=5`. **Stated plainly:**
+this repo has zero accumulated real execution history right now, so every real
+caller gets `None` today — proven with real records a test writes itself, not a
+fabricated "10,000 execution" history. This is the mechanism, not a claim that
+self-improvement has happened.
 
-## Phase 12 — Formal Verification — Not started
+**13 — Industrial deployment.** `plugins/safety_kernel.py::
+SafetyKernel.build_deployment_manifest(result, backend_name)` — real manifest
+(robot id, backend, the Safety Kernel's actual diagnostic counts, item 2's real
+capability claims). `registry/package.py::SkillPackage.export_archive()` gained an
+additive, optional `deployment_manifest` param that bundles it into the existing
+`.rwsp` archive alongside `metadata.json`/`package_data.json`/`behavior_tree.xml`;
+`cmd_export` wires it through. Confirmed round-trips exactly through a real tarball
+(`tests/test_deployment_manifest.py`).
 
-Behavior Tree → finite state machine → model checker → proof (no deadlock, no
-unreachable state, guaranteed completion, safety invariant holds). Research-grade;
-depends on Phase 3's execution-graph validation as a prerequisite.
+**14 — Research extensions — deferred, and why.** SMT/constraint-solver integration
+and symbolic execution (no solver dependency exists or is added here); continuous-
+time/nonlinear kinematic reachability proofs (same reason, item 10); a formal
+versioned RoboIR language spec (a documentation deliverable, not code); incremental
+compilation (needs a real dependency/cache-invalidation graph over IR generations
+that doesn't exist yet); profile-guided optimization (needs item 6's history to
+accumulate over real usage first — the mechanism exists, the data doesn't yet);
+deterministic replay from telemetry (needs persisted frames, not just outcome
+summaries — a natural item-6 follow-up); live Isaac/Gazebo/Webots digital-twin
+execution (needs those engines reachable, which they aren't here — item 4's
+`RemoteTwin` is the honest placeholder for when they are).
 
-## Phase 13 — Plugin System — Not started
+**Tests added across all 14 items:** `test_roboir_v2.py` (4), `test_plugin_registry.py`
+(10), `test_backend.py` (6), `test_digital_twin.py` (4), `test_simulation_validation.py`
+(3), `test_execution_memory.py` (4), `test_recovery_planning.py` (6),
+`test_cost_model.py` (5), `test_safety_kernel.py` (3), plus RW506/RW507 additions to
+`test_optimize_passes.py`/new `test_formal_verification.py` (2+3), `test_robobench.py`
+(3), `test_learning.py` (4), `test_deployment_manifest.py` (3) — 232/232 passing
+(`python -m pytest tests/ -q`).
 
-Discoverable planner/verifier/recovery/backend/knowledge/optimizer/NLU plugins, so
-third parties can extend RoboWeaver without modifying the compiler core. Natural to
-build once Phase 5 (backend architecture) has more than one or two real backends to
-generalize the plugin interface from.
-
-## Phase 14 — Research Features — Not started
-
-SMT/constraint-solver integration for planning under complex constraints, symbolic
-execution of RoboIR, multi-objective Pareto-front optimization (needs Phase 9's cost
-model), a formal versioned RoboIR language reference, incremental compilation,
-profile-guided optimization (needs Phase 7), cross-robot binary compatibility via a
-truly embodiment-independent RoboIR, and deterministic replay from telemetry.
+**Also noted, not fixed (same treatment as the `_plan_motion`/`handover_target`
+findings above):** `fleet/orchestrator.py::deploy_skill_to_fleet()` has a fake
+unconditional-success path when `skill_package.skill is None`
+(`orchestrator.py:65-67`) — every node gets marked `"EXECUTING"` regardless. Not
+touched this round.

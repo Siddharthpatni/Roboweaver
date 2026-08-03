@@ -50,7 +50,6 @@ from roboweaver.fleet import SkillRetargeter, FleetOrchestrator
 from roboweaver.runtime import SkillRuntime
 from roboweaver.registry.package import SkillPackage, SkillPackageMetadata
 from roboweaver.registry.repository import SkillRepository
-from roboweaver.codegen.ros2_gen import generate_ros2_package
 
 
 def cmd_robots(args) -> int:
@@ -236,6 +235,81 @@ def cmd_diff(args) -> int:
     return 0
 
 
+def cmd_compare(args) -> int:
+    """Real multi-objective robot comparison (optimize/cost_model.py, item 8 of
+    docs/COMPILER_ROADMAP.md's v2 vision): weighted ranking + a real Pareto-optimal
+    subset, both computed from real compiled-skill data -- not a fabricated score."""
+    from roboweaver.optimize.cost_model import compare_robots
+
+    instruction = args.instruction
+    robot_ids = [r.strip() for r in args.robots.split(",") if r.strip()]
+    as_json = getattr(args, "json", False)
+
+    comparison = compare_robots(instruction, robot_ids)
+
+    if as_json:
+        print(json.dumps({
+            "instruction": instruction,
+            "ranked": [
+                {"robot": rid, "score": score, "cost": {
+                    "estimated_cycle_time_s": cost.estimated_cycle_time_s,
+                    "payload_margin_kg": cost.payload_margin_kg,
+                    "total_joint_travel_rad": cost.total_joint_travel_rad,
+                    "manipulability_margin": cost.manipulability_margin,
+                    "historical_success_rate": cost.historical_success_rate,
+                }}
+                for rid, score, cost in comparison.ranked
+            ],
+            "pareto_optimal": comparison.pareto_optimal,
+            "skipped": comparison.skipped,
+        }, indent=2))
+        return 0
+
+    print(f"\n\033[1;35mRobot Comparison\033[0m — \"{instruction}\"")
+    print("─" * 88)
+    for rid, score, cost in comparison.ranked:
+        pareto_mark = "\033[32m★ pareto-optimal\033[0m" if rid in comparison.pareto_optimal else ""
+        print(f"  \033[1m{rid:<16}\033[0m score={score:>8.3f}  "
+              f"cycle={cost.estimated_cycle_time_s:>6.2f}s  payload_margin={cost.payload_margin_kg:>6.2f}kg  "
+              f"travel={cost.total_joint_travel_rad:>6.2f}rad  manip={cost.manipulability_margin:.4f}  {pareto_mark}")
+    for rid, reason in comparison.skipped.items():
+        print(f"  \033[33m{rid:<16}\033[0m skipped -- {reason}")
+    print("─" * 88 + "\n")
+    return 0
+
+
+def cmd_benchmark(args) -> int:
+    """RoboBench (benchmark/robobench.py, item 11 of docs/COMPILER_ROADMAP.md's v2
+    vision): real compile-pipeline measurement across every distinct registered
+    robot x every reachable skill category."""
+    from roboweaver.benchmark import run_benchmark
+
+    robot_ids = [r.strip() for r in args.robots.split(",") if r.strip()] if getattr(args, "robots", None) else None
+    report = run_benchmark(robot_ids=robot_ids)
+    as_json = getattr(args, "json", False)
+
+    if as_json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        data = report.to_dict()
+        print(f"\n\033[1;35mRoboBench\033[0m — {data['scope']}")
+        print("─" * 88)
+        for cell in report.cells:
+            mark = "\033[32m✓\033[0m" if cell.success else "\033[31m✗\033[0m"
+            reduction = f"{cell.waypoint_pct_reduction:.1f}%" if cell.waypoint_pct_reduction is not None else "n/a"
+            print(f"  {mark} {cell.category:<16} {cell.robot_id:<20} {cell.compile_time_s * 1000:>7.3f}ms  "
+                  f"errors={cell.error_count} warnings={cell.warning_count} waypoint_reduction={reduction}")
+        print("─" * 88)
+        print(f"  {data['success_count']}/{data['total_cells']} cells compiled successfully, "
+              f"total {data['total_compile_time_s']:.3f}s\n")
+
+    if getattr(args, "output", None):
+        Path(args.output).write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+        print(f"  \033[0;32m✓ Report written to {args.output}\033[0m\n")
+
+    return 0
+
+
 def cmd_retarget(args) -> int:
     instruction = args.instruction
     from_robot = getattr(args, "from_robot", "panda")
@@ -348,16 +422,33 @@ def cmd_list(args) -> int:
 
 
 def cmd_export(args) -> int:
+    """Compile through the *full* pipeline (compile_with_diagnostics, not bare
+    compile()) and generate code via the RobotBackend registry (plugins/backend.py)
+    -- the same "don't validate on only one front-end" fix cmd_compile already got
+    (see its docstring); export used to skip Stage 05/the Compiler Debugger too."""
+    from roboweaver.plugins.backend import BACKEND_REGISTRY
+    from roboweaver.plugins.safety_kernel import SafetyKernel
+
     instruction = args.instruction
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
     robot_id = getattr(args, "robot", "panda")
     spec = get_robot_spec(robot_id)
+    backend_name = getattr(args, "backend", "ros2")
 
     compiler = SkillCompiler(target_robot=spec)
-    skill = compiler.compile(instruction)
+    try:
+        result = compiler.compile_with_diagnostics(instruction, verbose=False)
+    except SkillCompilationError as exc:
+        print(f"\n\033[1;31m✗ Compilation failed\033[0m — {len(exc.diagnostics)} blocking diagnostic(s):")
+        for d in exc.diagnostics:
+            print(f"  \033[31m{d.code}\033[0m {d.message}\n    {d.reason}")
+        return 2
 
-    ros2_pkg_dir = generate_ros2_package(skill, output_dir)
+    backend = BACKEND_REGISTRY.get(backend_name)
+    backend_output = backend.compile(result, output_dir)
+
+    skill = result.skill
     meta = SkillPackageMetadata(
         id=f"skill_{skill.intent.action.value.lower()}_{skill.intent.object_name}_{spec.id}",
         name=f"{skill.intent.action.value} {skill.intent.object_name} ({spec.name})",
@@ -367,10 +458,13 @@ def cmd_export(args) -> int:
         target_object=skill.intent.object_name,
     )
     pkg = SkillPackage(meta, skill)
-    rwsp_file = pkg.export_archive(output_dir / f"{meta.id}.rwsp")
-    print(f"\n\033[1;32m✓ Skill Successfully Exported\033[0m:")
-    print(f"  • ROS2 Package: \033[1m{ros2_pkg_dir}\033[0m")
-    print(f"  • Skill Package Archive: \033[1m{rwsp_file}\033[0m\n")
+    manifest = SafetyKernel.build_deployment_manifest(result, backend_name)
+    rwsp_file = pkg.export_archive(output_dir / f"{meta.id}.rwsp", deployment_manifest=manifest)
+    print(f"\n\033[1;32m✓ Skill Successfully Exported\033[0m ({backend_name}):")
+    print(f"  • Backend output: \033[1m{backend_output}\033[0m")
+    print(f"  • Skill Package Archive: \033[1m{rwsp_file}\033[0m")
+    print(f"  • Deployment manifest: safety_kernel_verified={manifest['safety_kernel_verified']}, "
+          f"{len(manifest['capability_claims'])} capability claim(s)\n")
     return 0
 
 
@@ -616,6 +710,16 @@ def main() -> int:
     p_diff.add_argument("--robot", type=str, default="panda", help="Robot to compile against (baseline, or the 'from' side of --robot2)")
     p_diff.add_argument("--robot2", type=str, default=None, help="If given, diff --robot's IR against this second robot's IR instead of diffing the pipeline trace")
 
+    # compare
+    p_compare = subparsers.add_parser("compare", help="Compare an instruction's real compiled cost across multiple robots")
+    p_compare.add_argument("instruction", type=str, help="Instruction to compile and compare")
+    p_compare.add_argument("--robots", type=str, required=True, help="Comma-separated robot ids, e.g. panda,ur5e,kuka_iiwa")
+
+    # benchmark
+    p_bench = subparsers.add_parser("benchmark", help="RoboBench: real compile-pipeline measurement across robots x skill categories")
+    p_bench.add_argument("--robots", type=str, default=None, help="Comma-separated robot ids (default: every distinct registered robot)")
+    p_bench.add_argument("--output", type=str, default=None, help="Optional file path to also write the JSON report to")
+
     # retarget
     p_retarget = subparsers.add_parser("retarget", help="Retarget skill trajectory across different robot embodiments")
     p_retarget.add_argument("instruction", type=str, help="Instruction to retarget")
@@ -640,6 +744,10 @@ def main() -> int:
     p_export.add_argument("instruction", type=str, help="Instruction to export")
     p_export.add_argument("--output", type=str, default="./output", help="Output directory path")
     p_export.add_argument("--robot", type=str, default="panda", help="Robot model")
+    p_export.add_argument(
+        "--backend", type=str, default="ros2", choices=["ros2", "urscript"],
+        help="Codegen backend (plugins/backend.py's RobotBackend registry)",
+    )
 
     # urdf (3D model generation)
     p_urdf = subparsers.add_parser("urdf", help="Generate a loadable URDF (+ optional STL meshes) for a robot")
@@ -680,7 +788,7 @@ def main() -> int:
 
     # Machine-readable output for scripting and CI, on every subcommand that
     # produces a result rather than a stream.
-    for sub in (p_compile, p_diff, p_urdf, p_disc, p_conn, p_adv):
+    for sub in (p_compile, p_diff, p_compare, p_bench, p_urdf, p_disc, p_conn, p_adv):
         sub.add_argument("--json", action="store_true", help="Emit JSON instead of formatted text")
 
     args = parser.parse_args()
@@ -697,6 +805,10 @@ def main() -> int:
         return cmd_compile(args)
     elif args.command == "diff":
         return cmd_diff(args)
+    elif args.command == "compare":
+        return cmd_compare(args)
+    elif args.command == "benchmark":
+        return cmd_benchmark(args)
     elif args.command == "retarget":
         return cmd_retarget(args)
     elif args.command == "fleet":

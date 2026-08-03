@@ -15,6 +15,7 @@ from roboweaver.hardware import forward_kinematics_ndof, get_robot_spec, get_fra
 from roboweaver.math3d import Vec3
 from roboweaver.runtime.telemetry import TelemetryRecorder
 from roboweaver.runtime.recovery import RecoveryEngine, FailureMode, RecoveryAction
+from roboweaver.runtime.memory import ExecutionMemoryStore
 
 
 class SkillRuntime:
@@ -28,6 +29,7 @@ class SkillRuntime:
         render_width: int = 640,
         render_height: int = 480,
         render_fps: int = 30,
+        memory_store: ExecutionMemoryStore | None = None,
     ):
         self.robot_spec = robot_spec or get_franka_panda_spec()
         self.model = model
@@ -54,12 +56,19 @@ class SkillRuntime:
             'magnetic': 0.10,
         }.get(gripper, 0.10)
 
+        # Opt-in (docs/COMPILER_ROADMAP.md v2 vision, item 6): None by default, so
+        # the existing test suite's many direct execute() calls never write to
+        # disk. Attach a real ExecutionMemoryStore to start recording real outcomes.
+        self.memory_store = memory_store
+
         # Stage 13 (Monitoring): real telemetry recording and failure recovery,
         # wired into the actual execution path instead of existing only as
         # unit-tested-in-isolation modules nothing calls -- see docs/REDESIGN.md's
-        # audit of this exact gap.
+        # audit of this exact gap. RecoveryEngine gets the same memory_store (item
+        # 7) so diagnose() automatically becomes history-aware once real recovery
+        # outcomes accumulate for this robot -- no change to its call sites needed.
         self.telemetry = TelemetryRecorder()
-        self.recovery = RecoveryEngine()
+        self.recovery = RecoveryEngine(memory=memory_store)
         self.recovery_log: list = []
 
     def execute(self, skill: CompiledSkill, verbose: bool = True) -> ExecutionResult:
@@ -135,12 +144,14 @@ class SkillRuntime:
         success = self._evaluate_success(action, height_gained, limits_ok)
 
         if not limits_ok:
-            plan = self.recovery.diagnose(FailureMode.JOINT_LIMIT_VIOLATED, context={"retry_count": 0})
+            plan = self.recovery.diagnose(
+                FailureMode.JOINT_LIMIT_VIOLATED, context={"retry_count": 0, "robot_id": self.robot_spec.id},
+            )
             self.recovery_log.append(plan)
             if verbose:
                 print(f"\n  \033[31m✗ Joint limit violated:\033[0m {plan.reason} -> {plan.recommended_action.value}")
 
-        return ExecutionResult(
+        result = ExecutionResult(
             success=success,
             initial_object_height=initial_cube_z,
             final_object_height=final_cube_z,
@@ -153,6 +164,32 @@ class SkillRuntime:
                 f"{p.failure_mode.value} -> {p.recommended_action.value}: {p.reason}" for p in self.recovery_log
             ],
         )
+
+        if self.memory_store is not None:
+            self.memory_store.record({
+                "task": {
+                    "action": action,
+                    "robot_id": self.robot_spec.id,
+                    "object_name": skill.intent.object_name if hasattr(skill, "intent") else None,
+                },
+                "execution": {
+                    "success": result.success,
+                    "cycle_time": result.cycle_time,
+                    "height_gained": result.height_gained,
+                    "joint_limits_respected": result.joint_limits_respected,
+                    "telemetry_frame_count": result.telemetry_frame_count,
+                    "recovery_attempts": [
+                        {
+                            "failure_mode": p.failure_mode.value,
+                            "action": p.recommended_action.value,
+                            "reason": p.reason,
+                        }
+                        for p in self.recovery_log
+                    ],
+                },
+            })
+
+        return result
 
     def save_video(self, path: str, fps: int = 30) -> None:
         """Save recorded simulation visualization frame log."""
@@ -207,7 +244,9 @@ class SkillRuntime:
                     print(f"\n  \033[32m✓ Grasp recovered\033[0m after {attempt} correction(s) (dist={dist:.3f}m)")
                 return
 
-            plan = self.recovery.diagnose(FailureMode.GRASP_FAILED, context={"retry_count": attempt})
+            plan = self.recovery.diagnose(
+                FailureMode.GRASP_FAILED, context={"retry_count": attempt, "robot_id": self.robot_spec.id},
+            )
             self.recovery_log.append(plan)
             if verbose:
                 print(f"\n  \033[33m⚠ Grasp miss (attempt {attempt + 1}/{max_attempts}):\033[0m "

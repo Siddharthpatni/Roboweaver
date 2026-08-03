@@ -20,11 +20,32 @@ from typing import Sequence
 from roboweaver.ir.diagnostics import CompilerDiagnostic
 from roboweaver.ir.pass_manager import OptimizationLevel
 from roboweaver.optimize.pass_manager import SkillPass, SkillPassContext, SkillPassResult
-from roboweaver.types import TaskType, TrajectorySegment
+from roboweaver.types import BTNode, TaskType, TrajectorySegment, estimate_cycle_time
 
 _MIN_WAYPOINTS = 10
 _ZERO_DELTA_TOLERANCE = 1e-4  # summed abs joint delta below this = "no real motion"
 _DOMINANT_SEGMENT_FRACTION = 0.6
+
+_COMPOSITE_BT_TYPES = {"Sequence", "Fallback", "Parallel"}
+_LEAF_BT_TYPES = {"Action", "Condition"}
+
+
+def _find_bt_wellformedness_violations(node: BTNode, path: str = "root") -> list[str]:
+    """Real, bounded structural well-formedness check over a BehaviorTree
+    (docs/COMPILER_ROADMAP.md v2 vision, item 10): an empty composite node (nothing
+    for it to sequence/fall back over/parallelize) or a leaf with no name (nothing
+    identifying what it actually does). Deliberately NOT a reachability check --
+    every node in a real tree is reachable from the root by construction
+    (BTNode.children), so that would be a vacuous, always-passing check, not a
+    meaningful one."""
+    violations: list[str] = []
+    if node.type in _COMPOSITE_BT_TYPES and not node.children:
+        violations.append(f"{path}: composite node '{node.type}' has zero children")
+    if node.type in _LEAF_BT_TYPES and not node.name:
+        violations.append(f"{path}: leaf node '{node.type}' has an empty name")
+    for i, child in enumerate(node.children):
+        violations.extend(_find_bt_wellformedness_violations(child, f"{path}.{node.type}[{i}]"))
+    return violations
 
 
 class CompiledSkillVerificationPass(SkillPass):
@@ -110,14 +131,28 @@ class CompiledSkillVerificationPass(SkillPass):
                 )
             )
 
-        total_time = sum(seg.duration for seg in skill.motion_plan.trajectories.values())
-        total_time += sum(
-            float(task.params.get("duration", 0.0))
-            for task in skill.task_graph.tasks
-            if task.type is TaskType.WAIT
-        )
+        bt_violations = _find_bt_wellformedness_violations(skill.behavior_tree)
+        if bt_violations:
+            diagnostics.append(
+                CompilerDiagnostic(
+                    code="RW506",
+                    severity="warning",
+                    message=f"BehaviorTree has {len(bt_violations)} well-formedness violation(s).",
+                    reason="; ".join(bt_violations),
+                    required_capability=None,
+                    fixes=[
+                        "Give every composite node (Sequence/Fallback/Parallel) at "
+                        "least one child, and every leaf (Action/Condition) a "
+                        "non-empty name -- see skills/taxonomy.py's template for "
+                        "this skill's action.",
+                    ],
+                )
+            )
+
+        total_time = estimate_cycle_time(skill)
         metrics: dict[str, float] = {
             "dangling_move_to": float(len(dangling)),
+            "bt_violations": float(len(bt_violations)),
             "estimated_cycle_time_s": round(total_time, 4),
         }
 

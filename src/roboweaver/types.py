@@ -152,3 +152,18 @@ class ExecutionResult:
     frames: list[str] = field(default_factory=list)
     telemetry_frame_count: int = 0
     recovery_events: list[str] = field(default_factory=list)
+
+
+def estimate_cycle_time(skill: CompiledSkill) -> float:
+    """Real, computed total cycle time: summed trajectory durations plus WAIT task
+    durations -- nothing estimated beyond what the compiler itself already produced.
+    One shared implementation: ir/builder.py's RoboIR motion summary,
+    optimize/passes.py::CompiledSkillVerificationPass, and optimize/cost_model.py
+    all call this instead of recomputing it independently."""
+    total = sum(seg.duration for seg in skill.motion_plan.trajectories.values())
+    total += sum(
+        float(t.params.get("duration", 0.0))
+        for t in skill.task_graph.tasks
+        if t.type is TaskType.WAIT
+    )
+    return total

@@ -183,6 +183,39 @@ def test_compile_with_diagnostics_full_pipeline_end_to_end():
     print(f"  -> Full pipeline: {before} -> {after} waypoints; RW502 deduped to {rw502_count} entry [PASSED]")
 
 
+def test_verification_pass_is_silent_on_a_real_behavior_tree():
+    print("\n[TEST 10] Testing CompiledSkillVerificationPass finds no RW506 on a real, well-formed BT...")
+    compiler, skill = _real_compiled_skill()
+    ctx = SkillPassContext(skill=skill, robot_spec=compiler.robot_spec)
+    result = CompiledSkillVerificationPass().run(ctx)
+    assert [d for d in result.diagnostics if d.code == "RW506"] == []
+    print("  -> No RW506 on the real PICK_AND_PLACE template's behavior tree [PASSED]")
+
+
+def test_verification_pass_flags_a_malformed_behavior_tree():
+    print("\n[TEST 11] Testing CompiledSkillVerificationPass flags RW506 on a synthetic malformed BT (item 10)...")
+    from roboweaver.types import BTNode
+    compiler, skill = _real_compiled_skill()
+
+    malformed_tree = BTNode(
+        type="Sequence", name="root",
+        children=[
+            BTNode(type="Sequence", name="empty_composite", children=[]),  # zero children
+            BTNode(type="Action", name=""),  # empty leaf name
+        ],
+    )
+    malformed_skill = dataclasses.replace(skill, behavior_tree=malformed_tree)
+
+    ctx = SkillPassContext(skill=malformed_skill, robot_spec=compiler.robot_spec)
+    result = CompiledSkillVerificationPass().run(ctx)
+
+    rw506 = [d for d in result.diagnostics if d.code == "RW506"]
+    assert len(rw506) == 1
+    assert rw506[0].severity == "warning"
+    assert "empty_composite" in rw506[0].reason or "zero children" in rw506[0].reason
+    print(f"  -> RW506 raised: {rw506[0].reason} [PASSED]")
+
+
 if __name__ == "__main__":
     print("=== STARTING OPTIMIZATION / STATIC ANALYSIS (PHASE 3/4) VERIFICATION ===")
     test_verification_pass_flags_empty_task_graph_as_error()
@@ -190,6 +223,8 @@ if __name__ == "__main__":
     test_verification_pass_reports_real_cycle_time_metrics()
     test_waypoint_decimation_reduces_count_and_stays_safety_verified()
     test_waypoint_decimation_is_noop_at_o0()
+    test_verification_pass_is_silent_on_a_real_behavior_tree()
+    test_verification_pass_flags_a_malformed_behavior_tree()
     test_redundant_segment_elision_collapses_zero_delta_segment()
     test_redundant_segment_elision_is_noop_on_real_demo_poses()
     test_motion_cache_hits_on_second_call_for_same_robot()

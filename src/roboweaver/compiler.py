@@ -231,7 +231,9 @@ class SkillCompiler:
         skill_trace = skill_pass_manager.run(skill, self.robot_spec, optimization_level)
         optimized_skill = skill_trace.final_skill
 
-        initial_ir = build_ir(optimized_skill.intent, self.robot_spec, raw_instruction=instruction)
+        initial_ir = build_ir(
+            optimized_skill.intent, self.robot_spec, raw_instruction=instruction, skill=optimized_skill,
+        )
 
         pass_manager = PassManager([cls() for cls in self._DEFAULT_PASSES])
         trace = pass_manager.run(initial_ir, optimized_skill, self.robot_spec, optimization_level)
@@ -245,6 +247,7 @@ class SkillCompiler:
         diagnostics: list[CompilerDiagnostic] = []
         for d in skill_trace.diagnostics() + trace.diagnostics():
             key = (d.code, d.message, d.reason)
+            
             if key not in seen:
                 seen.add(key)
                 diagnostics.append(d)

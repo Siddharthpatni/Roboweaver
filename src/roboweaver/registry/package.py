@@ -177,8 +177,17 @@ class SkillPackage:
 
         return cls(meta, skill)
 
-    def export_archive(self, output_path: str | Path) -> Path:
-        """Export skill package to a `.rwsp` tarball archive."""
+    def export_archive(
+        self, output_path: str | Path, deployment_manifest: dict[str, Any] | None = None,
+    ) -> Path:
+        """Export skill package to a `.rwsp` tarball archive.
+
+        `deployment_manifest` is additive and optional (default None -- existing
+        callers are unaffected): pass
+        plugins.safety_kernel.SafetyKernel.build_deployment_manifest(result,
+        backend_name)'s real output (docs/COMPILER_ROADMAP.md v2 vision, item 13) to
+        bundle robot id, backend, Safety Kernel verification, and capability claims
+        into the archive alongside the compiled skill."""
         out = Path(output_path)
         pkg_dir = out.parent / f"tmp_{self.metadata.id}"
         pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -193,6 +202,11 @@ class SkillPackage:
         (pkg_dir / "package_data.json").write_text(
             json.dumps(self.to_dict(), indent=2), encoding="utf-8"
         )
+
+        if deployment_manifest is not None:
+            (pkg_dir / "deployment_manifest.json").write_text(
+                json.dumps(deployment_manifest, indent=2), encoding="utf-8"
+            )
 
         # Write behavior_tree.xml
         if self.skill is not None:

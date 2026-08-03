@@ -39,6 +39,31 @@ class ObjectRef:
         }
 
 
+CapabilitySource = Literal["declared", "unimplemented"]
+
+
+@dataclass(frozen=True)
+class CapabilityClaim:
+    """One structured claim about whether the target robot actually has a required
+    capability -- formalizes the distinction ir/diagnostics.py's RW102 (blocking,
+    a real declared RobotSpec field backs the claim) vs. RW201 (warning, no
+    perception system exists so the claim can never be verified) already drew
+    ad hoc into a queryable list. `confidence`/`verified` are computed from real
+    RobotSpec fields or the honest absence of a perception system -- never an
+    arbitrary number."""
+
+    name: str
+    confidence: float
+    verified: bool
+    source: CapabilitySource
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name, "confidence": self.confidence,
+            "verified": self.verified, "source": self.source,
+        }
+
+
 @dataclass(frozen=True)
 class RequiredCapabilities:
     """What a skill needs to run, independent of any one robot. Checked against a
@@ -48,9 +73,13 @@ class RequiredCapabilities:
     perception: list[str] = field(default_factory=list)
     manipulation: list[str] = field(default_factory=list)
     sensing: list[str] = field(default_factory=list)
+    claims: list[CapabilityClaim] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"perception": self.perception, "manipulation": self.manipulation, "sensing": self.sensing}
+        return {
+            "perception": self.perception, "manipulation": self.manipulation, "sensing": self.sensing,
+            "claims": [c.to_dict() for c in self.claims],
+        }
 
 
 @dataclass(frozen=True)
@@ -88,6 +117,37 @@ class VerificationSpec:
 
 
 @dataclass(frozen=True)
+class TaskSummary:
+    """A real summary of a CompiledSkill's task_graph -- Stage 1 toward RoboIR
+    absorbing task/motion data (docs/COMPILER_ROADMAP.md v2 vision, item 1). The
+    full task list/behavior tree still live on CompiledSkill; this is a queryable
+    summary, not a duplicate of the raw data."""
+
+    task_count: int
+    task_types: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"task_count": self.task_count, "task_types": self.task_types}
+
+
+@dataclass(frozen=True)
+class MotionSummary:
+    """A real summary of a CompiledSkill's motion_plan. Same Stage-1 rationale as
+    TaskSummary -- raw waypoints stay on CompiledSkill."""
+
+    segment_count: int
+    total_waypoints: int
+    estimated_cycle_time_s: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "segment_count": self.segment_count,
+            "total_waypoints": self.total_waypoints,
+            "estimated_cycle_time_s": self.estimated_cycle_time_s,
+        }
+
+
+@dataclass(frozen=True)
 class RoboIR:
     """One compiled skill's intermediate representation.
 
@@ -116,6 +176,8 @@ class RoboIR:
     verification: VerificationSpec
     parser: str = "rule_based_v1"
     ir_version: str = "0.1.0"
+    task_summary: TaskSummary | None = None
+    motion_summary: MotionSummary | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -128,4 +190,6 @@ class RoboIR:
             "required_capabilities": self.required_capabilities.to_dict(),
             "execution": self.execution.to_dict(),
             "verification": self.verification.to_dict(),
+            "task_summary": self.task_summary.to_dict() if self.task_summary else None,
+            "motion_summary": self.motion_summary.to_dict() if self.motion_summary else None,
         }

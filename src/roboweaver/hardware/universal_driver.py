@@ -29,6 +29,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 from dataclasses import dataclass
 from roboweaver.hardware.robot_spec import RobotSpec
+from roboweaver.plugins import PluginRegistry
 
 logger = logging.getLogger("roboweaver.hardware.universal_driver")
 
@@ -210,20 +211,42 @@ class SimulationHardwareBridge(AbstractRobotBridge):
         self._connected = False
 
 
+# Bridge registry (docs/COMPILER_ROADMAP.md Phase 13) -- replaces what used to be an
+# if/elif chain in connect_robot() below. Canonical names map to real bridge classes;
+# _PROTOCOL_ALIASES preserves the exact substring-matching behavior connect_robot
+# always had (e.g. "ros2_control" or "my_gazebo_sim" both still resolve), so this is a
+# dispatch-mechanism change, not a behavior change. Adding a third bridge later means
+# registering it here, not editing an if/elif chain.
+_BRIDGE_REGISTRY: PluginRegistry[type[AbstractRobotBridge]] = PluginRegistry(kind="robot bridge")
+_BRIDGE_REGISTRY.register("ros2")(ROS2HardwareBridge)
+_BRIDGE_REGISTRY.register("sim")(SimulationHardwareBridge)
+
+_PROTOCOL_ALIASES: dict[str, list[str]] = {
+    "ros2": ["ros2", "dds"],
+    "sim": ["sim", "gazebo", "isaac"],
+}
+
+
+def resolve_bridge_class(protocol: str) -> type[AbstractRobotBridge]:
+    """Public so other modules (e.g. plugins/backend.py's RobotBackend.deploy())
+    can resolve a bridge class without going through connect_robot()'s
+    immediate-connect side effect."""
+    protocol_lower = protocol.lower()
+    for canonical, substrings in _PROTOCOL_ALIASES.items():
+        if any(s in protocol_lower for s in substrings):
+            return _BRIDGE_REGISTRY.get(canonical)
+    # Default to ROS 2 for universal compatibility -- unchanged from before.
+    return _BRIDGE_REGISTRY.get("ros2")
+
+
 class UniversalRobotDriver:
     """Universal Driver interface to connect RoboWeaver skills to ANY physical or simulated robot."""
 
     @staticmethod
     def connect_robot(spec: RobotSpec, protocol: str = "ros2", uri: str = "ros2://localhost") -> AbstractRobotBridge:
         """Instantiate and connect the appropriate middleware bridge for the target robot."""
-        protocol_lower = protocol.lower()
-        if "ros2" in protocol_lower or "dds" in protocol_lower:
-            bridge = ROS2HardwareBridge(spec, uri)
-        elif "sim" in protocol_lower or "gazebo" in protocol_lower or "isaac" in protocol_lower:
-            bridge = SimulationHardwareBridge(spec, uri)
-        else:
-            # Default to ROS 2 for universal compatibility
-            bridge = ROS2HardwareBridge(spec, uri)
+        bridge_cls = resolve_bridge_class(protocol)
+        bridge = bridge_cls(spec, uri)
 
         status = bridge.connect()
         if not status.is_connected:
