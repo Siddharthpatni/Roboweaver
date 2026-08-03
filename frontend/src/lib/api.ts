@@ -9,12 +9,53 @@ import {
   CompilationFailedError,
   RobotModel,
   RobotFKResult,
+  DiscoveryResult,
+  ConnectionResult,
+  NetworkInfo,
+  ConnectionAdvice,
+  DiscoveredRobot,
+  VersionInfo,
 } from '../types';
 
 const API_BASE = process.env.NEXT_PUBLIC_ROBOWEAVER_API ?? 'http://localhost:8080';
 
-async function getJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
+// Every call site below picks one of these explicitly rather than relying on a
+// single default: a LAN sweep or an LLM call legitimately takes far longer than
+// a registry lookup, and a client that gives up too early or waits forever are
+// both wrong. Before this existed, no fetch() in the app had ANY timeout --
+// if the backend ever hung, the UI spun forever with no way out.
+const TIMEOUT_FAST_MS = 8_000; // registry lookups, simple queries
+const TIMEOUT_SCAN_MS = 30_000; // LAN subnet sweep (backend caps at 1024 hosts)
+const TIMEOUT_LLM_MS = 60_000; // must exceed the backend's own 45s provider timeout
+const TIMEOUT_CONNECT_MS = 15_000; // TCP/ROS2 bridge probes
+
+/** Raised when the client gives up before the server responds. Distinguished
+ * from a generic network error so the UI can say "took too long", not just
+ * "failed" -- those need different next steps for the user. */
+export class TimeoutError extends Error {
+  constructor(path: string, ms: number) {
+    super(`RoboWeaver API ${path} did not respond within ${Math.round(ms / 1000)}s.`);
+    this.name = 'TimeoutError';
+  }
+}
+
+async function fetchWithTimeout(path: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(`${API_BASE}${path}`, { signal: controller.signal });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new TimeoutError(path, timeoutMs);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function getJSON<T>(path: string, timeoutMs: number = TIMEOUT_FAST_MS): Promise<T> {
+  const res = await fetchWithTimeout(path, timeoutMs);
   if (!res.ok) {
     throw new Error(`RoboWeaver API ${path} responded ${res.status}`);
   }
@@ -22,7 +63,7 @@ async function getJSON<T>(path: string): Promise<T> {
 }
 
 async function compileJSON(path: string): Promise<CompiledSkillResult> {
-  const res = await fetch(`${API_BASE}${path}`);
+  const res = await fetchWithTimeout(path, TIMEOUT_FAST_MS);
   const body = await res.json();
   if (!res.ok) {
     if (body && body.error === 'compilation_failed') {
@@ -31,6 +72,25 @@ async function compileJSON(path: string): Promise<CompiledSkillResult> {
     throw new Error(`RoboWeaver API ${path} responded ${res.status}`);
   }
   return body as CompiledSkillResult;
+}
+
+/**
+ * `/api/connect` reports a failed bridge as HTTP 400 with a real explanation in
+ * the body (`{ error, is_connected: false }`). Surfacing that message is the
+ * whole point of the honest-hardware path, so a 400 is parsed and returned
+ * rather than collapsed into a generic "responded 400" throw. Only a genuine
+ * transport failure (backend down, or timeout) rejects.
+ */
+async function connectJSON(path: string): Promise<ConnectionResult> {
+  const res = await fetchWithTimeout(path, TIMEOUT_CONNECT_MS);
+  const body = (await res.json()) as ConnectionResult;
+  if (!res.ok && body && typeof body.is_connected === 'boolean') {
+    return body;
+  }
+  if (!res.ok) {
+    throw new Error(`RoboWeaver API ${path} responded ${res.status}`);
+  }
+  return body;
 }
 
 export const RoboWeaverAPI = {
@@ -47,7 +107,42 @@ export const RoboWeaverAPI = {
   simulateObjects: () => getJSON<SimObjectProfile[]>('/api/simulate/objects'),
   simulate: (gesture: string, object: string) =>
     getJSON<SimulateResult>(`/api/simulate?gesture=${encodeURIComponent(gesture)}&object=${encodeURIComponent(object)}`),
+  discover: (host?: string) =>
+    getJSON<DiscoveryResult>(`/api/discover${host ? `?host=${encodeURIComponent(host)}` : ''}`),
+  /** Sweep an entire CIDR range. The backend refuses ranges above its host cap. */
+  discoverSubnet: (subnet: string) =>
+    getJSON<DiscoveryResult>(`/api/discover?subnet=${encodeURIComponent(subnet)}`, TIMEOUT_SCAN_MS),
+  network: () => getJSON<NetworkInfo>('/api/network'),
+  version: () => getJSON<VersionInfo>('/api/version'),
+  /** Ask an LLM to map a discovered endpoint onto a registry robot + protocol. */
+  adviseConnection: (robot: DiscoveredRobot, provider: string, model?: string) =>
+    getJSON<ConnectionAdvice>(
+      `/api/connect/advise?host=${encodeURIComponent(robot.host)}` +
+        `&port=${robot.port}` +
+        `&banner=${encodeURIComponent(robot.banner ?? '')}` +
+        `&hostname=${encodeURIComponent(robot.hostname ?? '')}` +
+        `&guess=${encodeURIComponent(robot.robot_type_guess ?? '')}` +
+        `&latency=${robot.latency_ms}` +
+        `&provider=${encodeURIComponent(provider)}` +
+        (model ? `&model=${encodeURIComponent(model)}` : ''),
+      TIMEOUT_LLM_MS
+    ),
+  connectRobot: (robot: string, protocol: string, uri: string) =>
+    connectJSON(
+      `/api/connect?robot=${encodeURIComponent(robot)}&protocol=${encodeURIComponent(
+        protocol
+      )}&uri=${encodeURIComponent(uri)}`
+    ),
   robotModel: (id: string) => getJSON<RobotModel>(`/api/robots/${encodeURIComponent(id)}/model`),
+  /** Downloads the URDF text derived from the robot's real kinematic spec — not
+   * an LLM-generated mesh; see codegen/urdf_gen.py for why. */
+  robotUrdf: async (id: string): Promise<string> => {
+    const res = await fetchWithTimeout(`/api/robots/${encodeURIComponent(id)}/urdf`, TIMEOUT_FAST_MS);
+    if (!res.ok) {
+      throw new Error(`RoboWeaver API /api/robots/${id}/urdf responded ${res.status}`);
+    }
+    return res.text();
+  },
   robotFK: (id: string, q: number[]) =>
     getJSON<RobotFKResult>(`/api/robots/${encodeURIComponent(id)}/fk?q=${q.join(',')}`),
 };

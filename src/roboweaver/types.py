@@ -31,10 +31,19 @@ class Action(Enum):
 
 @dataclass
 class SkillIntent:
-    """Parsed user intent — what the robot should do."""
+    """Parsed user intent — what the robot should do.
+
+    `confidence` (0.0-1.0) and `parse_warnings` record how sure Stage 1 actually
+    was. A keyword parser will always return *some* action, so silently
+    defaulting an unrecognised instruction to PICK would hand the rest of the
+    pipeline a guess indistinguishable from a confident parse. These two fields
+    keep that distinction visible to every downstream consumer.
+    """
     action: Action
     object_name: str
     parameters: dict[str, float] = field(default_factory=dict)
+    confidence: float = 1.0
+    parse_warnings: list[str] = field(default_factory=list)
 
 
 # ─── Task Graph ────────────────────────────────────────────────────────

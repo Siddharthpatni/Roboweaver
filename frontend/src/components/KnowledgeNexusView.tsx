@@ -226,7 +226,7 @@ export const KnowledgeNexusView: React.FC = () => {
                   <div className="text-[10.5px] font-medium text-slate-600">Compatible robots</div>
                   <div className="flex flex-wrap gap-1">
                     {pkg.compatible_robots.map((r, idx) => (
-                      <span key={idx} className="px-1.5 py-0.5 rounded bg-black/20 font-data text-[10.5px] text-amber-400">
+                      <span key={idx} className="px-1.5 py-0.5 rounded bg-black/20 font-data text-[10.5px] text-violet-400">
                         {r}
                       </span>
                     ))}

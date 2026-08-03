@@ -222,12 +222,46 @@ def get_pepper_robot_spec() -> RobotSpec:
             # Head
             JointSpec("head_yaw", "revolute", (0, 0, 1), -2.08, 2.08, 2.0, 5.0),
         ],
+        # One LinkSpec per joint (17, matching dof) -- previously only 5 were
+        # declared for a 17-DOF robot. forward_kinematics_ndof() pairs
+        # joints[i] with links[i] positionally, so that shortfall didn't just
+        # leave 12 joints defaulting to a generic 0.15m: it also fed the first
+        # few real joints someone else's link entirely (wheel_fl got
+        # base_link's 0.35m, hip_pitch got l_arm_link's 0.40m, etc.) --
+        # confirmed by walking the actual FK chain. RobotSpec.validate() now
+        # catches this shape of bug for every registry entry at import time.
+        #
+        # Known limitation this does NOT fix: RoboWeaver's kinematics model
+        # is a single serial chain (see kinematics_ndof.py), but Pepper is
+        # physically a branching tree -- a wheeled base, then a torso that
+        # forks into two independent arms plus a head. Chaining both arms and
+        # the head one after another head-to-tail (as below) means the FK
+        # extends much taller than Pepper's real ~1.2m when joints are near
+        # zero, because it's summing segments that are actually parallel
+        # branches, not stacking straight up. Lengths and masses below are
+        # each individually reasoned from Pepper's published dimensions
+        # (upper arm ~0.18m, forearm ~0.15m, hand ~0.07m, torso rise ~0.75m,
+        # neck-to-head ~0.13m, ~28kg total) rather than fabricated -- but a
+        # topologically correct model would need branching-chain FK/IK, which
+        # is a real, separate piece of work, not something papered over here.
         links=[
-            LinkSpec("base_link", 0.35, 18.0),
-            LinkSpec("torso_link", 0.65, 8.0),
-            LinkSpec("r_arm_link", 0.40, 2.2),
-            LinkSpec("l_arm_link", 0.40, 2.2),
-            LinkSpec("head_link", 0.25, 1.5),
+            LinkSpec("wheel_fl_link", 0.05, 3.0),
+            LinkSpec("wheel_fr_link", 0.05, 3.0),
+            LinkSpec("wheel_b_link", 0.05, 3.0),
+            LinkSpec("torso_link", 0.75, 10.0),
+            LinkSpec("r_shoulder_link", 0.05, 0.4),
+            LinkSpec("r_upper_arm_link", 0.18, 1.0),
+            LinkSpec("r_elbow_link", 0.02, 0.2),
+            LinkSpec("r_forearm_link", 0.15, 0.8),
+            LinkSpec("r_wrist_link", 0.02, 0.15),
+            LinkSpec("r_hand_link", 0.07, 0.3),
+            LinkSpec("l_shoulder_link", 0.05, 0.4),
+            LinkSpec("l_upper_arm_link", 0.18, 1.0),
+            LinkSpec("l_elbow_link", 0.02, 0.2),
+            LinkSpec("l_forearm_link", 0.15, 0.8),
+            LinkSpec("l_wrist_link", 0.02, 0.15),
+            LinkSpec("l_hand_link", 0.07, 0.3),
+            LinkSpec("head_link", 0.13, 1.5),
         ],
         description="Humanoid mobile service robot with dual arms, social interaction display, and tactile sensors",
     )
@@ -364,6 +398,30 @@ ROBOT_REGISTRY: dict[str, RobotSpec] = {
     "card_scanner": get_turtlebot4_spec(),
     "generic_6dof": get_generic_6dof_spec(),
 }
+
+
+def _validate_registry() -> None:
+    """Every RobotSpec above is checked at import time, not first use.
+
+    A malformed spec (the Pepper dof/link-count mismatch this caught) would
+    otherwise sit undetected until someone happened to inspect FK output by
+    hand -- IK still "solves", the compiler still emits a skill, and nothing
+    ever surfaces the fact that the geometry driving it is fabricated. Failing
+    the import instead means a broken registry entry can never reach a single
+    request.
+    """
+    errors: list[str] = []
+    for robot_id, spec in ROBOT_REGISTRY.items():
+        problems = spec.validate()
+        if problems:
+            errors.append(f"'{robot_id}' ({spec.id}): " + "; ".join(problems))
+    if errors:
+        raise ValueError(
+            "ROBOT_REGISTRY contains invalid RobotSpec entries:\n  " + "\n  ".join(errors)
+        )
+
+
+_validate_registry()
 
 
 def get_robot_spec(robot_id: str) -> RobotSpec:

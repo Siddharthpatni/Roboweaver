@@ -3,22 +3,48 @@
 RoboWeaver Universal Developer Console CLI.
 
 Usage:
+    # Compile (runs RoboIR + safety checks; exits 2 on a blocking diagnostic)
     roboweaver compile "Pick up the red cube" --robot ur5e
-    roboweaver compile "Tighten M8 bolt" --robot kuka_iiwa
+    roboweaver compile "Tighten M8 bolt" --robot kuka_iiwa --json
+    roboweaver compile "Pick up the red cube" --robot panda --explain-passes
+
+    # RoboIR diff -- cross-robot, or across the compile pipeline's own passes
+    roboweaver diff "Pick up the red cube" --robot panda --robot2 ur5e
+
+    # 3D model generation -- URDF derived from the real kinematic spec
+    roboweaver urdf --robot franka_panda --meshes --output ./out/panda.urdf
+
+    # Network: find robots, bind one, or ask a model what it is
+    roboweaver discover
+    roboweaver discover --subnet 192.168.1.0/24
+    roboweaver advise --host 192.168.1.40 --port 30002 --provider ollama
+    roboweaver connect --robot ur5e --protocol sim --uri sim://192.168.1.40:30002
+
+    # Everything else
+    roboweaver robots
     roboweaver execute "Pick up the red cube" --robot panda
-    roboweaver robots list
     roboweaver retarget "Pick up the red cube" --from panda --to ur5e
-    roboweaver fleet deploy "Pick up the red cube" --cell factory_cell_1
+    roboweaver fleet "Pick up the red cube" --cell factory_cell_1
+    roboweaver export "Pick up the red cube" --output ./output
     roboweaver dashboard --port 8080
+
+Exit codes:
+    0  success
+    1  operation completed but the result was negative (e.g. not connected)
+    2  refused: a blocking compiler diagnostic or an invalid argument
+
+Add --json to compile/urdf/discover/connect/advise for machine-readable output.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 from roboweaver.compiler import SkillCompiler
+from roboweaver.ir import SkillCompilationError, OptimizationLevel, diff_ir, diff_trace
 from roboweaver.hardware import ROBOT_REGISTRY, get_robot_spec
 from roboweaver.fleet import SkillRetargeter, FleetOrchestrator
 from roboweaver.runtime import SkillRuntime
@@ -37,13 +63,81 @@ def cmd_robots(args) -> int:
 
 
 def cmd_compile(args) -> int:
+    """Compile through the *full* pipeline, including RoboIR and the safety
+    checks. This previously called compile() directly, which silently skipped
+    Stage 05 and the Compiler Debugger -- meaning the CLI would happily emit a
+    skill the dashboard would have refused to compile. A compiler that only
+    validates on one of its two front-ends is not a validating compiler.
+    """
     instruction = args.instruction
     robot_id = getattr(args, "robot", "panda")
     spec = get_robot_spec(robot_id)
+    as_json = getattr(args, "json", False)
+    explain_passes = getattr(args, "explain_passes", False)
+    opt_level = OptimizationLevel(getattr(args, "opt_level", "O1"))
 
-    print(f"\n\033[1;35mRoboWeaver Skill Compiler\033[0m — Instruction: \033[1m\"{instruction}\"\033[0m")
     compiler = SkillCompiler(target_robot=spec)
-    skill = compiler.compile(instruction)
+    try:
+        result = compiler.compile_with_diagnostics(
+            instruction, verbose=not as_json, optimization_level=opt_level
+        )
+    except SkillCompilationError as exc:
+        if as_json:
+            print(json.dumps({
+                "ok": False,
+                "instruction": instruction,
+                "robot": spec.id,
+                "diagnostics": [d.to_dict() for d in exc.diagnostics],
+            }, indent=2))
+        else:
+            print(f"\n\033[1;31m✗ Compilation failed\033[0m — {len(exc.diagnostics)} blocking diagnostic(s):")
+            for d in exc.diagnostics:
+                print(f"  \033[31m{d.code}\033[0m {d.message}\n    {d.reason}")
+                for fix in d.fixes:
+                    print(f"      → {fix}")
+            print()
+        # Non-zero exit so CI and shell pipelines actually fail on a bad skill.
+        return 2
+
+    skill = result.skill
+
+    if as_json:
+        out = {
+            "ok": True,
+            "instruction": instruction,
+            "robot": spec.id,
+            "opt_level": opt_level.value,
+            "intent": {
+                "action": skill.intent.action.value,
+                "object_name": skill.intent.object_name,
+                "confidence": skill.intent.confidence,
+                "parse_warnings": skill.intent.parse_warnings,
+                "parameters": skill.intent.parameters,
+            },
+            "tasks": [{"type": t.type.value, "description": t.description} for t in skill.task_graph.tasks],
+            "diagnostics": [d.to_dict() for d in result.diagnostics],
+        }
+        if explain_passes and result.pipeline is not None:
+            out["pipeline"] = result.pipeline.to_dict()
+        print(json.dumps(out, indent=2))
+        return 0
+
+    for w in skill.intent.parse_warnings:
+        print(f"  \033[1;33m⚠ {w}\033[0m")
+    if result.diagnostics:
+        print(f"\n  \033[33m{len(result.diagnostics)} non-blocking diagnostic(s):\033[0m")
+        for d in result.diagnostics:
+            print(f"    \033[33m{d.code}\033[0m {d.message}")
+
+    if explain_passes and result.pipeline is not None:
+        print(f"\n  \033[1;36mPass Manager\033[0m (opt-level {opt_level.value}):")
+        for rec in result.pipeline.records:
+            status = "skipped" if rec.skipped else ("modified" if rec.modified else "unchanged")
+            print(
+                f"    • {rec.pass_name:<24} {rec.timing_s * 1000:>7.3f}ms  "
+                f"[{status}]  {len(rec.diagnostics)} diagnostic(s)"
+            )
+        print(f"    Total: {result.pipeline.total_timing_s() * 1000:.3f}ms across {len(result.pipeline.records)} pass(es)")
 
     repo = SkillRepository()
     meta = SkillPackageMetadata(
@@ -57,6 +151,77 @@ def cmd_compile(args) -> int:
     pkg = SkillPackage(meta, skill)
     repo.register(pkg)
     print(f"  \033[0;32m✓ Registered skill package in repository: {meta.id}\033[0m\n")
+    return 0
+
+
+def cmd_diff(args) -> int:
+    """Compare two RoboIR snapshots (ir/diff.py). With --robot2, diffs the same
+    instruction's IR compiled for two different robots -- a real, meaningful
+    comparison over the fields RoboIR carries today (execution.dof, constraints.*,
+    required_capabilities.*, ...). Without --robot2, diffs the compile pipeline's own
+    trace pass-by-pass (ir/pass_manager.py) -- honestly reports "no differences" for
+    today's diagnostics-only passes, since no IR-mutating pass exists yet."""
+    instruction = args.instruction
+    robot_id = getattr(args, "robot", "panda")
+    robot2_id = getattr(args, "robot2", None)
+    as_json = getattr(args, "json", False)
+    spec = get_robot_spec(robot_id)
+
+    compiler = SkillCompiler(target_robot=spec)
+    try:
+        result = compiler.compile_with_diagnostics(instruction, verbose=False)
+    except SkillCompilationError as exc:
+        print(f"\n\033[1;31m✗ Compilation failed for {robot_id}\033[0m — cannot diff.")
+        for d in exc.diagnostics:
+            print(f"  \033[31m{d.code}\033[0m {d.message}")
+        return 2
+
+    if robot2_id:
+        spec2 = get_robot_spec(robot2_id)
+        compiler2 = SkillCompiler(target_robot=spec2)
+        try:
+            result2 = compiler2.compile_with_diagnostics(instruction, verbose=False)
+        except SkillCompilationError as exc:
+            print(f"\n\033[1;31m✗ Compilation failed for {robot2_id}\033[0m — cannot diff.")
+            for d in exc.diagnostics:
+                print(f"  \033[31m{d.code}\033[0m {d.message}")
+            return 2
+
+        diff = diff_ir(result.ir, result2.ir)
+        if as_json:
+            print(json.dumps({
+                "instruction": instruction, "from_robot": robot_id, "to_robot": robot2_id,
+                "field_changes": {k: list(v) for k, v in diff.field_changes.items()},
+                "objects_added": [o.to_dict() for o in diff.objects_added],
+                "objects_removed": [o.to_dict() for o in diff.objects_removed],
+            }, indent=2))
+        else:
+            print(f"\n\033[1;35mRoboIR Diff\033[0m — \"{instruction}\": \033[36m{robot_id}\033[0m → \033[32m{robot2_id}\033[0m")
+            print("─" * 70)
+            print(diff.pretty())
+            print()
+        return 0
+
+    if result.pipeline is None:
+        print("No pipeline trace available.")
+        return 1
+    pairs = diff_trace(result.pipeline)
+    if as_json:
+        print(json.dumps({
+            "instruction": instruction, "robot": robot_id,
+            "passes": [{"pass_name": name, "changed": not d.is_empty()} for name, d in pairs],
+        }, indent=2))
+        return 0
+
+    print(f"\n\033[1;35mPipeline IR Diff\033[0m — \"{instruction}\" on \033[36m{robot_id}\033[0m")
+    print("─" * 70)
+    for name, d in pairs:
+        print(f"  \033[1m{name}\033[0m: {d.pretty() if not d.is_empty() else 'no differences'}")
+    print(
+        "\n  \033[0;37mNo IR-mutating passes are registered yet -- Verification/"
+        "Capability/Safety only emit diagnostics. Real IR diffs appear once an "
+        "optimization pass (docs/COMPILER_ROADMAP.md Phase 4) mutates the IR.\033[0m\n"
+    )
     return 0
 
 
@@ -198,9 +363,147 @@ def cmd_export(args) -> int:
     return 0
 
 
+def cmd_urdf(args) -> int:
+    """Generate a loadable 3D model (URDF, optionally with STL meshes) from the
+    robot's real kinematic spec -- the same numbers the IK solver plans against."""
+    from roboweaver.codegen.urdf_gen import export_urdf
+
+    robot_id = getattr(args, "robot", "franka_panda")
+    spec = get_robot_spec(robot_id)
+    out = Path(getattr(args, "output", None) or f"./output/urdf/{spec.id}.urdf")
+
+    urdf_path, meshes = export_urdf(spec, out, with_meshes=getattr(args, "meshes", False))
+
+    if getattr(args, "json", False):
+        print(json.dumps({
+            "robot": spec.id, "dof": spec.dof,
+            "urdf": str(urdf_path), "meshes": [str(m) for m in meshes],
+        }, indent=2))
+        return 0
+
+    print(f"\n\033[1;35mRoboWeaver 3D Model Generation\033[0m — {spec.name} ({spec.dof}-DOF)")
+    print(f"  \033[0;32m✓\033[0m URDF: \033[1m{urdf_path}\033[0m ({urdf_path.stat().st_size} bytes)")
+    if meshes:
+        print(f"  \033[0;32m✓\033[0m {len(meshes)} STL link meshes in \033[1m{meshes[0].parent}\033[0m")
+    print("\n  Load it with:")
+    print(f"    ros2 launch urdf_tutorial display.launch.py model:={urdf_path}")
+    print(f"    python -c \"import pybullet as p; p.connect(p.GUI); p.loadURDF('{urdf_path}')\"")
+    print("\n  \033[0;37mGeometry is a cylinder approximation of the real kinematic chain,")
+    print("  not vendor CAD. Joint axes, limits, masses and inertias are exact.\033[0m\n")
+    return 0
+
+
+def cmd_discover(args) -> int:
+    from roboweaver.hardware.discovery import RobotDiscoveryService
+
+    subnet = getattr(args, "subnet", None)
+    scanner = RobotDiscoveryService(timeout=0.3 if subnet else 0.8)
+    try:
+        result = scanner.scan_subnet(subnet) if subnet else scanner.scan()
+    except ValueError as exc:
+        print(f"\033[1;31m✗\033[0m {exc}")
+        return 2
+
+    if getattr(args, "json", False):
+        print(json.dumps(scanner.to_dict(result), indent=2))
+        return 0
+
+    scope = result.scanned_range or "this machine (127.0.0.1, localhost)"
+    print(f"\n\033[1;35mRoboWeaver Robot Discovery\033[0m — scanned {scope}")
+    print(f"  {result.hosts_scanned} host(s) x {result.ports_scanned} ports in {result.scan_duration_ms:.0f} ms")
+    print("─" * 88)
+    if not result.discovered:
+        print("  No endpoints responded. That is a real result, not a failed scan.")
+    for e in result.discovered:
+        flag = "\033[33m?\033[0m" if e.confidence < 0.5 else "\033[32m✓\033[0m"
+        print(f"  {flag} \033[1m{e.host}:{e.port}\033[0m  {e.name:<22} {int(e.confidence*100):>3}%  {e.latency_ms:>6.1f}ms  {e.hostname}")
+        if e.caveat:
+            print(f"      \033[33m{e.caveat}\033[0m")
+    print("─" * 88)
+
+    if result.local_transports:
+        print(f"\n  Local transports ({result.platform_name}, scannable: {', '.join(result.supported_transports)}):")
+        for t in result.local_transports:
+            state = "\033[32maccessible\033[0m" if t.readable else "\033[33mpermission denied\033[0m"
+            print(f"    [{t.kind:<12}] {t.device:<40} {state}")
+            if t.detail:
+                print(f"        {t.detail}")
+    print()
+    return 0
+
+
+def cmd_connect(args) -> int:
+    from roboweaver.hardware.universal_driver import UniversalRobotDriver
+
+    spec = get_robot_spec(args.robot)
+    bridge = UniversalRobotDriver.connect_robot(spec, protocol=args.protocol, uri=args.uri)
+    status = bridge.connect()
+
+    if getattr(args, "json", False):
+        print(json.dumps({
+            "robot_id": status.robot_id, "is_connected": status.is_connected,
+            "protocol": status.protocol, "dof": status.dof,
+            "active_controllers": status.active_controllers,
+            "latency_ms": status.latency_ms, "message": status.message,
+        }, indent=2))
+        return 0 if status.is_connected else 1
+
+    mark = "\033[1;32m✓ CONNECTED\033[0m" if status.is_connected else "\033[1;31m✗ NOT CONNECTED\033[0m"
+    print(f"\n{mark} — {spec.name} via {args.protocol} at {args.uri}")
+    print(f"  Transport : {status.protocol}")
+    print(f"  Message   : {status.message}")
+    if status.active_controllers:
+        print(f"  Controllers: {', '.join(status.active_controllers)}")
+    print()
+    return 0 if status.is_connected else 1
+
+
+def cmd_advise(args) -> int:
+    """Ask a local or hosted model to map a discovered endpoint onto a registry
+    robot. The suggestion is validated against ROBOT_REGISTRY before display."""
+    from roboweaver.nlu.connection_advisor import build_advisor
+
+    endpoint = {
+        "host": args.host, "port": args.port, "banner": getattr(args, "banner", "") or "",
+        "hostname": getattr(args, "hostname", "") or "",
+        "robot_type_guess": getattr(args, "guess", "") or "",
+        "latency_ms": getattr(args, "latency", 0.0),
+    }
+    advice = build_advisor(args.provider, getattr(args, "model", None)).advise(endpoint)
+
+    if getattr(args, "json", False):
+        print(json.dumps({
+            "robot_id": advice.robot_id, "protocol": advice.protocol, "uri": advice.uri,
+            "confidence": advice.confidence, "reasoning": advice.reasoning,
+            "provider": advice.provider, "model": advice.model, "error": advice.error,
+        }, indent=2))
+        return 0 if advice.robot_id else 1
+
+    if advice.error:
+        print(f"\n\033[1;31m✗ No usable advice\033[0m ({advice.provider}): {advice.error}\n")
+        return 1
+    print(f"\n\033[1;35mConnection advice\033[0m ({advice.provider} / {advice.model})")
+    print(f"  Robot      : \033[1;36m{advice.robot_id}\033[0m")
+    print(f"  Protocol   : {advice.protocol}")
+    print(f"  URI        : {advice.uri}")
+    print(f"  Confidence : {advice.confidence:.0%}")
+    print(f"  Reasoning  : {advice.reasoning}")
+    print(f"\n  \033[0;37mA suggestion, not a verification. Confirm before connecting:\033[0m")
+    print(f"    roboweaver connect --robot {advice.robot_id} --protocol {advice.protocol} --uri {advice.uri}\n")
+    return 0
+
+
 def cmd_dashboard(args) -> int:
-    from roboweaver.dashboard.server import start_dashboard_server as start_dashboard
-    start_dashboard(port=args.port)
+    if getattr(args, "no_self_heal", False):
+        from roboweaver.dashboard.server import start_dashboard_server
+        start_dashboard_server(port=args.port)
+    else:
+        # Default: a crashed server restarts itself automatically (exponential
+        # backoff, no cap on retries) -- no human needs to notice it died and
+        # rerun this command. Ctrl+C still stops it; that is the deliberate
+        # off switch, not something the loop requires to keep running.
+        from roboweaver.dashboard.server import run_dashboard_supervised
+        run_dashboard_supervised(port=args.port)
     return 0
 
 
@@ -286,6 +589,21 @@ def main() -> int:
     p_compile = subparsers.add_parser("compile", help="Compile natural language instruction into a skill")
     p_compile.add_argument("instruction", type=str, help="Instruction (e.g. 'Pick up the red cube')")
     p_compile.add_argument("--robot", type=str, default="panda", help="Target robot profile (panda, ur5e, kuka_iiwa, kinova_gen3, abb_irb120)")
+    p_compile.add_argument(
+        "--opt-level", dest="opt_level", type=str, default="O1",
+        choices=["O0", "O1", "O2", "O3", "Os", "Oenergy", "Osafe"],
+        help="Optimization level passed to the Pass Manager (no registered pass reads this yet)",
+    )
+    p_compile.add_argument(
+        "--explain-passes", dest="explain_passes", action="store_true",
+        help="Print the Pass Manager's per-pass timing/diagnostic trace after compiling",
+    )
+
+    # diff
+    p_diff = subparsers.add_parser("diff", help="Diff two RoboIR snapshots (cross-robot or across the compile pipeline's own passes)")
+    p_diff.add_argument("instruction", type=str, help="Instruction to compile and diff")
+    p_diff.add_argument("--robot", type=str, default="panda", help="Robot to compile against (baseline, or the 'from' side of --robot2)")
+    p_diff.add_argument("--robot2", type=str, default=None, help="If given, diff --robot's IR against this second robot's IR instead of diffing the pipeline trace")
 
     # retarget
     p_retarget = subparsers.add_parser("retarget", help="Retarget skill trajectory across different robot embodiments")
@@ -312,9 +630,47 @@ def main() -> int:
     p_export.add_argument("--output", type=str, default="./output", help="Output directory path")
     p_export.add_argument("--robot", type=str, default="panda", help="Robot model")
 
+    # urdf (3D model generation)
+    p_urdf = subparsers.add_parser("urdf", help="Generate a loadable URDF (+ optional STL meshes) for a robot")
+    p_urdf.add_argument("--robot", type=str, default="franka_panda", help="Robot id from the registry")
+    p_urdf.add_argument("--output", type=str, default=None, help="Output .urdf path")
+    p_urdf.add_argument("--meshes", action="store_true", help="Also emit per-link binary STL meshes")
+
+    # discover
+    p_disc = subparsers.add_parser("discover", help="Scan for reachable robots and simulators")
+    p_disc.add_argument("--subnet", type=str, default=None, help="CIDR range to sweep, e.g. 192.168.1.0/24")
+
+    # connect
+    p_conn = subparsers.add_parser("connect", help="Open a driver bridge to a robot endpoint")
+    p_conn.add_argument("--robot", type=str, required=True, help="Robot id from the registry")
+    p_conn.add_argument("--protocol", type=str, default="ros2", help="Bridge protocol: ros2 or sim")
+    p_conn.add_argument("--uri", type=str, default="ros2://localhost", help="Target URI")
+
+    # advise
+    p_adv = subparsers.add_parser("advise", help="Ask an LLM which robot a discovered endpoint is")
+    p_adv.add_argument("--host", type=str, required=True, help="Endpoint host/IP")
+    p_adv.add_argument("--port", type=int, required=True, help="Endpoint port")
+    p_adv.add_argument("--banner", type=str, default="", help="Observed TCP banner, if any")
+    p_adv.add_argument("--hostname", type=str, default="", help="Reverse-DNS name, if any")
+    p_adv.add_argument("--guess", type=str, default="", help="Port-convention guess")
+    p_adv.add_argument("--latency", type=float, default=0.0, help="Measured latency in ms")
+    p_adv.add_argument("--provider", type=str, default="ollama",
+                       choices=["ollama", "openrouter", "anthropic", "openai"],
+                       help="ollama is local and free; the others may bill per call")
+    p_adv.add_argument("--model", type=str, default=None, help="Override the provider's default model")
+
     # dashboard
     p_dash = subparsers.add_parser("dashboard", help="Launch web dashboard control center")
     p_dash.add_argument("--port", type=int, default=8080, help="HTTP port")
+    p_dash.add_argument(
+        "--no-self-heal", action="store_true",
+        help="Disable auto-restart on crash (self-healing is on by default)",
+    )
+
+    # Machine-readable output for scripting and CI, on every subcommand that
+    # produces a result rather than a stream.
+    for sub in (p_compile, p_diff, p_urdf, p_disc, p_conn, p_adv):
+        sub.add_argument("--json", action="store_true", help="Emit JSON instead of formatted text")
 
     args = parser.parse_args()
 
@@ -328,6 +684,8 @@ def main() -> int:
         return cmd_sim(args)
     elif args.command == "compile":
         return cmd_compile(args)
+    elif args.command == "diff":
+        return cmd_diff(args)
     elif args.command == "retarget":
         return cmd_retarget(args)
     elif args.command == "fleet":
@@ -338,6 +696,14 @@ def main() -> int:
         return cmd_list(args)
     elif args.command == "export":
         return cmd_export(args)
+    elif args.command == "urdf":
+        return cmd_urdf(args)
+    elif args.command == "discover":
+        return cmd_discover(args)
+    elif args.command == "connect":
+        return cmd_connect(args)
+    elif args.command == "advise":
+        return cmd_advise(args)
     elif args.command == "dashboard":
         return cmd_dashboard(args)
     else:

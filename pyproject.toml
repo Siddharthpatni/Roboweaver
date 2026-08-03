@@ -13,6 +13,9 @@ sim = [
     "numpy>=1.24",
     "imageio[ffmpeg]>=2.31",
 ]
+test = [
+    "pytest>=7.0",
+]
 
 [project.scripts]
 roboweaver = "roboweaver.cli.main:main"

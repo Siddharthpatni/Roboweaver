@@ -16,7 +16,7 @@ ObjectRole = Literal["source", "destination", "tool", "obstacle"]
 PoseSource = Literal["assumed_default", "perception", "user_specified"]
 
 
-@dataclass
+@dataclass(frozen=True)
 class ObjectRef:
     """A physical object a skill acts on. `pose_source` is never silently omitted —
     an assumed pose must say so, since RoboWeaver has no perception system yet."""
@@ -39,7 +39,7 @@ class ObjectRef:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class RequiredCapabilities:
     """What a skill needs to run, independent of any one robot. Checked against a
     target RobotSpec's declared capabilities by ir/diagnostics.py (the Compiler
@@ -53,7 +53,7 @@ class RequiredCapabilities:
         return {"perception": self.perception, "manipulation": self.manipulation, "sensing": self.sensing}
 
 
-@dataclass
+@dataclass(frozen=True)
 class Constraints:
     payload_kg: float | None = None
     precision_mm: float | None = None
@@ -62,7 +62,7 @@ class Constraints:
         return {"payload_kg": self.payload_kg, "precision_mm": self.precision_mm}
 
 
-@dataclass
+@dataclass(frozen=True)
 class ExecutionSpec:
     robot_id: str
     dof: int
@@ -73,7 +73,7 @@ class ExecutionSpec:
         return {"robot_id": self.robot_id, "dof": self.dof, "planner": self.planner, "controller": self.controller}
 
 
-@dataclass
+@dataclass(frozen=True)
 class VerificationSpec:
     collision_check: bool = True
     simulation_required: bool = True
@@ -87,9 +87,23 @@ class VerificationSpec:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class RoboIR:
-    """One compiled skill's intermediate representation."""
+    """One compiled skill's intermediate representation.
+
+    Frozen (and so are every one of its nested dataclasses: ObjectRef, Constraints,
+    RequiredCapabilities, ExecutionSpec, VerificationSpec) -- an SSA-style guarantee
+    that a RoboIR, once built by build_ir(), is never mutated in place. A pass that
+    wants to change something produces a *new* RoboIR (dataclasses.replace(ir, ...))
+    rather than reassigning a field; ir/pass_manager.py's PassManager threads that
+    generation-to-generation, so the compile pipeline is a real IR v1 -> v2 -> v3
+    chain, not a mutable object edited in place by whichever stage runs last. Reassigning
+    a top-level field (e.g. `ir.action = "X"`) now raises FrozenInstanceError. Note this
+    is shallow: `objects` is still a `list[ObjectRef]`, so the list's *contents* could in
+    principle be mutated in place (`ir.objects.append(...)`) even though the field
+    itself can't be reassigned -- every pass in this codebase already treats it as
+    read-only, but this is a real limit of stdlib `frozen=True`, not deep immutability.
+    """
 
     skill_id: str
     skill_version: str

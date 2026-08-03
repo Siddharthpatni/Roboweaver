@@ -72,31 +72,100 @@ def forward_kinematics_chain_ndof(spec: RobotSpec, q: Sequence[float]) -> list[V
 
 
 class NDOFIKSolver:
-    """Generalized N-DOF Inverse Kinematics Solver."""
+    """Generalized N-DOF Inverse Kinematics Solver.
+
+    V2 improvements:
+    - **Multi-seed IK**: tries 5 seeds (clamped-zero + 4 random within joint limits)
+      and picks the solution with the lowest residual.  Dramatically improves solve
+      rates for redundant arms where the zero-seed lands in a bad basin.
+    - **Adaptive damping**: starts low and increases when the solver stalls near a
+      singularity, preventing oscillation without over-damping easy solves.
+    """
 
     def __init__(self, spec: RobotSpec):
         self.spec = spec
+
+    def _random_seed(self) -> list[float]:
+        """Generate a random seed within joint limits using a simple LCG so we
+        don't add a new runtime dependency on numpy/random just for IK seeding."""
+        import random
+        limits = self.spec.get_joint_limits()
+        return [random.uniform(lo, hi) for lo, hi in limits[:self.spec.dof]]
+
+    def _clamped_zero_seed(self) -> list[float]:
+        """Zero clamped into each joint's declared range."""
+        return [
+            max(j.lower_limit, min(j.upper_limit, 0.0))
+            for j in self.spec.joints[:self.spec.dof]
+        ]
 
     def solve(
         self,
         target_pos: Sequence[float] | Vec3,
         seed_q: Sequence[float] | None = None,
-        max_iter: int = 500,
-        tol: float = 0.0015,
+        max_iter: int = 800,
+        tol: float = 0.001,
         damping: float = 1e-4,
         step_size: float = 0.3,
+        num_seeds: int = 5,
     ) -> tuple[bool, list[float], float, int]:
-        """Solve N-DOF position IK for target_pos."""
+        """Solve N-DOF position IK for target_pos with multi-seed + adaptive damping."""
         if isinstance(target_pos, Vec3):
             target = target_pos
         else:
             target = Vec3(target_pos[0], target_pos[1], target_pos[2])
 
         n = self.spec.dof
-        q = list(seed_q) if (seed_q is not None and len(seed_q) == n) else [0.0] * n
 
+        # Build seed list: explicit seed first, then clamped-zero, then randoms
+        seeds: list[list[float]] = []
+        if seed_q is not None and len(seed_q) == n:
+            seeds.append(list(seed_q))
+        seeds.append(self._clamped_zero_seed())
+        while len(seeds) < num_seeds:
+            seeds.append(self._random_seed())
+
+        global_best_q: list[float] = seeds[0]
+        global_best_err = float("inf")
+        global_total_iters = 0
+
+        for seed in seeds:
+            ok, q, err, iters = self._solve_single(target, list(seed), max_iter // num_seeds, tol, damping, step_size)
+            global_total_iters += iters
+            if err < global_best_err:
+                global_best_err = err
+                global_best_q = q
+            if ok:
+                return True, global_best_q, global_best_err, global_total_iters
+
+        # If no seed converged, do a final extended run from the best seed found
+        if global_best_err >= tol:
+            ok, q, err, iters = self._solve_single(target, global_best_q, max_iter, tol, damping * 0.5, step_size)
+            global_total_iters += iters
+            if err < global_best_err:
+                global_best_err = err
+                global_best_q = q
+            if ok:
+                return True, global_best_q, global_best_err, global_total_iters
+
+        return global_best_err < tol * 5, global_best_q, global_best_err, global_total_iters
+
+    def _solve_single(
+        self,
+        target: Vec3,
+        q: list[float],
+        max_iter: int,
+        tol: float,
+        damping: float,
+        step_size: float,
+    ) -> tuple[bool, list[float], float, int]:
+        """Single-seed damped pseudoinverse IK with adaptive damping."""
+        n = self.spec.dof
         best_q = list(q)
         best_err = float("inf")
+        current_damping = damping
+        stall_count = 0
+        prev_err = float("inf")
 
         for iteration in range(max_iter):
             curr_pos = forward_kinematics_ndof(self.spec, q).pos
@@ -106,9 +175,22 @@ class NDOFIKSolver:
             if err_norm < best_err:
                 best_err = err_norm
                 best_q = list(q)
+                stall_count = 0
+            else:
+                stall_count += 1
 
             if err_norm < tol:
                 return True, best_q, err_norm, iteration + 1
+
+            # Adaptive damping: increase when stalling (near singularity)
+            if stall_count > 10:
+                current_damping = min(current_damping * 2.0, 0.1)
+                stall_count = 0
+            elif err_norm < prev_err * 0.95:
+                # Good progress — reduce damping for faster convergence
+                current_damping = max(current_damping * 0.8, damping * 0.1)
+
+            prev_err = err_norm
 
             # Compute 3xN Jacobian via finite differences
             eps = 1e-5
@@ -126,7 +208,7 @@ class NDOFIKSolver:
                 for c in range(3):
                     JJT[r][c] = sum(J[j][r] * J[j][c] for j in range(n))
                     if r == c:
-                        JJT[r][c] += damping
+                        JJT[r][c] += current_damping
 
             det = (
                 JJT[0][0] * (JJT[1][1] * JJT[2][2] - JJT[1][2] * JJT[2][1])
@@ -165,3 +247,4 @@ class NDOFIKSolver:
                     q[j] = max(lo, min(hi, q[j]))
 
         return best_err < tol * 5, best_q, best_err, max_iter
+

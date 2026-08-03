@@ -26,10 +26,15 @@ def generate_ros2_package(skill: CompiledSkill, output_dir: str | Path) -> Path:
     (pkg_dir / "behavior_tree.xml").write_text(bt_xml, encoding="utf-8")
 
     # 2. Save DDS QoS Profile configuration YAML
+    # VOLATILE, not TRANSIENT_LOCAL: this profile backs live trajectory/command
+    # topics. TRANSIENT_LOCAL replays the last published message to late-joining
+    # subscribers -- correct for static data like a map, but for a moving robot's
+    # command topic it means a late-joining node (e.g. an action server restarted
+    # mid-skill) would receive a stale, already-superseded trajectory command.
     qos_yaml = """# DDS Quality of Service (QoS) Profile for High-Reliability Industrial Control
 qos_profile:
   reliability: RMW_QOS_POLICY_RELIABILITY_RELIABLE
-  durability: RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL
+  durability: RMW_QOS_POLICY_DURABILITY_VOLATILE
   deadline: 100  # ms
   liveliness: RMW_QOS_POLICY_LIVELINESS_AUTOMATIC
 """
@@ -86,20 +91,24 @@ class RoboWeaverSkillNode(Node):
 
     def __init__(self):
         super().__init__('roboweaver_{skill_slug}_node')
-        qos = QoSProfile(
+        # RELIABLE + VOLATILE + KEEP_LAST for command topics -- VOLATILE (not
+        # TRANSIENT_LOCAL) so a late-joining subscriber never replays a stale,
+        # already-superseded command. TRANSIENT_LOCAL is for static data (maps),
+        # not live trajectory/velocity commands.
+        command_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            durability=DurabilityPolicy.VOLATILE,
             depth=10
         )
         self.traj_pub = self.create_publisher(
             JointTrajectory,
             '/joint_trajectory_controller/joint_trajectory',
-            qos
+            command_qos
         )
         self.cmd_vel_pub = self.create_publisher(
             Twist,
             '/diff_drive_controller/cmd_vel_unstamped',
-            10
+            command_qos
         )
         self.get_logger().info('RoboWeaver ROS 2 Universal Skill Node [{skill_slug}] Initialized')
         self.execute_skill()

@@ -295,6 +295,12 @@ not MVP scope.
 
 ## 9. Roadmap
 
+**See also `docs/COMPILER_ROADMAP.md`** for a separate, differently-numbered roadmap
+tracking RoboWeaver's evolution into compiler infrastructure (pass manager, immutable
+IR, static analysis, optimizations, backends, cost model, benchmarks, formal
+verification) — this section's Phase 1–4 is about shipping RoboWeaver as a product;
+that doc is about RoboWeaver's identity as a compiler.
+
 **Phase 1 — MVP (§8): done.** See §11 for exactly what was built, cited by file, and
 what's still open within Phase 1 (the API is still synchronous `http.server`, not
 FastAPI; the frontend is one flow, not yet the full pipeline-dashboard view from §7).

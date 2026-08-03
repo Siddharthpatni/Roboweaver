@@ -24,11 +24,129 @@ const EXAMPLES = [
   'Pick up the heavy gear assembly',
 ];
 
+/** The four real pipeline stages a compile request runs through server-side. */
+const PIPELINE_STAGES = ['Parse intent', 'RoboIR + checks', 'N-DOF motion plan', 'BehaviorTree'];
+
+/**
+ * Pipeline indicator. A compile is a single round-trip with no intermediate
+ * progress events, so while it is in flight every stage is shown as "in
+ * flight" (shimmer) rather than inventing per-stage completion. Stages only
+ * resolve to complete once a result comes back and actually proves they ran.
+ */
+function PipelineSteps({ state }: { state: 'idle' | 'running' | 'done' }) {
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      {PIPELINE_STAGES.map((stage, i) => (
+        <React.Fragment key={stage}>
+          {i > 0 && <span className="text-slate-700 text-[10px]">→</span>}
+          <span
+            className={`px-2 py-1 rounded-md text-[10.5px] font-data border transition-colors ${
+              state === 'done'
+                ? 'border-cyan-400/25 bg-cyan-500/[0.08] text-cyan-300'
+                : state === 'running'
+                ? 'border-cyan-400/20 text-cyan-200/80 animate-shimmer'
+                : 'border-white/[0.06] text-slate-600'
+            }`}
+          >
+            {state === 'done' ? '✓ ' : ''}
+            {stage}
+          </span>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Minimal XML syntax colouring. Tokenises into tags/attributes/values and
+ * renders real React nodes — never dangerouslySetInnerHTML, since this string
+ * comes back over the wire from the compiler.
+ */
+function renderAttrs(attrs: string, keyBase: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  const re = /([\w:.-]+)(=)("[^"]*"|'[^']*')|(\s+)|(\S+)/g;
+  let m: RegExpExecArray | null;
+  let i = 0;
+  while ((m = re.exec(attrs)) !== null) {
+    if (m[1]) {
+      nodes.push(
+        <span key={`${keyBase}-n${i}`} className="text-cyan-300">
+          {m[1]}
+        </span>,
+        <span key={`${keyBase}-e${i}`} className="text-slate-500">
+          {m[2]}
+        </span>,
+        <span key={`${keyBase}-v${i}`} className="text-amber-200/90">
+          {m[3]}
+        </span>
+      );
+    } else if (m[4]) {
+      nodes.push(<span key={`${keyBase}-w${i}`}>{m[4]}</span>);
+    } else if (m[5]) {
+      nodes.push(
+        <span key={`${keyBase}-o${i}`} className="text-slate-400">
+          {m[5]}
+        </span>
+      );
+    }
+    i += 1;
+  }
+  return nodes;
+}
+
+function XmlHighlight({ xml }: { xml: string }) {
+  const parts = xml.split(/(<[^>]*>)/g);
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (!part) return null;
+        if (!part.startsWith('<')) {
+          return (
+            <span key={i} className="text-slate-400">
+              {part}
+            </span>
+          );
+        }
+        if (part.startsWith('<!--')) {
+          return (
+            <span key={i} className="text-slate-600 italic">
+              {part}
+            </span>
+          );
+        }
+        if (part.startsWith('<?')) {
+          return (
+            <span key={i} className="text-violet-400">
+              {part}
+            </span>
+          );
+        }
+        const m = /^(<\/?)([\w:.-]+)([\s\S]*?)(\/?>)$/.exec(part);
+        if (!m) {
+          return (
+            <span key={i} className="text-slate-400">
+              {part}
+            </span>
+          );
+        }
+        return (
+          <span key={i}>
+            <span className="text-slate-600">{m[1]}</span>
+            <span className="text-violet-300 font-medium">{m[2]}</span>
+            {renderAttrs(m[3], String(i))}
+            <span className="text-slate-600">{m[4]}</span>
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 function DiagnosticCard({ d }: { d: CompilerDiagnostic }) {
   const isError = d.severity === 'error';
   return (
     <div
-      className={`rounded-lg border p-3.5 space-y-2 ${
+      className={`rounded-lg border p-3.5 space-y-2 animate-fade-in-up ${
         isError ? 'bg-rose-500/[0.06] border-rose-500/25' : 'bg-amber-500/[0.06] border-amber-500/20'
       }`}
     >
@@ -132,13 +250,27 @@ export const CompilerView: React.FC = () => {
         </div>
 
         <div className="app-card p-5 space-y-4">
-          <textarea
-            value={instruction}
-            onChange={(e) => setInstruction(e.target.value)}
-            rows={2}
-            placeholder='e.g. "Pick the red cube and place it into the blue bin"'
-            className="w-full app-well rounded-lg px-3.5 py-3 text-[13px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500/40 resize-none transition-colors"
-          />
+          {/* Terminal-style instruction editor */}
+          <div className="app-well rounded-lg overflow-hidden transition-all duration-300 focus-within:shadow-[0_0_0_3px_rgba(34,211,238,0.07),0_0_22px_-6px_rgba(34,211,238,0.45)]">
+            <div className="flex items-center gap-2 px-3 py-1.5 border-b border-cyan-400/[0.07] bg-black/20">
+              <span className="w-2 h-2 rounded-full bg-rose-500/50" />
+              <span className="w-2 h-2 rounded-full bg-amber-400/50" />
+              <span className="w-2 h-2 rounded-full bg-cyan-400/50" />
+              <span className="ml-1 text-[10.5px] font-data text-slate-600">instruction</span>
+            </div>
+            <div className="flex items-start gap-2 px-3.5 py-3">
+              <span className="font-data text-[13px] text-cyan-400 select-none shrink-0 leading-relaxed">
+                ›
+              </span>
+              <textarea
+                value={instruction}
+                onChange={(e) => setInstruction(e.target.value)}
+                rows={2}
+                placeholder='e.g. "Pick the red cube and place it into the blue bin"'
+                className="flex-1 bg-transparent font-data text-[13px] text-slate-200 placeholder-slate-600 focus:outline-none resize-none leading-relaxed"
+              />
+            </div>
+          </div>
 
           <div className="flex flex-wrap gap-2">
             {EXAMPLES.map((ex) => (
@@ -167,11 +299,17 @@ export const CompilerView: React.FC = () => {
             <button
               onClick={handleCompile}
               disabled={loading}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-[#0a0c11] text-[13px] font-semibold transition-colors"
+              className="flex items-center gap-2 px-4 py-2 btn-neon disabled:opacity-50 text-[13px]"
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
               {loading ? 'Compiling…' : 'Compile'}
             </button>
+          </div>
+
+          <div className="pt-1 border-t border-cyan-400/[0.07]">
+            <div className="pt-3">
+              <PipelineSteps state={loading ? 'running' : result ? 'done' : 'idle'} />
+            </div>
           </div>
 
           {error && (
@@ -196,8 +334,14 @@ export const CompilerView: React.FC = () => {
 
         {result && (
           <div className="space-y-5 animate-fade-in">
-            <div className="app-card p-5 flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-1.5 text-emerald-400">
+            <div
+              className="app-card p-5 flex items-center justify-between gap-3 flex-wrap"
+              style={{
+                borderColor: 'rgba(34,211,238,0.3)',
+                boxShadow: '0 0 22px -8px rgba(34,211,238,0.5)',
+              }}
+            >
+              <div className="flex items-center gap-1.5 text-cyan-400">
                 <CheckCircle2 className="w-4 h-4" />
                 <span className="text-[12.5px] font-medium">Compiled successfully</span>
               </div>
@@ -291,7 +435,7 @@ export const CompilerView: React.FC = () => {
                 {result.tasks.map((t, i) => (
                   <div key={i} className="app-well rounded-lg px-3.5 py-2 flex items-center gap-3">
                     <span className="font-data text-[10.5px] text-slate-600 shrink-0">{i + 1}</span>
-                    <span className="font-data text-[11px] text-emerald-400 shrink-0">{t.type}</span>
+                    <span className="font-data text-[11px] text-cyan-400 shrink-0">{t.type}</span>
                     <span className="text-[12px] text-slate-300 truncate">{t.description}</span>
                   </div>
                 ))}
@@ -322,8 +466,8 @@ export const CompilerView: React.FC = () => {
                   </button>
                 </div>
               </div>
-              <pre className="p-5 text-[11.5px] leading-relaxed font-data text-slate-300 overflow-x-auto max-h-80 overflow-y-auto bg-black/20">
-{result.behavior_tree_xml}
+              <pre className="p-5 text-[11.5px] leading-relaxed font-data overflow-x-auto max-h-80 overflow-y-auto bg-black/30">
+<XmlHighlight xml={result.behavior_tree_xml} />
               </pre>
             </div>
           </div>

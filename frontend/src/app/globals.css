@@ -1,145 +1,270 @@
+/* Font @import must precede every other rule -- `@import "tailwindcss"` expands
+   into real rules, so a font import placed after it is invalid per the CSS spec
+   and gets dropped, silently falling the UI back off Inter/JetBrains Mono. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
-/* Stark palette: the classic Mark III red/gold. Remaps the "emerald" scale used
-   throughout the app to Stark gold so every existing emerald-* utility class repaints
-   without touching each component. Cyan is intentionally absent from this palette —
-   it appears in exactly one place in the whole app: the arc-reactor core dot in the
-   Sidebar logo (Sidebar.tsx), nowhere else. */
+/* ═══════════════════════════════════════════════════════════════════════
+   ROBOWEAVER V2 — Cyberpunk-Neon Design System
+   Deep space blacks • Electric cyan • Vivid violet • Hot rose alerts
+   ═══════════════════════════════════════════════════════════════════════ */
+
 @theme {
-  --color-emerald-50: #fff8e6;
-  --color-emerald-100: #ffecb3;
-  --color-emerald-200: #ffdd7a;
-  --color-emerald-300: #ffc94d;
-  --color-emerald-400: #ffb300;
-  --color-emerald-500: #e0960a;
-  --color-emerald-600: #b8760a;
-  --color-emerald-700: #8f5a08;
-  --color-emerald-800: #5c3a06;
-  --color-emerald-900: #3d2600;
-  --color-emerald-950: #1f1300;
+  --color-emerald-50:  #ecfeff;
+  --color-emerald-100: #cffafe;
+  --color-emerald-200: #a5f3fc;
+  --color-emerald-300: #67e8f9;
+  --color-emerald-400: #22d3ee;
+  --color-emerald-500: #06b6d4;
+  --color-emerald-600: #0891b2;
+  --color-emerald-700: #0e7490;
+  --color-emerald-800: #155e75;
+  --color-emerald-900: #164e63;
+  --color-emerald-950: #083344;
 
-  --color-cyan-300: #ffc94d;
-  --color-cyan-400: #ffb300;
-  --color-cyan-500: #e0960a;
+  --color-cyan-300: #67e8f9;
+  --color-cyan-400: #22d3ee;
+  --color-cyan-500: #06b6d4;
 
-  --color-rose-400: #ff5449;
-  --color-rose-500: #d6291c;
+  --color-rose-400: #fb7185;
+  --color-rose-500: #f43f5e;
+
+  --color-violet-400: #a78bfa;
+  --color-violet-500: #8b5cf6;
 }
 
 :root {
-  --background: #08090b;
-  --foreground: #f2ede6;
-  --stark-red: #a3120a;
-  --stark-red-light: #d81f10;
-  --arc-cyan: #22d3ee;
+  --background: #030712;
+  --foreground: #f1f5f9;
+  --neon-cyan: #22d3ee;
+  --neon-violet: #8b5cf6;
+  --neon-rose: #f43f5e;
+  --surface-primary: #0a0f1e;
+  --surface-card: rgba(15, 23, 42, 0.7);
+  --border-subtle: rgba(34, 211, 238, 0.08);
+  --border-active: rgba(34, 211, 238, 0.25);
+  --glow-cyan: rgba(34, 211, 238, 0.15);
+  --glow-violet: rgba(139, 92, 246, 0.15);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: 'Inter', var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   overflow-x: hidden;
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
+/* ── Custom Scrollbar ─────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(34, 211, 238, 0.2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(34, 211, 238, 0.4); }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #3d2f1a;
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #ffb30055;
-}
-
+/* ── Animations ───────────────────────────────────────────────────── */
 @keyframes fade-in {
-  0% { opacity: 0; transform: translateY(4px); }
+  0% { opacity: 0; transform: translateY(8px); }
   100% { opacity: 1; transform: translateY(0); }
 }
 
-.animate-fade-in {
-  animation: fade-in 0.2s ease-out;
+@keyframes fade-in-up {
+  0% { opacity: 0; transform: translateY(16px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
 
-/* The literal arc reactor: a small cyan-white glow. This is the ONLY place cyan is
-   used anywhere in the app (Sidebar.tsx logo core) — everything else is red/gold. */
-@keyframes arc-pulse {
-  0%, 100% { box-shadow: 0 0 6px 1px rgba(34, 211, 238, 0.6), 0 0 0 rgba(34, 211, 238, 0); }
-  50% { box-shadow: 0 0 13px 3px rgba(34, 211, 238, 0.9), 0 0 24px 7px rgba(34, 211, 238, 0.2); }
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 8px 2px var(--glow-cyan), 0 0 0 rgba(34, 211, 238, 0); }
+  50% { box-shadow: 0 0 20px 6px var(--glow-cyan), 0 0 40px 12px rgba(34, 211, 238, 0.08); }
 }
 
-.animate-arc-pulse {
-  animation: arc-pulse 2.4s ease-in-out infinite;
+@keyframes border-glow {
+  0%, 100% { border-color: rgba(34, 211, 238, 0.12); }
+  50% { border-color: rgba(34, 211, 238, 0.3); }
 }
 
-/* Subtle HUD texture for main content areas — true black with a faint gold grid line,
-   no color wash over the background itself. */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes spin-slow {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes breathing {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+@keyframes radar-sweep {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes gradient-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animate-fade-in { animation: fade-in 0.25s ease-out; }
+.animate-fade-in-up { animation: fade-in-up 0.4s ease-out; }
+.animate-glow-pulse { animation: glow-pulse 2.4s ease-in-out infinite; }
+.animate-border-glow { animation: border-glow 3s ease-in-out infinite; }
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.08), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 2s linear infinite;
+}
+.animate-spin-slow { animation: spin-slow 8s linear infinite; }
+.animate-breathing { animation: breathing 2s ease-in-out infinite; }
+.animate-radar-sweep { animation: radar-sweep 3s linear infinite; }
+.animate-gradient-shift {
+  background-size: 200% 200%;
+  animation: gradient-shift 4s ease infinite;
+}
+
+/* ── Glassmorphic Background ──────────────────────────────────────── */
 .bg-app-surface {
-  background-color: #060606;
+  background-color: #030712;
   background-image:
-    linear-gradient(rgba(255, 179, 0, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 179, 0, 0.04) 1px, transparent 1px);
-  background-size: 34px 34px;
+    radial-gradient(circle at 25% 25%, rgba(34, 211, 238, 0.03) 0%, transparent 50%),
+    radial-gradient(circle at 75% 75%, rgba(139, 92, 246, 0.03) 0%, transparent 50%),
+    radial-gradient(circle at 1px 1px, rgba(34, 211, 238, 0.05) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 24px 24px;
 }
 
-/* Standard content card — true black panel, thin gold edge, no brown/muddy tint */
+/* ── Glassmorphic Card ────────────────────────────────────────────── */
 .app-card {
   position: relative;
-  background: #0e0e10;
-  border: 1px solid rgba(255, 179, 0, 0.14);
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(34, 211, 238, 0.1);
   border-radius: 0.75rem;
-  box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.7);
+  box-shadow:
+    0 0 0 1px rgba(34, 211, 238, 0.05),
+    0 8px 32px -8px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.03);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
 }
 
-/* Recessed well (inputs, code blocks, log panels) */
+.app-card:hover {
+  border-color: rgba(34, 211, 238, 0.2);
+  box-shadow:
+    0 0 0 1px rgba(34, 211, 238, 0.1),
+    0 0 20px -4px rgba(34, 211, 238, 0.08),
+    0 12px 40px -8px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+}
+
+/* ── Recessed Well ────────────────────────────────────────────────── */
 .app-well {
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid rgba(255, 179, 0, 0.09);
+  background: rgba(3, 7, 18, 0.6);
+  border: 1px solid rgba(34, 211, 238, 0.06);
+  transition: border-color 0.2s ease;
 }
 
-/* Small uppercase eyebrow / kicker label */
+.app-well:focus-within {
+  border-color: rgba(34, 211, 238, 0.3);
+  box-shadow: 0 0 12px -2px rgba(34, 211, 238, 0.1);
+}
+
+/* ── Kicker Label ─────────────────────────────────────────────────── */
 .kicker {
   font-size: 0.6875rem;
   font-weight: 600;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #d9962e;
+  background: linear-gradient(135deg, #22d3ee, #8b5cf6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
-/* Monospace for IDs, data readouts, and code — not for general UI copy */
+/* ── Mono Data Font ───────────────────────────────────────────────── */
 .font-data {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-/* Tasteful HUD corner brackets — gold top-left, red bottom-right, used sparingly on
-   the hero panel only. */
+/* ── HUD Corner Brackets ──────────────────────────────────────────── */
 .hud-corners::before,
 .hud-corners::after {
   content: "";
   position: absolute;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   pointer-events: none;
 }
 
 .hud-corners::before {
   top: -1px;
   left: -1px;
-  border-top: 2px solid rgba(255, 179, 0, 0.7);
-  border-left: 2px solid rgba(255, 179, 0, 0.7);
+  border-top: 2px solid rgba(34, 211, 238, 0.6);
+  border-left: 2px solid rgba(34, 211, 238, 0.6);
 }
 
 .hud-corners::after {
   bottom: -1px;
   right: -1px;
-  border-bottom: 2px solid rgba(163, 18, 10, 0.8);
-  border-right: 2px solid rgba(163, 18, 10, 0.8);
+  border-bottom: 2px solid rgba(139, 92, 246, 0.6);
+  border-right: 2px solid rgba(139, 92, 246, 0.6);
 }
+
+/* ── Neon Button ──────────────────────────────────────────────────── */
+.btn-neon {
+  position: relative;
+  background: linear-gradient(135deg, #06b6d4, #0891b2);
+  color: #030712;
+  font-weight: 600;
+  border-radius: 0.5rem;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 12px -2px rgba(34, 211, 238, 0.3);
+}
+
+.btn-neon:hover {
+  background: linear-gradient(135deg, #22d3ee, #06b6d4);
+  box-shadow: 0 0 20px -2px rgba(34, 211, 238, 0.5);
+  transform: translateY(-1px);
+}
+
+.btn-neon:active {
+  transform: translateY(0);
+}
+
+/* ── Gradient Text ────────────────────────────────────────────────── */
+.text-gradient {
+  background: linear-gradient(135deg, #22d3ee, #a78bfa, #f472b6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Status Dot ───────────────────────────────────────────────────── */
+.status-dot-online {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22d3ee;
+  box-shadow: 0 0 8px 2px rgba(34, 211, 238, 0.4);
+  animation: breathing 2s ease-in-out infinite;
+}
+
+.status-dot-offline {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f43f5e;
+  box-shadow: 0 0 8px 2px rgba(244, 63, 94, 0.3);
+}
+
+/* ── Stagger Children ─────────────────────────────────────────────── */
+.stagger-children > * {
+  animation: fade-in-up 0.4s ease-out both;
+}
+.stagger-children > *:nth-child(1) { animation-delay: 0.05s; }
+.stagger-children > *:nth-child(2) { animation-delay: 0.1s; }
+.stagger-children > *:nth-child(3) { animation-delay: 0.15s; }
+.stagger-children > *:nth-child(4) { animation-delay: 0.2s; }
+.stagger-children > *:nth-child(5) { animation-delay: 0.25s; }
+.stagger-children > *:nth-child(6) { animation-delay: 0.3s; }

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Gauge, Weight, Ruler, Loader2, AlertTriangle } from 'lucide-react';
+import { Gauge, Weight, Ruler, Loader2, AlertTriangle, Box, Download } from 'lucide-react';
 import { RoboWeaverAPI } from '../lib/api';
 import { RobotProfile } from '../types';
 
@@ -9,6 +9,8 @@ export const FleetRegistryView: React.FC = () => {
   const [robots, setRobots] = useState<RobotProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [downloading, setDownloading] = useState<Record<string, boolean>>({});
+  const [downloadError, setDownloadError] = useState<Record<string, string>>({});
 
   useEffect(() => {
     RoboWeaverAPI.robots()
@@ -21,6 +23,28 @@ export const FleetRegistryView: React.FC = () => {
         setLoading(false);
       });
   }, []);
+
+  const handleDownloadUrdf = async (robot: RobotProfile) => {
+    setDownloading((d) => ({ ...d, [robot.id]: true }));
+    setDownloadError((d) => ({ ...d, [robot.id]: '' }));
+    try {
+      const xml = await RoboWeaverAPI.robotUrdf(robot.id);
+      const blob = new Blob([xml], { type: 'application/xml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${robot.id}.urdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setDownloadError((d) => ({
+        ...d,
+        [robot.id]: 'Could not reach the backend to generate the URDF.',
+      }));
+    } finally {
+      setDownloading((d) => ({ ...d, [robot.id]: false }));
+    }
+  };
 
   return (
     <div className="h-full overflow-y-auto">
@@ -36,7 +60,7 @@ export const FleetRegistryView: React.FC = () => {
           </div>
           <div className="app-card px-4 py-3 text-right shrink-0">
             <div className="text-[10.5px] text-slate-500">Registered embodiments</div>
-            <div className="text-xl font-semibold font-data text-amber-400">{robots.length}</div>
+            <div className="text-xl font-semibold font-data text-cyan-400">{robots.length}</div>
           </div>
         </div>
 
@@ -66,7 +90,7 @@ export const FleetRegistryView: React.FC = () => {
 
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="app-well rounded-lg py-2">
-                    <Gauge className="w-3.5 h-3.5 text-amber-400 mx-auto mb-1" />
+                    <Gauge className="w-3.5 h-3.5 text-cyan-400 mx-auto mb-1" />
                     <div className="text-[13px] font-semibold font-data text-white">{r.dof}</div>
                     <div className="text-[9.5px] text-slate-500">DOF</div>
                   </div>
@@ -83,9 +107,32 @@ export const FleetRegistryView: React.FC = () => {
                 </div>
               </div>
 
-              <div className="pt-3 mt-3.5 border-t border-white/[0.06] flex items-center justify-between text-[11px]">
-                <span className="text-slate-500 capitalize">{r.gripper_type.replace(/_/g, ' ')}</span>
-                <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-data">{r.id}</span>
+              <div className="pt-3 mt-3.5 border-t border-white/[0.06] space-y-2.5">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-slate-500 capitalize">{r.gripper_type.replace(/_/g, ' ')}</span>
+                  <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-data">{r.id}</span>
+                </div>
+
+                <button
+                  onClick={() => handleDownloadUrdf(r)}
+                  disabled={downloading[r.id]}
+                  className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md bg-violet-500/10 hover:bg-violet-500/15 border border-violet-500/20 text-violet-300 text-[11.5px] font-medium disabled:opacity-50 transition-colors"
+                  title="Generate a URDF from this robot's real kinematic spec — the same numbers the IK solver plans against, not an invented mesh"
+                >
+                  {downloading[r.id] ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Box className="w-3.5 h-3.5" />
+                  )}
+                  {downloading[r.id] ? 'Generating…' : 'Download URDF'}
+                  <Download className="w-3 h-3 opacity-60" />
+                </button>
+                {downloadError[r.id] && (
+                  <p className="text-[10.5px] text-rose-400 flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                    {downloadError[r.id]}
+                  </p>
+                )}
               </div>
             </div>
           ))}

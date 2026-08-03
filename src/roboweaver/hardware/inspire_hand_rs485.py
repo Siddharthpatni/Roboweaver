@@ -145,6 +145,27 @@ class InspireHandRS485Driver:
             )
         return data
 
+    @staticmethod
+    def _unpack_actuator_frame(data: bytes) -> tuple[list[int], list[int]]:
+        """Decode a 24-byte actuator response (6x position + 6x current, both
+        uint16 LE). A frame can pass CRC yet still be the wrong length -- noise
+        flipping the length byte itself, or real hardware echoing a different
+        response than the one requested -- and `struct.unpack` on a short
+        buffer raises a bare `struct.error`, not this driver's own
+        `InspireHandCommError`. Proven live: a valid-CRC 4-byte payload crashed
+        set_positions() with "unpack requires a buffer of 12 bytes" instead of
+        a message a caller catching InspireHandCommError would ever see.
+        """
+        if len(data) < 24:
+            raise InspireHandCommError(
+                f"Inspire Hand RS485 short frame: expected 24 bytes of actuator "
+                f"data (6 positions + 6 currents), got {len(data)} -- CRC was "
+                f"valid but the payload doesn't match the expected shape"
+            )
+        positions = list(struct.unpack("<6H", data[:12]))
+        currents = list(struct.unpack("<6H", data[12:24]))
+        return positions, currents
+
     def set_positions(
         self,
         positions: list[int],
@@ -167,8 +188,7 @@ class InspireHandRS485Driver:
             self.serial_conn.flush()
             # Real round trip: the hand ACKs with its actual resulting positions/currents.
             data = self._read_frame()
-            self.state.actuator_positions = list(struct.unpack("<6H", data[:12]))
-            self.state.actuator_currents_ma = list(struct.unpack("<6H", data[12:24]))
+            self.state.actuator_positions, self.state.actuator_currents_ma = self._unpack_actuator_frame(data)
             self.state.actuator_forces_n = [round(c * 0.002, 2) for c in self.state.actuator_currents_ma]
             return True
 
@@ -196,7 +216,6 @@ class InspireHandRS485Driver:
             self.serial_conn.write(packet)
             self.serial_conn.flush()
             data = self._read_frame()
-            self.state.actuator_positions = list(struct.unpack("<6H", data[:12]))
-            self.state.actuator_currents_ma = list(struct.unpack("<6H", data[12:24]))
+            self.state.actuator_positions, self.state.actuator_currents_ma = self._unpack_actuator_frame(data)
             self.state.actuator_forces_n = [round(c * 0.002, 2) for c in self.state.actuator_currents_ma]
         return self.state

@@ -23,22 +23,18 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install RoboWeaver (editable, with real deps)
-        run: pip install -e .
+        run: pip install -e ".[test]"
 
       - name: Run full backend verification suite
-        run: |
-          for f in tests/test_roboweaver.py \
-                   tests/test_multi_robot_choreography.py \
-                   tests/test_universal_platform.py \
-                   tests/test_prompt_builder.py \
-                   tests/test_inspire_hand_rs485.py \
-                   tests/test_inspire_simulation.py \
-                   tests/test_inspire_hand_real_serial_protocol.py \
-                   tests/test_ir.py; do
-            echo "::group::$f"
-            PYTHONPATH=src python3 "$f"
-            echo "::endgroup::"
-          done
+        # A hardcoded file list here previously meant new test files were
+        # silently never run in CI unless someone remembered to add them --
+        # which is exactly what happened to test_discovery.py,
+        # test_connection_advisor.py and test_urdf_gen.py. Worse: those files
+        # are plain pytest-style (no `if __name__` block), so the old
+        # `python3 "$f"` invocation would have executed zero assertions and
+        # exited 0 even if added to the list. `pytest tests/` auto-discovers
+        # every test file, runs both styles correctly, and can't go stale.
+        run: PYTHONPATH=src python3 -m pytest tests/ -v
 
       - name: Verify roboweaver CLI entrypoint installs and runs
         run: |

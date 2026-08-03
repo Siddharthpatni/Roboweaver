@@ -27,3 +27,11 @@ htmlcov/
 output/
 *.rwsp
 .DS_Store
+
+# Secrets. API keys must never be committed -- and note that any variable
+# prefixed NEXT_PUBLIC_ is inlined into the browser bundle by Next.js, so a
+# key placed there is published to every visitor. Provider keys belong in the
+# backend environment only (see nlu/connection_advisor.py).
+.env
+.env.*
+!.env.example

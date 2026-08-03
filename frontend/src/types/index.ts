@@ -1,4 +1,13 @@
-export type TabType = 'dashboard' | 'compiler' | 'builder' | 'nexus' | 'fleet' | 'simulation' | 'activity' | 'settings';
+export type TabType =
+  | 'dashboard'
+  | 'compiler'
+  | 'builder'
+  | 'nexus'
+  | 'fleet'
+  | 'connect'
+  | 'simulation'
+  | 'activity'
+  | 'settings';
 
 export interface RobotProfile {
   id: string;
@@ -129,6 +138,139 @@ export interface RobotFKResult {
   id: string;
   q: number[];
   positions: [number, number, number][];
+}
+
+/**
+ * A robot or simulator endpoint found by a real TCP probe from
+ * `RobotDiscoveryService` (src/roboweaver/hardware/discovery.py).
+ * Every entry corresponds to a socket that actually answered — nothing here
+ * is fabricated, so an empty `discovered` list genuinely means nothing is
+ * listening, not that the scan failed.
+ */
+export interface DiscoveredRobot {
+  name: string;
+  host: string;
+  port: number;
+  protocol: string;
+  description: string;
+  reachable: boolean;
+  latency_ms: number;
+  robot_type_guess: string;
+  /** 0-1. Low when the port is one ordinary desktop software commonly holds. */
+  confidence: number;
+  /** Non-empty when identification is unreliable; explains why. */
+  caveat: string;
+  /** Bytes the service volunteered on connect — real evidence of what is there. */
+  banner: string;
+  /** Reverse-DNS name, when the resolver returns one. */
+  hostname: string;
+}
+
+/**
+ * A local, non-IP path to a robot — serial/RS-485, SocketCAN, or a Unix domain
+ * socket. These are what exist when the machine has no TCP route to the robot
+ * at all.
+ */
+export interface LocalTransport {
+  kind: 'serial' | 'can' | 'unix_socket';
+  device: string;
+  description: string;
+  available: boolean;
+  readable: boolean;
+  detail: string;
+}
+
+export interface DiscoveryResult {
+  discovered: DiscoveredRobot[];
+  scan_duration_ms: number;
+  hosts_scanned: number;
+  ports_scanned: number;
+  local_transports: LocalTransport[];
+  platform_name: string;
+  /** Transport kinds this OS can actually be scanned for (CAN is Linux-only). */
+  supported_transports: string[];
+  /** CIDR actually swept, or '' when only this machine was checked. */
+  scanned_range: string;
+}
+
+export interface NetworkRange {
+  cidr: string;
+  interface_ip: string;
+  interface_name: string;
+  /** 'interface' when read from the OS, 'assumed_/24' when inferred. */
+  netmask_source: string;
+  host_count: number;
+}
+
+export interface AdvisorStatus {
+  ollama_available: boolean;
+  ollama_host: string;
+  ollama_model: string;
+  openrouter_configured: boolean;
+  openrouter_model: string;
+  anthropic_configured: boolean;
+  anthropic_model: string;
+  openai_configured: boolean;
+  openai_model: string;
+  max_output_tokens: number;
+  /** Providers that cost nothing to call. */
+  free_providers: string[];
+  supported_protocols: string[];
+}
+
+/**
+ * Real process facts from the running backend — `roboweaver_version` is read
+ * straight off `roboweaver.__version__` (in sync with pyproject.toml) and
+ * `ir_version` off RoboIR's own dataclass field, not duplicated literals that
+ * could drift. `uptime_seconds` resets on every self-healing restart, since
+ * that's a fresh server instance, not the same one that's been up forever.
+ */
+export interface VersionInfo {
+  roboweaver_version: string;
+  ir_version: string;
+  python_version: string;
+  platform: string;
+  self_healing_active: boolean;
+  uptime_seconds: number | null;
+  registered_robots: number;
+}
+
+export interface NetworkInfo {
+  ranges: NetworkRange[];
+  max_scan_hosts: number;
+  advisor: AdvisorStatus;
+}
+
+/**
+ * An LLM's suggested driver binding. `robot_id` is null whenever the advice was
+ * rejected — the backend validates against the real registry, so a hallucinated
+ * id never reaches here as a suggestion.
+ */
+export interface ConnectionAdvice {
+  robot_id: string | null;
+  protocol: string | null;
+  uri: string | null;
+  reasoning: string;
+  confidence: number;
+  provider: string;
+  model: string;
+  error: string | null;
+}
+
+/**
+ * Outcome of `GET /api/connect`. The backend answers 400 with
+ * `{ error, is_connected: false }` when the bridge can't be established, so
+ * `error` and `is_connected` are the two fields worth branching on.
+ */
+export interface ConnectionResult {
+  robot_id?: string;
+  is_connected: boolean;
+  protocol?: string;
+  dof?: number;
+  active_controllers?: string[];
+  latency_ms?: number;
+  message?: string;
+  error?: string;
 }
 
 export interface SimObjectProfile {

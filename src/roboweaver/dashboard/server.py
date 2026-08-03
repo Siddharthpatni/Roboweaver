@@ -5,27 +5,70 @@ RoboWeaver Web Dashboard Server — serves API endpoints and interactive web con
 from __future__ import annotations
 
 import json
+import platform as platform_module
+import socketserver
+import sys
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from typing import Any
 
+from roboweaver import __version__ as ROBOWEAVER_VERSION
 from roboweaver.compiler import SkillCompiler
 from roboweaver.codegen.groot2 import export_groot2_xml
 from roboweaver.knowledge import create_default_robotics_knowledge_graph
 from roboweaver.knowledge.package_nexus import RoboticsPackageNexus
 from roboweaver.registry.repository import SkillRepository
-from roboweaver.hardware.registry_robots import ROBOT_REGISTRY, get_robot_spec
+from roboweaver.hardware.registry_robots import ROBOT_REGISTRY
 from roboweaver.hardware.kinematics_ndof import forward_kinematics_chain_ndof
 from roboweaver.fleet.prompt_builder import SystemPromptParser, MultiRobotChoreographer
 from roboweaver.simulation.inspire_sim import InspireHandSimulator
 from roboweaver.hardware.inspire_hand_rs485 import InspireHandRS485Driver
-from roboweaver.ir import SkillCompilationError
+from roboweaver.ir import RoboIR, SkillCompilationError
+from roboweaver.hardware.discovery import RobotDiscoveryService, MAX_SCAN_HOSTS
+from roboweaver.codegen.urdf_gen import generate_urdf
+from roboweaver.nlu.connection_advisor import advisor_status, build_advisor
+from roboweaver.hardware.universal_driver import UniversalRobotDriver
+
+# Set once, when this process actually starts serving -- read by /api/version
+# so the UI reports real process facts (uptime, whether the self-healing
+# supervisor is the one that started this instance) instead of a fabricated
+# string. Never written to after start_dashboard_server() is called.
+_PROCESS_START_TIME: float | None = None
+_SELF_HEALING_ACTIVE = False
+
+# Single source of truth for the RoboIR schema version: read off the
+# dataclass's own default rather than duplicating the literal here, so this
+# can never drift out of sync with ir/schema.py.
+_IR_VERSION = RoboIR.__dataclass_fields__["ir_version"].default
 
 
 class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
+        """Backstop around _route(): every branch in _route() is expected to
+        call self._send_json(...)/self.send_error(...) itself, but proven
+        live -- a single unguarded int(query_param) threw an uncaught
+        ValueError that left the client with no response at all until its own
+        timeout, plus a raw traceback dumped to the server log. Any handler
+        can have a gap like that (today's or a future one), so every request
+        gets a real response no matter what a handler does internally: the
+        client either gets the intended answer or a clean 500, never silence.
+        """
+        try:
+            self._route()
+        except BrokenPipeError:
+            pass  # client already disconnected -- nothing to send or log
+        except Exception as exc:
+            try:
+                self._send_json(
+                    {"error": "internal_error", "message": str(exc)}, status=500
+                )
+            except Exception:
+                pass  # socket is unusable; nothing more can be done
+
+    def _route(self):
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
@@ -91,8 +134,16 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             self._send_json(robots)
 
         elif path.startswith("/api/robots/") and path.endswith("/model"):
+            # get_robot_spec() silently falls back to Franka Panda for an
+            # unknown id (registry_robots.py; other callers rely on that
+            # default, so it isn't changed here) -- checked against
+            # ROBOT_REGISTRY directly so a typo'd id in the URL doesn't come
+            # back as a 200 with the wrong robot's kinematics.
             robot_id = path[len("/api/robots/"):-len("/model")]
-            spec = get_robot_spec(robot_id)
+            if robot_id not in ROBOT_REGISTRY:
+                self._send_json({"error": f"Unknown robot id '{robot_id}'."}, status=404)
+                return
+            spec = ROBOT_REGISTRY[robot_id]
             self._send_json({
                 "id": spec.id,
                 "name": spec.name,
@@ -112,9 +163,33 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                 "links": [{"name": l.name, "length": l.length, "mass": l.mass} for l in spec.links],
             })
 
+        elif path.startswith("/api/robots/") and path.endswith("/urdf"):
+            # get_robot_spec() silently falls back to Franka Panda for an
+            # unknown id (a pre-existing gap in registry_robots.py, not
+            # introduced here) -- checked against ROBOT_REGISTRY directly so
+            # this endpoint doesn't inherit that and hand back the wrong
+            # robot's model with a 200.
+            robot_id = path[len("/api/robots/"):-len("/urdf")]
+            if robot_id not in ROBOT_REGISTRY:
+                self._send_json({"error": f"Unknown robot id '{robot_id}'."}, status=404)
+                return
+            spec = ROBOT_REGISTRY[robot_id]
+            urdf_xml = generate_urdf(spec)
+            body = urdf_xml.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/xml")
+            self.send_header("Content-Disposition", f'attachment; filename="{spec.id}.urdf"')
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+
         elif path.startswith("/api/robots/") and path.endswith("/fk"):
             robot_id = path[len("/api/robots/"):-len("/fk")]
-            spec = get_robot_spec(robot_id)
+            if robot_id not in ROBOT_REGISTRY:
+                self._send_json({"error": f"Unknown robot id '{robot_id}'."}, status=404)
+                return
+            spec = ROBOT_REGISTRY[robot_id]
             q_param = query.get("q", [""])[0]
             if q_param:
                 try:
@@ -262,6 +337,120 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             }
             self._send_json(res)
 
+        elif path == "/api/discover":
+            host = query.get("host", [None])[0]
+            subnet = query.get("subnet", [None])[0]
+            # A LAN sweep needs a shorter per-probe timeout than a localhost
+            # scan: 254 hosts x 14 ports at 0.8s each would be unusable.
+            scanner = RobotDiscoveryService(timeout=0.3 if subnet else 0.8)
+            try:
+                if subnet:
+                    result = scanner.scan_subnet(subnet)
+                elif host:
+                    result = scanner.scan_host(host)
+                else:
+                    result = scanner.scan()
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=400)
+                return
+            self._send_json(scanner.to_dict(result))
+
+        elif path == "/api/version":
+            uptime = (
+                round(time.monotonic() - _PROCESS_START_TIME, 1)
+                if _PROCESS_START_TIME is not None
+                else None
+            )
+            self._send_json({
+                "roboweaver_version": ROBOWEAVER_VERSION,
+                "ir_version": _IR_VERSION,
+                "python_version": sys.version.split()[0],
+                "platform": platform_module.system(),
+                "self_healing_active": _SELF_HEALING_ACTIVE,
+                "uptime_seconds": uptime,
+                "registered_robots": len(ROBOT_REGISTRY),
+            })
+
+        elif path == "/api/network":
+            scanner = RobotDiscoveryService()
+            ranges = scanner.detect_local_networks()
+            self._send_json({
+                "ranges": [
+                    {
+                        "cidr": r.cidr,
+                        "interface_ip": r.interface_ip,
+                        "interface_name": r.interface_name,
+                        "netmask_source": r.netmask_source,
+                        "host_count": r.host_count,
+                    }
+                    for r in ranges
+                ],
+                "max_scan_hosts": MAX_SCAN_HOSTS,
+                "advisor": advisor_status(),
+            })
+
+        elif path == "/api/connect/advise":
+            provider = query.get("provider", ["ollama"])[0]
+            model = query.get("model", [None])[0]
+            # A bare int(...) here previously threw an uncaught ValueError for
+            # any non-numeric port -- proven live: it left the request hanging
+            # with no response (the client got nothing until its own timeout)
+            # and dumped a traceback to the server log. Never let a malformed
+            # query param reach an unguarded parse.
+            try:
+                port = int(query.get("port", ["0"])[0] or 0)
+            except ValueError:
+                self._send_json({"error": "port must be an integer."}, status=400)
+                return
+            endpoint = {
+                "host": query.get("host", ["localhost"])[0],
+                "port": port,
+                "banner": query.get("banner", [""])[0],
+                "hostname": query.get("hostname", [""])[0],
+                "robot_type_guess": query.get("guess", [""])[0],
+                "latency_ms": query.get("latency", ["0"])[0],
+            }
+            advice = build_advisor(provider, model).advise(endpoint)
+            self._send_json({
+                "robot_id": advice.robot_id,
+                "protocol": advice.protocol,
+                "uri": advice.uri,
+                "reasoning": advice.reasoning,
+                "confidence": advice.confidence,
+                "provider": advice.provider,
+                "model": advice.model,
+                "error": advice.error,
+            })
+
+        elif path == "/api/connect":
+            robot_id = query.get("robot", ["franka_panda"])[0]
+            protocol = query.get("protocol", ["ros2"])[0]
+            uri = query.get("uri", ["ros2://localhost"])[0]
+            # Unlike /model and /fk, "robot" here has an explicit, intentional
+            # default (franka_panda) -- that's fine. What must not happen is a
+            # *typo'd* id silently opening a bridge to Panda's kinematics while
+            # the response still gets read as "connected to <typo>".
+            if robot_id not in ROBOT_REGISTRY:
+                self._send_json(
+                    {"error": f"Unknown robot id '{robot_id}'.", "is_connected": False}, status=400
+                )
+                return
+            try:
+                spec = ROBOT_REGISTRY[robot_id]
+                bridge = UniversalRobotDriver.connect_robot(spec, protocol=protocol, uri=uri)
+                status = bridge.connect()
+                self._send_json({
+                    "robot_id": status.robot_id,
+                    "is_connected": status.is_connected,
+                    "protocol": status.protocol,
+                    "dof": status.dof,
+                    "active_controllers": status.active_controllers,
+                    "latency_ms": status.latency_ms,
+                    "message": status.message,
+                })
+            except Exception as exc:
+                self._send_json({"error": str(exc), "is_connected": False}, status=400)
+
         elif path == "/" or path == "/index.html":
             self._send_json(
                 {
@@ -287,13 +476,28 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
         pass  # Quiet logging
 
 
-class ReusableHTTPServer(HTTPServer):
+class ReusableHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
+    """Threaded, not just reusable.
+
+    Plain HTTPServer handles one request at a time on a single thread -- proven
+    experimentally: a LAN subnet sweep (~8s) or an LLM advisor call (up to 45s)
+    blocked every other endpoint, including /api/robots, for the full duration.
+    Any tab, any panel, the whole dashboard froze until that one request
+    finished. ThreadingMixIn gives each request its own thread so a slow scan
+    or a slow model call no longer stalls the rest of the UI.
+    """
     allow_reuse_address = True
+    daemon_threads = True
 
 
 def start_dashboard_server(port: int = 8080) -> None:
+    global _PROCESS_START_TIME
     server_address = ("", port)
     httpd = ReusableHTTPServer(server_address, DashboardHTTPRequestHandler)
+    # Reset on every call, not just the first: after a self-healing restart
+    # this is a fresh server instance, so "uptime" should mean time since
+    # *this* instance came up, not the OS process's whole lifetime.
+    _PROCESS_START_TIME = time.monotonic()
     print(f"\n\033[1;32m🚀 RoboWeaver API server running at: http://localhost:{port}\033[0m")
     print(f"   Frontend (Engineering Workbench): cd frontend && npm run dev -> http://localhost:3000")
     print("   Press Ctrl+C to stop server.\n")
@@ -302,4 +506,47 @@ def start_dashboard_server(port: int = 8080) -> None:
     except KeyboardInterrupt:
         print("\nStopping dashboard server...")
         httpd.server_close()
+
+
+def run_dashboard_supervised(port: int = 8080, max_backoff_s: float = 30.0) -> None:
+    """Self-healing supervisor loop: if the server process dies for any reason
+    other than a deliberate Ctrl+C, restart it automatically -- no human has
+    to notice it went down and rerun the CLI command.
+
+    The per-request backstop in do_GET() already stops one bad request from
+    taking down the process; this is the second line of defense for whatever
+    that backstop can't catch -- a bind failure, an OS-level socket error, an
+    exception escaping serve_forever()'s own accept loop, an OOM in a request
+    thread. start_dashboard_server() returning normally means it caught a
+    KeyboardInterrupt, i.e. someone deliberately asked it to stop -- that is
+    the only case this loop does NOT restart from. Anything else retries with
+    exponential backoff (capped) so a persistent failure (e.g. the port held
+    by another process) doesn't spin in a tight crash loop, but the loop never
+    gives up on its own.
+    """
+    global _SELF_HEALING_ACTIVE
+    _SELF_HEALING_ACTIVE = True
+    backoff_s = 1.0
+    attempt = 0
+    while True:
+        try:
+            start_dashboard_server(port=port)
+            return  # only reached via a clean, deliberate KeyboardInterrupt shutdown
+        except KeyboardInterrupt:
+            # A second Ctrl+C during the backoff sleep below also lands here
+            # via the sleep() call raising -- treat it the same way: stop.
+            print("\nSupervisor received interrupt -- stopping (not restarting).")
+            return
+        except Exception as exc:
+            attempt += 1
+            print(
+                f"\033[1;31m✗ Dashboard server crashed (attempt {attempt}):\033[0m {exc!r}"
+            )
+            print(f"  Restarting automatically in {backoff_s:.0f}s ...")
+            try:
+                time.sleep(backoff_s)
+            except KeyboardInterrupt:
+                print("\nSupervisor received interrupt during backoff -- stopping.")
+                return
+            backoff_s = min(backoff_s * 2, max_backoff_s)
 

@@ -138,6 +138,50 @@ def test_corrupted_response_is_detected_not_silently_accepted():
         os.close(master_fd)
 
 
+def test_short_but_crc_valid_frame_raises_typed_error_not_struct_error():
+    """A frame can pass CRC yet still be the wrong length -- a corrupted length
+    byte, or real hardware echoing a different response than requested. Proven
+    live before this fix: a valid-CRC 4-byte payload crashed set_positions()
+    with a bare `struct.error: unpack requires a buffer of 12 bytes`, not this
+    driver's own InspireHandCommError -- so calling code that specifically
+    catches InspireHandCommError (the documented, expected failure mode) never
+    saw it coming."""
+    print("\n[TEST 5] Verifying a short-but-CRC-valid frame raises InspireHandCommError, not struct.error...")
+    driver, master_fd = _open_driver_on_pty()
+    try:
+        import threading
+
+        def short_frame_firmware():
+            header = os.read(master_fd, 5)
+            data_len = header[4]
+            os.read(master_fd, data_len + 2)  # drain the request
+
+            # Only 4 bytes of payload instead of the expected 24 -- but a
+            # genuinely correct CRC over that (wrong-length) payload.
+            resp_data = bytes([0x01, 0x02, 0x03, 0x04])
+            resp_header = bytes([0x55, 0xAA, driver.slave_id, 0x04, len(resp_data)])
+            resp_crc = crc16_modbus(resp_header[2:] + resp_data)
+            os.write(master_fd, resp_header + resp_data + struct.pack("<H", resp_crc))
+
+        t = threading.Thread(target=short_frame_firmware, daemon=True)
+        t.start()
+
+        try:
+            driver.read_state()
+            raised_correctly = False
+        except InspireHandCommError:
+            raised_correctly = True
+        except Exception:
+            raised_correctly = False
+        t.join(timeout=2.0)
+
+        assert raised_correctly, "Short-but-valid-CRC frame did not raise InspireHandCommError"
+        print("  -> Short frame correctly raised InspireHandCommError, not a bare struct.error [PASSED]")
+    finally:
+        driver.disconnect()
+        os.close(master_fd)
+
+
 if __name__ == "__main__":
     test_crc16_matches_known_modbus_test_vector()
     test_driver_opens_real_serial_port_not_simulated()
