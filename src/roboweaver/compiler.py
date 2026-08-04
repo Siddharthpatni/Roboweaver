@@ -22,6 +22,7 @@ from roboweaver.types import (
     Action,
     BTNode,
     CompiledSkill,
+    IKSolution,
     MotionPlan,
     MotionSegment,
     SkillIntent,
@@ -48,7 +49,7 @@ from roboweaver.optimize import (
     WaypointDecimationPass,
     RedundantSegmentElisionPass,
 )
-from roboweaver.optimize.motion_cache import compute_pick_place_primitives
+from roboweaver.optimize.motion_cache import compute_motion_primitives
 from roboweaver.nlu import OllamaIntentParser, OllamaParseResult
 
 # Single source of truth for Action -> IndustrialSkillCategory (was duplicated in
@@ -69,6 +70,10 @@ ACTION_CATEGORY_MAP: dict[Action, IndustrialSkillCategory] = {
     Action.SURGERY_ASSIST: IndustrialSkillCategory.SURGERY_ASSIST,
     Action.SORT: IndustrialSkillCategory.SORTING,
     Action.CLEAN: IndustrialSkillCategory.CLEANING,
+    Action.PALLETIZE: IndustrialSkillCategory.PALLETIZING,
+    Action.POLISH: IndustrialSkillCategory.POLISHING,
+    Action.DISASSEMBLE: IndustrialSkillCategory.DISASSEMBLY,
+    Action.NAVIGATE: IndustrialSkillCategory.MOBILE_NAV,
 }
 
 
@@ -289,6 +294,10 @@ class SkillCompiler:
         Action.SORT:           [("sort", 3.0), ("classify", 3.0), ("separate", 2.5), ("categorize", 2.5), ("bin", 1.0)],
         Action.PLACE:          [("place", 2.5), ("put", 2.0), ("set down", 2.5), ("deposit", 2.0)],
         Action.PICK:           [("pick", 2.0), ("grab", 2.5), ("grasp", 2.5), ("fetch", 2.0), ("carry", 2.0), ("lift", 1.5), ("take", 1.5), ("get", 1.0)],
+        Action.PALLETIZE:      [("palletize", 3.0), ("palletizing", 3.0), ("pallet", 2.5), ("stack", 2.0)],
+        Action.POLISH:         [("polish", 3.0), ("polishing", 3.0), ("buff", 2.5), ("burnish", 2.0)],
+        Action.DISASSEMBLE:    [("disassemble", 3.0), ("disassembly", 3.0), ("remove fastener", 3.0), ("extract fastener", 3.0), ("unscrew", 2.0)],
+        Action.NAVIGATE:       [("navigate", 3.0), ("navigation", 3.0), ("drive to", 2.5), ("go to", 2.0), ("move to location", 2.5)],
     }
 
     # Default parameters per action so we never produce an empty param dict
@@ -307,6 +316,10 @@ class SkillCompiler:
         Action.SORT:           {},
         Action.PLACE:          {"approach_height": 0.12, "lift_height": 0.18, "grip_force": 10.0, "settle_time": 0.5},
         Action.PICK:           {"approach_height": 0.12, "lift_height": 0.18, "grip_force": 10.0, "settle_time": 0.5},
+        Action.PALLETIZE:      {"grip_force_n": 30.0},
+        Action.POLISH:         {"force_nm": 10.0},
+        Action.DISASSEMBLE:    {},
+        Action.NAVIGATE:       {"goal_tolerance_m": 0.05},
     }
 
     _ACTION_DEFAULT_OBJ: dict[Action, str] = {
@@ -317,6 +330,8 @@ class SkillCompiler:
         Action.PACKAGE: "shipment_item", Action.CNC_LOAD: "workpiece",
         Action.SURGERY_ASSIST: "surgical_instrument", Action.SORT: "item",
         Action.PLACE: "object", Action.PICK: "red_cube",
+        Action.PALLETIZE: "shipment_box", Action.POLISH: "metal_panel",
+        Action.DISASSEMBLE: "assembly_unit", Action.NAVIGATE: "destination_waypoint",
     }
 
     def _parse_intent(self, instruction: str) -> SkillIntent:
@@ -431,45 +446,50 @@ class SkillCompiler:
         return TaskGraph(tasks=tmpl.tasks)
 
     def _plan_motion(self, intent: SkillIntent, task_graph: TaskGraph, verbose: bool = True) -> MotionPlan:
-        """Stage 3: IK + trajectory generation for the standard 3-pose pick/place
-        motion (grasp/approach/lift). The numeric computation itself is memoized per
-        robot in optimize/motion_cache.py -- see that module's docstring for why
-        caching by robot_spec.id alone is honest today (every compile plans against
-        the same fixed target poses, since no perception system derives a real
-        per-object pose yet). This method only does the object-name labeling and
-        verbose printing; the IK/trajectory math lives in motion_cache.py so
-        WaypointDecimationPass (optimize/passes.py) can reuse the identical
-        velocity-limit formula instead of a second, drifting copy."""
+        """Stage 3: IK + trajectory generation -- one real, IK-solved trajectory
+        segment per MOVE_TO task in the compiled skill's real template (gap-fix
+        batch, item 1a), not a fixed 3-pose pick/place plan. This closes RW502
+        (optimize/passes.py) for every skill category: every MOVE_TO task now has a
+        real motion_plan entry, keyed by that task's own real description --
+        runtime/engine.py already looks trajectories/ik_results up generically by
+        task.description, so no downstream change was needed (confirmed by grep: no
+        code anywhere hardcoded the old "grasp"/"approach"/"lift" keys or the
+        "Approach above X" strings). The IK/trajectory math lives in
+        optimize/motion_cache.py; this method only labels the results with real task
+        descriptions and prints verbosely."""
+        move_to_tasks = [t for t in task_graph.tasks if t.type is TaskType.MOVE_TO]
+
         if verbose:
             print(f"\n\033[1;36m━━━ STAGE 3/4: Motion Planning ({self.robot_spec.name}) \033[0m")
 
-        primitives, cache_hit = compute_pick_place_primitives(self.robot_spec)
+        if not move_to_tasks:
+            if verbose:
+                print("  (no MOVE_TO tasks in this skill's template -- nothing to plan)")
+            return MotionPlan(trajectories={}, ik_results={}, robot_model=self.robot_spec.id)
+
+        primitives, cache_hit = compute_motion_primitives(self.robot_spec, len(move_to_tasks))
         note = " \033[2m(cached)\033[0m" if cache_hit else ""
 
-        if verbose:
-            print(f"  ✓ IK Grasp pose ({intent.object_name}){note}    (residual: {primitives.ik_grasp.residual:.4f}m, {primitives.ik_grasp.iterations} iters)")
-            print(f"  ✓ IK Approach pose{note}                   (residual: {primitives.ik_approach.residual:.4f}m, {primitives.ik_approach.iterations} iters)")
-            print(f"  ✓ IK Lift/Retract pose{note}                (residual: {primitives.ik_lift.residual:.4f}m, {primitives.ik_lift.iterations} iters)")
-
-        ik_results = {
-            "grasp": primitives.ik_grasp, "approach": primitives.ik_approach, "lift": primitives.ik_lift,
-        }
-        trajectories = {
-            f"Approach above {intent.object_name}": MotionSegment(
-                primitives.home_q, primitives.ik_approach.joint_angles, primitives.traj_approach, primitives.dur_approach
-            ),
-            f"Grasp pose at {intent.object_name}": MotionSegment(
-                primitives.ik_approach.joint_angles, primitives.ik_grasp.joint_angles, primitives.traj_grasp, primitives.dur_grasp
-            ),
-            "Lift target to transfer height": MotionSegment(
-                primitives.ik_grasp.joint_angles, primitives.ik_lift.joint_angles, primitives.traj_lift, primitives.dur_lift
-            ),
-        }
+        ik_results: dict[str, IKSolution] = {}
+        trajectories: dict[str, MotionSegment] = {}
+        for i, task in enumerate(move_to_tasks):
+            ik = primitives.ik_solutions[i]
+            ik_results[task.description] = ik
+            trajectories[task.description] = MotionSegment(
+                primitives.start_configs[i], ik.joint_angles,
+                primitives.trajectory_waypoints[i], primitives.trajectory_durations[i],
+            )
+            if verbose:
+                print(
+                    f"  ✓ IK target {i + 1}/{len(move_to_tasks)} ({task.description}){note}    "
+                    f"(residual: {ik.residual:.4f}m, {ik.iterations} iters)"
+                )
 
         if verbose:
-            print(f"\n  → Trajectory: home → approach    ({primitives.dur_approach:.2f}s, {len(primitives.traj_approach)} waypoints)")
-            print(f"  → Trajectory: approach → grasp   ({primitives.dur_grasp:.2f}s, {len(primitives.traj_grasp)} waypoints)")
-            print(f"  → Trajectory: grasp → lift       ({primitives.dur_lift:.2f}s, {len(primitives.traj_lift)} waypoints)")
+            print()
+            for task in move_to_tasks:
+                seg = trajectories[task.description]
+                print(f"  → Trajectory: {task.description}    ({seg.duration:.2f}s, {len(seg.waypoints)} waypoints)")
 
         return MotionPlan(trajectories=trajectories, ik_results=ik_results, robot_model=self.robot_spec.id)
 

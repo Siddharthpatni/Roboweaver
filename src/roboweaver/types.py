@@ -27,6 +27,10 @@ class Action(Enum):
     SURGERY_ASSIST = "SURGERY_ASSIST"
     SORT = "SORT"
     CLEAN = "CLEAN"
+    PALLETIZE = "PALLETIZE"
+    POLISH = "POLISH"
+    DISASSEMBLE = "DISASSEMBLE"
+    NAVIGATE = "NAVIGATE"
 
 
 @dataclass

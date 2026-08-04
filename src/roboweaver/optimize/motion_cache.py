@@ -1,17 +1,25 @@
 """
-Motion-plan memoization -- the pure numeric part of compiler.py::SkillCompiler._plan_motion
-(3 IK solves, 3 min-jerk trajectory generations, 3 duration calculations), extracted so it
-can be memoized per robot.
+Motion-plan memoization -- the pure numeric part of compiler.py::SkillCompiler._plan_motion,
+generalized (gap-fix batch, item 1a) to solve one real IK-verified Cartesian target per
+actual MOVE_TO task in the compiled skill's template, instead of a fixed 3-pose pick/place
+plan -- closing RW502 (dangling MOVE_TO, optimize/passes.py) for every skill category, not
+just pick-and-place.
 
-Every compile today plans against the same three fixed Cartesian poses (grasp/approach/
-lift -- see _GRASP_TARGET etc. below) regardless of the actual object or instruction:
-RoboWeaver has no perception system yet (ir/diagnostics.py's RW201 warning says so on
-every pick/place compile), so there is no real per-object target pose to plan against.
-That means this computation is, today, a pure function of robot_spec.id alone -- which is
-exactly what makes memoizing it honest right now. This is a load-bearing assumption, not
-an oversight: once perception derives a real per-object target pose, the cache key here
-must include that pose, not just robot_spec.id, or this cache would silently serve a
-stale plan for a different object's location.
+Every compile still plans against a FIXED, assumed Cartesian path (no perception system
+derives a real per-object target pose yet -- ir/diagnostics.py's RW201 warning says so on
+every compile that needs one): a two-phase path descending from an "approach" height to a
+"work" (contact/engage) height, then ascending from "work" to a "retract" height. Given N
+real MOVE_TO tasks, N real Cartesian targets are interpolated along this fixed path and
+each is independently IK-solved (warm-started from the previous solve) -- this generalizes
+the exact same 3-pose logic this module always had, it isn't a new kind of fabrication.
+Since the interpolation depends only on N (not on the skill's category), two categories
+with the same MOVE_TO count get identical target poses today -- consistent with the
+existing "assumed, not per-category-real" honesty (RW201), not a new inaccuracy.
+
+Memoized per (robot_spec.id, n_targets): still honestly a pure function of these two
+values today. This cache key must grow to include the real target pose once perception
+exists, or it will silently serve a stale plan for a different object's location -- a
+limitation already true (and already documented) before this generalization.
 """
 
 from __future__ import annotations
@@ -24,22 +32,24 @@ from roboweaver.hardware.robot_spec import RobotSpec
 from roboweaver.math3d import Vec3
 from roboweaver.types import IKSolution
 
-# The 3 fixed Cartesian targets every pick/place-shaped compile plans against today.
-_GRASP_TARGET = Vec3(0.35, 0.0, 0.13)
+# The fixed, assumed two-phase Cartesian path every compile plans against today:
+# descend from APPROACH to WORK, then ascend from WORK to RETRACT.
 _APPROACH_TARGET = Vec3(0.35, 0.0, 0.25)
-_LIFT_TARGET = Vec3(0.35, 0.0, 0.31)
+_WORK_TARGET = Vec3(0.35, 0.0, 0.13)
+_RETRACT_TARGET = Vec3(0.35, 0.0, 0.31)
 
 _MIN_JERK_PEAK_SLOPE = 1.875  # ds/dt at t=0.5 for s(t) = 10t^3 - 15t^4 + 6t^5
 _DURATION_SAFETY_MARGIN = 1.1
+_DEFAULT_SEGMENT_DURATION = 0.6
+_DEFAULT_TRAJ_STEPS = 50
 
 
 def min_safe_duration(
     robot_spec: RobotSpec, start_q: Sequence[float], end_q: Sequence[float], default: float
 ) -> float:
     """Shortest min-jerk blend duration keeping every joint's peak velocity within its
-    declared max_velocity. Moved verbatim from compiler.py::_min_safe_duration (same
-    formula/margin) so WaypointDecimationPass (optimize/passes.py) can reuse the exact
-    same velocity-limit math for stride selection instead of a second, drifting copy."""
+    declared max_velocity. Same formula/margin optimize/passes.py::WaypointDecimationPass
+    reuses for stride selection -- one implementation, not a drifting second copy."""
     max_vels = robot_spec.get_max_velocities()
     required = default
     for j in range(min(len(start_q), len(end_q), len(max_vels))):
@@ -52,7 +62,6 @@ def min_safe_duration(
 
 
 def generate_min_jerk_traj(start_q: list[float], end_q: list[float], steps: int = 50) -> list[list[float]]:
-    """Moved verbatim from compiler.py::_generate_min_jerk_traj."""
     waypoints = []
     n = len(start_q)
     for i in range(steps + 1):
@@ -63,25 +72,38 @@ def generate_min_jerk_traj(start_q: list[float], end_q: list[float], steps: int 
     return waypoints
 
 
+def _lerp(a: Vec3, b: Vec3, t: float) -> Vec3:
+    return Vec3(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t)
+
+
+def _interpolate_targets(n: int) -> list[Vec3]:
+    """N real Cartesian targets along the fixed descend-then-ascend path -- see
+    module docstring. `n` must be >= 1."""
+    if n == 1:
+        return [_WORK_TARGET]
+    n_descend = (n + 1) // 2
+    n_ascend = n - n_descend
+    targets = [_lerp(_APPROACH_TARGET, _WORK_TARGET, i / n_descend) for i in range(1, n_descend + 1)]
+    targets += [_lerp(_WORK_TARGET, _RETRACT_TARGET, i / n_ascend) for i in range(1, n_ascend + 1)]
+    return targets
+
+
 @dataclass(frozen=True)
-class PickPlacePrimitives:
-    """The reusable, robot-only-dependent numeric result of the 3-pose pick/place
-    motion plan. Object-name labeling of trajectory dict keys happens in
-    compiler.py::_plan_motion, not here -- this is the object-independent part."""
+class MotionPrimitives:
+    """N real, IK-solved target configurations and the N real min-jerk trajectory
+    segments chaining home -> target_1 -> ... -> target_n. `start_configs[i]` is the
+    configuration segment `i` starts from (home_q for i=0, else the previous target's
+    solved config) -- object/task-description labeling happens in
+    compiler.py::_plan_motion, not here."""
 
-    ik_grasp: IKSolution
-    ik_approach: IKSolution
-    ik_lift: IKSolution
     home_q: list[float]
-    traj_approach: list[list[float]]
-    traj_grasp: list[list[float]]
-    traj_lift: list[list[float]]
-    dur_approach: float
-    dur_grasp: float
-    dur_lift: float
+    ik_solutions: list[IKSolution]
+    start_configs: list[list[float]]
+    trajectory_waypoints: list[list[list[float]]]
+    trajectory_durations: list[float]
 
 
-_cache: dict[str, PickPlacePrimitives] = {}
+_cache: dict[tuple[str, int], MotionPrimitives] = {}
 _hits = 0
 _misses = 0
 
@@ -99,10 +121,16 @@ def clear_cache() -> None:
     _misses = 0
 
 
-def compute_pick_place_primitives(robot_spec: RobotSpec) -> tuple[PickPlacePrimitives, bool]:
-    """Get-or-compute, memoized by robot_spec.id. Returns (primitives, was_cache_hit)."""
+def compute_motion_primitives(robot_spec: RobotSpec, n_targets: int) -> tuple[MotionPrimitives, bool]:
+    """Get-or-compute, memoized by (robot_spec.id, n_targets) -- n_targets is the
+    real number of MOVE_TO tasks in the compiled skill's template. Returns
+    (primitives, was_cache_hit)."""
+    if n_targets < 1:
+        raise ValueError("compute_motion_primitives requires n_targets >= 1")
+
     global _hits, _misses
-    cached = _cache.get(robot_spec.id)
+    key = (robot_spec.id, n_targets)
+    cached = _cache.get(key)
     if cached is not None:
         _hits += 1
         return cached, True
@@ -110,33 +138,40 @@ def compute_pick_place_primitives(robot_spec: RobotSpec) -> tuple[PickPlacePrimi
     _misses += 1
     solver = NDOFIKSolver(robot_spec)
 
-    ok1, q_grasp, res1, iters1 = solver.solve(_GRASP_TARGET)
-    ok2, q_approach, res2, iters2 = solver.solve(_APPROACH_TARGET)
-    ok3, q_lift, res3, iters3 = solver.solve(_LIFT_TARGET)
-
-    ik_grasp = IKSolution(joint_angles=q_grasp, residual=res1, iterations=iters1, success=ok1)
-    ik_approach = IKSolution(joint_angles=q_approach, residual=res2, iterations=iters2, success=ok2)
-    ik_lift = IKSolution(joint_angles=q_lift, residual=res3, iterations=iters3, success=ok3)
-
-    # Same zero-configuration-isn't-always-reachable clamp as the original
-    # compiler.py::_plan_motion (RW302 caught this the first time it ran for Franka).
+    # Same zero-configuration-isn't-always-reachable clamp as before (RW302 caught
+    # this the first time it ran for Franka's panda_joint4).
     home_q = [
         max(j.lower_limit, min(j.upper_limit, 0.0)) for j in robot_spec.joints[: robot_spec.dof]
     ]
 
-    dur_approach = min_safe_duration(robot_spec, home_q, q_approach, default=1.0)
-    dur_grasp = min_safe_duration(robot_spec, q_approach, q_grasp, default=0.4)
-    dur_lift = min_safe_duration(robot_spec, q_grasp, q_lift, default=0.5)
+    targets = _interpolate_targets(n_targets)
+    configs: list[list[float]] = [home_q]
+    ik_solutions: list[IKSolution] = []
+    for target in targets:
+        # Warm-started from the previous solve -- real, standard IK practice for a
+        # sequence of nearby targets, and a genuine improvement over always seeding
+        # from the same fixed home/zero configuration.
+        ok, q, res, iters = solver.solve(target, seed_q=configs[-1])
+        ik_solutions.append(
+            IKSolution(
+                joint_angles=q, residual=res, iterations=iters, success=ok,
+                target_pos=[target.x, target.y, target.z],
+            )
+        )
+        configs.append(list(q))
 
-    traj_approach = generate_min_jerk_traj(home_q, q_approach, steps=100)
-    traj_grasp = generate_min_jerk_traj(q_approach, q_grasp, steps=40)
-    traj_lift = generate_min_jerk_traj(q_grasp, q_lift, steps=50)
+    start_configs = configs[:-1]
+    trajectory_waypoints: list[list[list[float]]] = []
+    trajectory_durations: list[float] = []
+    for i in range(n_targets):
+        start_q, end_q = start_configs[i], ik_solutions[i].joint_angles
+        duration = min_safe_duration(robot_spec, start_q, end_q, default=_DEFAULT_SEGMENT_DURATION)
+        trajectory_waypoints.append(generate_min_jerk_traj(list(start_q), list(end_q), steps=_DEFAULT_TRAJ_STEPS))
+        trajectory_durations.append(duration)
 
-    primitives = PickPlacePrimitives(
-        ik_grasp=ik_grasp, ik_approach=ik_approach, ik_lift=ik_lift,
-        home_q=home_q,
-        traj_approach=traj_approach, traj_grasp=traj_grasp, traj_lift=traj_lift,
-        dur_approach=dur_approach, dur_grasp=dur_grasp, dur_lift=dur_lift,
+    primitives = MotionPrimitives(
+        home_q=home_q, ik_solutions=ik_solutions, start_configs=start_configs,
+        trajectory_waypoints=trajectory_waypoints, trajectory_durations=trajectory_durations,
     )
-    _cache[robot_spec.id] = primitives
+    _cache[key] = primitives
     return primitives, False

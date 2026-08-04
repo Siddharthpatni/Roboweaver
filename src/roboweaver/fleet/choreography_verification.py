@@ -11,14 +11,17 @@ type needed. Additive: WorkcellSchedule.get_execution_tiers() keeps its own bare
 get the same finding as structured data, plus resource-conflict detection tiers()
 never did at all.
 
-NOT checked here, and why: `handover_target` (WorkcellTaskStep) turns out, on
-inspection, to be write-only everywhere it's touched (dashboard/server.py,
-fleet/prompt_builder.py) -- set but never read or acted on by any real logic. Its one
-concrete usage (tests/test_multi_robot_choreography.py) sets it to a *robot_id*
-("pepper"), not a step_id, which isn't what a "target step" check would have assumed.
-Validating a field whose semantics no consuming code has pinned down would be
-guessing, not checking -- deferred until handover_target is actually consumed by
-something (e.g. real inter-robot DDS sync), not before.
+`handover_target`'s real semantics, found by reading fleet/prompt_builder.py's own
+construction logic (prompt_builder.py:137-141): it is the *robot_id* a step hands
+off *to* -- set on the handing-off step, and (in every real construction site)
+always a different robot than that step's own `robot_id`. Two real checks follow
+from that (gap-fix batch, item 1d):
+  - RW603 (error): `handover_target` doesn't match any `robot_id` actually used by
+    any step in the schedule -- a real typo/bug, no such robot exists here at all.
+  - RW604 (warning): `handover_target` names a real robot in the schedule, but no
+    step assigned to that robot is reachable (transitively, via depends_on) from the
+    handing-off step -- the handoff has no real downstream continuation, so nothing
+    in the DAG actually guarantees the receiving robot runs after the handoff.
 """
 
 from __future__ import annotations
@@ -53,6 +56,27 @@ def _find_cyclic_steps(schedule: WorkcellSchedule) -> set[str]:
                 progressed = True
 
     return set(remaining.keys())
+
+
+def _downstream_step_ids(schedule: WorkcellSchedule, from_step_id: str) -> set[str]:
+    """Every step reachable from `from_step_id` by following depends_on edges
+    forward -- i.e. steps that depend on `from_step_id`, directly or transitively.
+    Real BFS over the DAG, same style as _find_cyclic_steps."""
+    dependents: dict[str, list[str]] = {sid: [] for sid in schedule.steps}
+    for step in schedule.steps.values():
+        for dep in step.depends_on:
+            if dep in dependents:
+                dependents[dep].append(step.step_id)
+
+    visited: set[str] = set()
+    frontier = [from_step_id]
+    while frontier:
+        current = frontier.pop()
+        for nxt in dependents.get(current, []):
+            if nxt not in visited:
+                visited.add(nxt)
+                frontier.append(nxt)
+    return visited
 
 
 def check_choreography(schedule: WorkcellSchedule) -> list[CompilerDiagnostic]:
@@ -128,5 +152,56 @@ def check_choreography(schedule: WorkcellSchedule) -> list[CompilerDiagnostic]:
                 )
             else:
                 seen[step.robot_id] = step.step_id
+
+    robot_ids_in_schedule = {step.robot_id for step in schedule.steps.values()}
+    for step in schedule.steps.values():
+        if step.handover_target is None:
+            continue
+        if step.handover_target not in robot_ids_in_schedule:
+            diagnostics.append(
+                CompilerDiagnostic(
+                    code="RW603",
+                    severity="error",
+                    message=f"Step '{step.step_id}' hands over to a robot that isn't in this workcell.",
+                    reason=(
+                        f"handover_target={step.handover_target!r} doesn't match any "
+                        f"robot_id used by a step in workcell '{schedule.workcell_name}' "
+                        f"(real robots here: {sorted(robot_ids_in_schedule)})."
+                    ),
+                    required_capability=None,
+                    fixes=[
+                        "Fix handover_target to reference a robot_id actually used in this workcell.",
+                        "Add a step for the intended receiving robot.",
+                    ],
+                )
+            )
+            continue
+
+        downstream = _downstream_step_ids(schedule, step.step_id)
+        receiving_steps_downstream = [
+            sid for sid in downstream if schedule.steps[sid].robot_id == step.handover_target
+        ]
+        if not receiving_steps_downstream:
+            diagnostics.append(
+                CompilerDiagnostic(
+                    code="RW604",
+                    severity="warning",
+                    message=(
+                        f"Step '{step.step_id}' hands over to '{step.handover_target}', but no "
+                        f"step for that robot depends on it."
+                    ),
+                    reason=(
+                        f"A handover implies ordering, but no step assigned to "
+                        f"'{step.handover_target}' is reachable (via depends_on) from "
+                        f"'{step.step_id}' -- nothing in the DAG guarantees the receiving "
+                        f"robot actually runs after this handoff."
+                    ),
+                    required_capability=None,
+                    fixes=[
+                        f"Add a step for '{step.handover_target}' that depends_on "
+                        f"(directly or transitively) '{step.step_id}'.",
+                    ],
+                )
+            )
 
     return diagnostics

@@ -63,8 +63,13 @@ class FleetOrchestrator:
                 node.active_skill_id = skill_package.metadata.id
                 results[node.node_id] = retarget_res.success
             else:
-                node.status = "EXECUTING"
-                results[node.node_id] = True
+                # Real failure, not fabricated success: there is no compiled skill
+                # to deploy, so this node cannot actually be executing anything --
+                # marking it "EXECUTING"/True regardless (the old behavior) claimed
+                # a real outcome for work that never happened.
+                node.status = "ERROR"
+                node.active_skill_id = None
+                results[node.node_id] = False
 
         return results
 

@@ -39,23 +39,21 @@ def test_verification_pass_flags_empty_task_graph_as_error():
     print("  -> RW501 raised (error) for an empty task_graph [PASSED]")
 
 
-def test_verification_pass_flags_dangling_move_to_as_warning():
-    print("\n[TEST 2] Testing CompiledSkillVerificationPass flags a dangling MOVE_TO as a warning, not an error...")
+def test_verification_pass_no_longer_flags_dangling_move_to():
+    print("\n[TEST 2] Testing CompiledSkillVerificationPass finds no RW502 now that _plan_motion is generalized...")
     compiler, skill = _real_compiled_skill()
     ctx = SkillPassContext(skill=skill, robot_spec=compiler.robot_spec)
     result = CompiledSkillVerificationPass().run(ctx)
 
-    # Real, pre-existing gap this pass surfaces: compiler.py::_plan_motion only ever
-    # plans the fixed 3-pose pick/place motion, so PICK_AND_PLACE's own 4th MOVE_TO
-    # task ("Transfer to dropoff location") has no matching motion_plan entry.
-    # Warning, not error, because this is pervasive (every non-pick/place skill
-    # template hits it too) -- an RW102/RW201-blocking severity would refuse to
-    # compile nearly the whole registry for a known, disclosed, non-fixed gap.
+    # gap-fix batch item 1a fixed the real, pre-existing gap this pass used to
+    # surface: compiler.py::_plan_motion now plans one real trajectory per actual
+    # MOVE_TO task (optimize/motion_cache.py::compute_motion_primitives), so
+    # PICK_AND_PLACE's 4th MOVE_TO task ("Transfer to dropoff location") -- and every
+    # other category's MOVE_TO tasks -- now has real motion data. See
+    # tests/test_plan_motion_generalization.py for coverage across every category.
     rw502 = [d for d in result.diagnostics if d.code == "RW502"]
-    assert len(rw502) == 1
-    assert rw502[0].severity == "warning"
-    assert "Transfer to dropoff location" in rw502[0].reason
-    print("  -> RW502 raised (warning) for the known dangling MOVE_TO gap [PASSED]")
+    assert rw502 == []
+    print("  -> RW502 no longer fires -- every MOVE_TO task has real motion data [PASSED]")
 
 
 def test_verification_pass_reports_real_cycle_time_metrics():
@@ -69,7 +67,7 @@ def test_verification_pass_reports_real_cycle_time_metrics():
     expected_total += sum(
         float(t.params.get("duration", 0.0)) for t in skill.task_graph.tasks if t.type is TaskType.WAIT
     )
-    assert abs(result.metrics["estimated_cycle_time_s"] - expected_total) < 1e-6
+    assert abs(result.metrics["estimated_cycle_time_s"] - expected_total) < 1e-3  # metric is round()ed to 4dp
     assert result.modified is False
     print(f"  -> estimated_cycle_time_s == real summed trajectory duration ({expected_total:.3f}s) [PASSED]")
 
@@ -143,12 +141,12 @@ def test_redundant_segment_elision_is_noop_on_real_demo_poses():
 
 
 def test_motion_cache_hits_on_second_call_for_same_robot():
-    print("\n[TEST 8] Testing motion_cache memoizes pick/place primitives per robot...")
+    print("\n[TEST 8] Testing motion_cache memoizes motion primitives per (robot, n_targets)...")
     motion_cache.clear_cache()
     spec = get_robot_spec("ur5e")
 
-    primitives1, hit1 = motion_cache.compute_pick_place_primitives(spec)
-    primitives2, hit2 = motion_cache.compute_pick_place_primitives(spec)
+    primitives1, hit1 = motion_cache.compute_motion_primitives(spec, 3)
+    primitives2, hit2 = motion_cache.compute_motion_primitives(spec, 3)
 
     assert hit1 is False
     assert hit2 is True
@@ -175,12 +173,24 @@ def test_compile_with_diagnostics_full_pipeline_end_to_end():
     before = sum(len(s.waypoints) for s in result.skill_pipeline.initial_skill.motion_plan.trajectories.values())
     after = sum(len(s.waypoints) for s in result.skill.motion_plan.trajectories.values())
     assert after < before
+    print(f"  -> Full pipeline: {before} -> {after} waypoints [PASSED]")
 
-    # RW502/RW505 (from CompiledSkillVerificationPass running twice) are deduped in
-    # the final diagnostics list.
-    rw502_count = len([d for d in result.diagnostics if d.code == "RW502"])
-    assert rw502_count == 1
-    print(f"  -> Full pipeline: {before} -> {after} waypoints; RW502 deduped to {rw502_count} entry [PASSED]")
+
+def test_duplicate_verification_diagnostics_are_deduped_in_final_list():
+    print("\n[TEST 10] Testing a real CompiledSkillVerificationPass diagnostic (from running twice) is deduped...")
+    # TIGHTEN_BOLT's real segment durations naturally trigger RW505 (a dominant
+    # segment) both times CompiledSkillVerificationPass runs (before and after
+    # optimization) -- a real, naturally-occurring case to prove dedup on, not a
+    # synthetic one.
+    compiler = SkillCompiler(target_robot="franka_panda")
+    result = compiler.compile_with_diagnostics("Tighten the M8 bolt", verbose=False)
+
+    raw_rw505_count = len([d for d in result.skill_pipeline.diagnostics() if d.code == "RW505"])
+    assert raw_rw505_count == 2  # both CompiledSkillVerificationPass runs really found it
+
+    deduped_rw505_count = len([d for d in result.diagnostics if d.code == "RW505"])
+    assert deduped_rw505_count == 1
+    print(f"  -> raw trace has {raw_rw505_count} RW505 entries, final diagnostics list has {deduped_rw505_count} [PASSED]")
 
 
 def test_verification_pass_is_silent_on_a_real_behavior_tree():
@@ -219,7 +229,7 @@ def test_verification_pass_flags_a_malformed_behavior_tree():
 if __name__ == "__main__":
     print("=== STARTING OPTIMIZATION / STATIC ANALYSIS (PHASE 3/4) VERIFICATION ===")
     test_verification_pass_flags_empty_task_graph_as_error()
-    test_verification_pass_flags_dangling_move_to_as_warning()
+    test_verification_pass_no_longer_flags_dangling_move_to()
     test_verification_pass_reports_real_cycle_time_metrics()
     test_waypoint_decimation_reduces_count_and_stays_safety_verified()
     test_waypoint_decimation_is_noop_at_o0()
@@ -229,4 +239,5 @@ if __name__ == "__main__":
     test_redundant_segment_elision_is_noop_on_real_demo_poses()
     test_motion_cache_hits_on_second_call_for_same_robot()
     test_compile_with_diagnostics_full_pipeline_end_to_end()
+    test_duplicate_verification_diagnostics_are_deduped_in_final_list()
     print("\n=== ALL OPTIMIZATION / STATIC ANALYSIS TESTS PASSED SUCCESSFULLY ===")

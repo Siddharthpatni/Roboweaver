@@ -5,15 +5,13 @@ exist in this environment). Scoped down from the original "100 skills x 20 robot
 5 simulators" to what's real and measurable today: every distinct registered robot x
 every skill category the compiler's NL pipeline can actually reach.
 
-Discovered, not assumed: of the 17 IndustrialSkillCategory templates with real,
-hand-authored task graphs (skills/taxonomy.py), only 13 are reachable through
-SkillCompiler.compile() at all -- PALLETIZING, POLISHING, DISASSEMBLY, and
-MOBILE_NAV have no entry in compiler.py::ACTION_CATEGORY_MAP, so no natural-language
-instruction can ever route to them through the real compiler pipeline (they're only
-reachable by calling skills.taxonomy.get_industrial_skill_template() directly,
-bypassing NL parsing entirely). This benchmark only exercises the 13 that are
-actually reachable; the other 4 are flagged in docs/COMPILER_ROADMAP.md as a
-discovered gap, not silently routed around here.
+Originally, only 13 of the 17 IndustrialSkillCategory templates with real,
+hand-authored task graphs (skills/taxonomy.py) were reachable through
+SkillCompiler.compile() -- PALLETIZING, POLISHING, DISASSEMBLY, and MOBILE_NAV had
+no entry in compiler.py::ACTION_CATEGORY_MAP. The gap-fix batch that followed the v2
+vision added the missing Action values/keywords/category-map entries (item 1b) and
+generalized compiler.py::_plan_motion to plan real per-task trajectories for any
+category (item 1a) -- all 17 are reachable now, exercised below.
 """
 
 from __future__ import annotations
@@ -43,6 +41,10 @@ _CANONICAL_INSTRUCTIONS: dict[str, str] = {
     "SURGERY_ASSIST": "Assist with the surgical instrument",
     "SORTING": "Sort the item into the correct bin",
     "CLEANING": "Clean the work surface",
+    "PALLETIZING": "Stack the box on the pallet",
+    "POLISHING": "Polish the metal panel",
+    "DISASSEMBLY": "Disassemble the fastener from the panel",
+    "MOBILE_NAV": "Navigate to the loading dock",
 }
 
 

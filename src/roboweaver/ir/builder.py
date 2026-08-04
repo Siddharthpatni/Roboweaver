@@ -36,6 +36,10 @@ _PERCEPTION_REQUIRING_ACTIONS = {
     Action.SURGERY_ASSIST,
     Action.SORT,
     Action.CLEAN,
+    Action.PALLETIZE,
+    Action.POLISH,
+    Action.DISASSEMBLE,
+    Action.NAVIGATE,
 }
 
 
@@ -133,6 +137,16 @@ def _infer_required_capabilities(intent: SkillIntent, robot_spec: RobotSpec) -> 
         manipulation.append("tremor_filtering")
     elif intent.action == Action.CLEAN:
         manipulation.append("compliant_force_control")
+    elif intent.action == Action.POLISH:
+        # skills/taxonomy.py's POLISHING template requires ["ft_sensor", "profilometer"]
+        # for its compliant impedance polishing raster -- a real declared need, same
+        # class as TIGHTEN/PEG_INSERT/CLEAN.
+        sensing = ["force_torque"]
+        manipulation.append("compliant_force_control")
+    elif intent.action == Action.DISASSEMBLE:
+        # skills/taxonomy.py's DISASSEMBLY template requires ["camera", "ft_sensor"]
+        # for force-monitored fastener extraction.
+        sensing = ["force_torque"]
 
     claims = _build_capability_claims(manipulation, perception, sensing, robot_spec)
     return RequiredCapabilities(perception=perception, manipulation=manipulation, sensing=sensing, claims=claims)
@@ -141,7 +155,7 @@ def _infer_required_capabilities(intent: SkillIntent, robot_spec: RobotSpec) -> 
 # Actions that need force-compliant (impedance) control rather than pure position
 # control -- torque tightening, compliant peg insertion, and force-limited wiping all
 # genuinely need this in real robotics, not just in this template's naming.
-_COMPLIANT_CONTROL_ACTIONS = {Action.TIGHTEN, Action.PEG_INSERT, Action.CLEAN}
+_COMPLIANT_CONTROL_ACTIONS = {Action.TIGHTEN, Action.PEG_INSERT, Action.CLEAN, Action.POLISH}
 
 
 def _build_summaries(skill: CompiledSkill) -> tuple[TaskSummary, MotionSummary]:
