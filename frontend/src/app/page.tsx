@@ -2,9 +2,13 @@
 
 import React, { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { Sidebar } from '../components/Sidebar';
-import { TopBar } from '../components/TopBar';
 import { ErrorBoundary } from '../components/ErrorBoundary';
+import { TabsProvider, useTabs } from '../components/ide/TabsContext';
+import { ActivityBar } from '../components/ide/ActivityBar';
+import { ExplorerPanel } from '../components/ide/ExplorerPanel';
+import { TabStrip } from '../components/ide/TabStrip';
+import { TerminalPanel } from '../components/ide/TerminalPanel';
+import { StatusBar } from '../components/ide/StatusBar';
 import { RoboWeaverAPI } from '../lib/api';
 import { TabType, RobotProfile, NexusPackage, DiscoveredRobot, VersionInfo } from '../types';
 import {
@@ -62,13 +66,22 @@ const RobotConnectView = dynamic(
 );
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
-  const [searchQuery, setSearchQuery] = useState('');
+  return (
+    <TabsProvider initialTab="dashboard">
+      <Workbench />
+    </TabsProvider>
+  );
+}
+
+function Workbench() {
+  const { activeTab, openTab } = useTabs();
   const [apiOnline, setApiOnline] = useState(false);
   const [robots, setRobots] = useState<RobotProfile[]>([]);
   const [packages, setPackages] = useState<NexusPackage[]>([]);
   const [discovered, setDiscovered] = useState<DiscoveredRobot[]>([]);
   const [version, setVersion] = useState<VersionInfo | null>(null);
+  const [explorerOpen, setExplorerOpen] = useState(true);
+  const [terminalRobot, setTerminalRobot] = useState('franka_panda');
 
   useEffect(() => {
     RoboWeaverAPI.robots()
@@ -98,26 +111,20 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="flex h-screen w-screen bg-app-surface text-slate-100 overflow-hidden">
-      <Sidebar
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        packageCount={packages.length}
-        robotCount={robots.length}
-        apiOnline={apiOnline}
-        discoveredCount={discovered.length}
-        version={version?.roboweaver_version}
-      />
-
-      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
-        <TopBar
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          onLaunchBuilder={() => setActiveTab('builder')}
+    <div className="flex flex-col h-screen w-screen bg-app-surface text-slate-100 overflow-hidden">
+      <div className="flex flex-1 min-h-0">
+        <ActivityBar
+          explorerOpen={explorerOpen}
+          onToggleExplorer={() => setExplorerOpen((o) => !o)}
           apiOnline={apiOnline}
         />
 
-        <main className="flex-1 min-h-0 overflow-hidden relative">
+        {explorerOpen && <ExplorerPanel robots={robots} packages={packages} discovered={discovered} />}
+
+        <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+          <TabStrip />
+
+          <main className="flex-1 min-h-0 overflow-hidden relative">
         <ErrorBoundary resetKey={activeTab}>
           {activeTab === 'compiler' && <CompilerView />}
           {activeTab === 'builder' && <WorkcellBuilderView />}
@@ -152,14 +159,14 @@ export default function Home() {
                   </div>
                   <div className="flex items-center gap-2.5 shrink-0 relative">
                     <button
-                      onClick={() => setActiveTab('compiler')}
+                      onClick={() => openTab('compiler')}
                       className="flex items-center gap-2 px-4 py-2.5 btn-neon text-[13px]"
                     >
                       <Code2 className="w-4 h-4" />
                       Compile a skill
                     </button>
                     <button
-                      onClick={() => setActiveTab('builder')}
+                      onClick={() => openTab('builder')}
                       className="px-4 py-2.5 rounded-lg border border-cyan-400/15 hover:border-cyan-400/35 hover:bg-cyan-500/[0.06] text-slate-300 hover:text-cyan-200 text-[13px] font-medium transition-all"
                     >
                       Build a workcell
@@ -228,7 +235,7 @@ export default function Home() {
                   ].map((kpi) => (
                     <button
                       key={kpi.label}
-                      onClick={() => setActiveTab(kpi.tab)}
+                      onClick={() => openTab(kpi.tab)}
                       className="app-card p-5 text-left group hover:-translate-y-0.5 transition-transform duration-200"
                     >
                       <div className="flex items-center justify-between mb-3">
@@ -246,7 +253,7 @@ export default function Home() {
                     <div className="flex items-center justify-between">
                       <h3 className="text-[13.5px] font-semibold text-slate-200">Fleet registry</h3>
                       <button
-                        onClick={() => setActiveTab('fleet')}
+                        onClick={() => openTab('fleet')}
                         className="flex items-center gap-1 text-[12px] font-medium text-emerald-400 hover:text-emerald-300 transition-colors"
                       >
                         Open <ArrowUpRight className="w-3.5 h-3.5" />
@@ -257,7 +264,7 @@ export default function Home() {
                       {robots.slice(0, 4).map((r) => (
                         <div
                           key={r.id}
-                          onClick={() => setActiveTab('fleet')}
+                          onClick={() => openTab('fleet')}
                           className="app-well rounded-lg px-3.5 py-2.5 cursor-pointer hover:border-white/[0.12] transition-colors flex items-center justify-between gap-3"
                         >
                           <div className="min-w-0">
@@ -282,7 +289,7 @@ export default function Home() {
                     <div className="flex items-center justify-between">
                       <h3 className="text-[13.5px] font-semibold text-slate-200">Indexed packages</h3>
                       <button
-                        onClick={() => setActiveTab('nexus')}
+                        onClick={() => openTab('nexus')}
                         className="flex items-center gap-1 text-[12px] font-medium text-emerald-400 hover:text-emerald-300 transition-colors"
                       >
                         Open <ArrowUpRight className="w-3.5 h-3.5" />
@@ -293,7 +300,7 @@ export default function Home() {
                       {packages.slice(0, 4).map((pkg) => (
                         <div
                           key={pkg.id}
-                          onClick={() => setActiveTab('nexus')}
+                          onClick={() => openTab('nexus')}
                           className="app-well rounded-lg px-3.5 py-2.5 cursor-pointer hover:border-white/[0.12] transition-colors"
                         >
                           <div className="flex items-center justify-between gap-2">
@@ -315,7 +322,7 @@ export default function Home() {
                     <div className="pt-3 border-t border-white/[0.06] flex items-center justify-between gap-3">
                       <span className="text-[12px] text-slate-500">Test grasp kinematics before deploy?</span>
                       <button
-                        onClick={() => setActiveTab('simulation')}
+                        onClick={() => openTab('simulation')}
                         className="shrink-0 px-3 py-1.5 rounded-lg bg-violet-500/10 hover:bg-violet-500/15 text-violet-300 text-[12px] font-medium border border-violet-500/20 transition-colors"
                       >
                         Digital twin →
@@ -332,7 +339,7 @@ export default function Home() {
                       <h3 className="text-[13.5px] font-semibold text-slate-200">Robot connections</h3>
                     </div>
                     <button
-                      onClick={() => setActiveTab('connect')}
+                      onClick={() => openTab('connect')}
                       className="flex items-center gap-1 text-[12px] font-medium text-cyan-400 hover:text-cyan-300 transition-colors"
                     >
                       Open <ArrowUpRight className="w-3.5 h-3.5" />
@@ -344,7 +351,7 @@ export default function Home() {
                       {discovered.slice(0, 4).map((d) => (
                         <div
                           key={`${d.host}:${d.port}`}
-                          onClick={() => setActiveTab('connect')}
+                          onClick={() => openTab('connect')}
                           className="app-well rounded-lg px-3.5 py-2.5 cursor-pointer hover:border-cyan-400/25 transition-colors flex items-center justify-between gap-3"
                         >
                           <div className="min-w-0">
@@ -484,8 +491,18 @@ export default function Home() {
             </div>
           )}
         </ErrorBoundary>
-        </main>
-      </div>
+          </main>
+
+            <TerminalPanel robots={robots} robot={terminalRobot} onRobotChange={setTerminalRobot} />
+          </div>
+        </div>
+
+      <StatusBar
+        apiOnline={apiOnline}
+        robotCount={robots.length}
+        activeRobot={terminalRobot}
+        version={version?.roboweaver_version}
+      />
     </div>
   );
 }

@@ -23,10 +23,18 @@ registry) — see "v2 Vision (replaces Phase 5–14)" below for what was actuall
 under that revised scope, and why several of its most ambitious pieces (a compiler
 that has *learned* from executions, live Isaac/Gazebo/Webots simulator integration,
 SMT/temporal-logic proofs) are real infrastructure with an honestly-empty or
-bounded payload today, not the full capability as originally described. A future
-session should treat every "not started"/"deferred" item as a starting brief, not a
-fixed spec, and re-verify the codebase state before resuming (this file decays like
-any other design doc).
+bounded payload today, not the full capability as originally described; **updated
+again 2026-08-04** for the gap-fix batch — see "Gap fixes + Knowledge Graph +
+Dashboard API + Frontend IDE Shell" below — which closed the 4 issues the v2 Vision
+section flagged but didn't fix (`_plan_motion` not category-specific, 4 unreachable
+skill templates, `fleet/orchestrator.py`'s fake-success path, unvalidated
+`handover_target`), replaced the ~13-node demo knowledge graph with real registry
+ingestion plus Obsidian export, wired the v2 Vision's backend-only features (pass
+traces, cost model, compare, benchmark, knowledge graph) into the dashboard API, and
+rebuilt the frontend as a VSCode/Antigravity-style IDE shell. A future session should
+treat every "not started"/"deferred" item as a starting brief, not a fixed spec, and
+re-verify the codebase state before resuming (this file decays like any other design
+doc).
 
 ## Maturity scorecard
 
@@ -43,7 +51,7 @@ phase rather than trusting this snapshot.
 | Multi-robot support | 7.5/10 → 8/10: Phase 3 added real cycle/resource-conflict detection over the DAG |
 | Backend abstraction | 8/10 |
 | Code generation | 8/10 |
-| Knowledge layer | 7.5/10 |
+| Knowledge layer | 7.5/10 → 8.5/10: real registry-ingested graph (39 nodes/213 edges) replaces the old ~13-node demo graph, plus real multi-hop path + Obsidian export |
 | Optimization framework | 4/10 → 7/10: 2 real optimization passes + a motion-plan cache + a real cost model/Pareto filter (v2 item 8) |
 | Static analysis | 5/10 → 6/10: RW501/502/505/506 (CompiledSkill) + RW601/602/605 (choreography DAG) + RW507 (bounded forbidden-zone, v2 item 10); collision/dynamics-dependent checks still deferred |
 | Formal verification | 3/10 → 4/10: a real, bounded, discrete check (v2 item 10) — explicitly not a temporal-logic/SMT proof |
@@ -450,3 +458,163 @@ findings above):** `fleet/orchestrator.py::deploy_skill_to_fleet()` has a fake
 unconditional-success path when `skill_package.skill is None`
 (`orchestrator.py:65-67`) — every node gets marked `"EXECUTING"` regardless. Not
 touched this round.
+
+## Gap fixes + Knowledge Graph + Dashboard API + Frontend IDE Shell — **Done** (2026-08-04)
+
+Closes the 4 issues the v2 Vision section above flagged and explicitly deferred,
+replaces the knowledge graph's hand-seeded demo data with real registry ingestion
+plus Obsidian export, wires the v2 Vision's backend-only features into the dashboard
+API, and rebuilds the frontend shell around them. Same discipline as every phase
+above: real, tested, cited-by-file; gaps stated honestly.
+
+**1a — Generalized `_plan_motion` (closes the RW502 finding from Phase 3).**
+`optimize/motion_cache.py` rewritten: `compute_motion_primitives(robot_spec,
+n_targets)` interpolates `n_targets` real Cartesian waypoints across a fixed
+two-phase `APPROACH → WORK → RETRACT` path (renamed from the old fixed 3-pose
+scheme for generality), IK-solves each with warm-starting (`seed_q` chained
+target-to-target), memoized by `(robot_spec.id, n_targets)`.
+`compiler.py::_plan_motion` now iterates every real `TaskType.MOVE_TO` task in the
+task graph, calls `compute_motion_primitives(self.robot_spec, len(move_to_tasks))`,
+and keys `trajectories`/`ik_results` by each task's real `description` — every
+`MOVE_TO` task across every category gets a real entry; RW502 no longer fires
+anywhere (`tests/test_plan_motion_generalization.py`, 4 tests). **Same documented
+limitation as before, unchanged:** targets are still assumed poses along a fixed
+path, not perception-derived — no perception system exists yet (RW201 stays a
+warning for the same reason it always has).
+
+**1b — 4 new actions make PALLETIZING/POLISHING/DISASSEMBLY/MOBILE_NAV reachable
+(closes the RoboBench finding from v2 item 11).** `types.py::Action` gains
+`PALLETIZE`, `POLISH`, `DISASSEMBLE`, `NAVIGATE`; `compiler.py` gains matching
+`_ACTION_KEYWORDS`/`_ACTION_DEFAULT_PARAMS`/`_ACTION_DEFAULT_OBJ`/
+`ACTION_CATEGORY_MAP` entries; `ir/builder.py` gains matching capability inference
+(POLISH → force/torque + compliant control, DISASSEMBLE → force/torque). The
+templates themselves (`skills/taxonomy.py`) needed no change — they were real,
+just unreachable via natural language. `benchmark/robobench.py`'s docstring and
+`_CANONICAL_INSTRUCTIONS` updated to match: **all 17** `IndustrialSkillCategory`
+templates are now NL-reachable, not 13 (`tests/test_new_actions_routing.py`, 4
+tests; `tests/test_knowledge_graph.py` independently confirms 17 real `SKILL`
+graph nodes).
+
+**1c — `fleet/orchestrator.py::deploy_skill_to_fleet()` fake-success path fixed.**
+The `else` branch that unconditionally marked every node `"EXECUTING"`/`True` when
+there was no compiled skill to retarget now reports the honest outcome:
+`status="ERROR"`, `active_skill_id=None`, `results[node.node_id]=False` — same
+shape the real branch already used for a genuine `retarget_res.success` failure
+(`tests/test_orchestrator.py`, 3 tests).
+
+**1d — Real `handover_target` validation.** Phase 3 found `handover_target` was
+write-only and deferred validating it. `fleet/choreography_verification.py` now
+checks it for real: `RW603` (error) — `handover_target` names no `robot_id` present
+anywhere in the schedule (a genuine typo, not a same-robot edge case). `RW604`
+(warning) — `handover_target` names a real robot in the schedule, but no step
+assigned to that robot is reachable (via real BFS over `depends_on` edges, same
+pattern as the existing cycle-detection) from the handing-off step, i.e. the
+handoff has no real downstream continuation. Verified against the pre-existing
+`tests/test_multi_robot_choreography.py` pepper→pepper fixture: not RW603 (pepper
+is a real robot in that schedule) and not RW604 (a later pepper step genuinely
+depends on it) — no regression, plus 4 new cases in
+`tests/test_choreography_verification.py`.
+
+**Regression fallout from 1a, fixed honestly, not by weakening assertions:**
+`test_verification_pass_flags_dangling_move_to_as_warning` tested the old bug
+directly — renamed to `test_verification_pass_no_longer_flags_dangling_move_to`,
+now asserts RW502 is empty. `test_deploy_refuses_when_simulation_genuinely_fails`
+previously relied on TIGHTEN naturally failing in simulation as a side effect of
+the RW502 bug; now that every category compiles and simulates cleanly, the test
+constructs a deliberate joint-limit violation (mutates the last trajectory
+segment's final waypoint) and its docstring says so plainly instead of implying
+the failure is still coincidental. Full suite: 248/248 passing after this batch.
+
+**2 — Knowledge graph: real ingestion + multi-hop path + Obsidian export.**
+`knowledge/graph.py` gains `find_path(start_id, end_id, max_hops=6)` — real BFS,
+undirected. `knowledge/ingest_registry.py` (new): `build_graph_from_registry()`
+replaces the old ~13-node hand-seeded demo graph
+(`create_default_robotics_knowledge_graph`) with real nodes/edges from the live
+registries — one `ROBOT` node per distinct `RobotSpec` in `ROBOT_REGISTRY` (11),
+one `PACKAGE` node per `RoboticsPackageNexus.PACKAGE_CATALOG` entry (11) with real
+`COMPATIBLE_WITH` edges to the robots its own `compatible_robots` list actually
+names, one `SKILL` node per NL-reachable `IndustrialSkillCategory` (17, after 1b)
+with a `SUITABLE_FOR` edge gated on `has_force_torque_sensor` for skills that
+really need it (verified: `TIGHTEN_BOLT` connects to every force/torque-capable
+robot and explicitly not to `temi`, which has none) — 39 nodes, 213 edges total,
+verified live. `knowledge/obsidian_export.py` (new): `export_to_obsidian()` writes
+one real `.md` file per node with a properties table and a `## Links` section using
+Obsidian `[[wikilink|display name]]` syntax for every real outgoing edge — every
+link resolves to a real other file in the output directory (verified by regex-
+scanning every exported file's links against the real file list, not just spot-
+checked). CLI: `roboweaver graph build|path|export-obsidian`. Tests:
+`tests/test_knowledge_graph.py`, 6 tests.
+
+**3 — Dashboard API extensions (`dashboard/server.py`).** Wires the v2 Vision's
+backend-only features into the dashboard, additive-only (no existing response
+shape changed): `GET /api/compile?explain_passes=1` adds the real
+`pipeline`/`skill_pipeline` traces (`PipelineTrace.to_dict()`/
+`SkillPipelineTrace.to_dict()`, both real since Phase 2/4) to the existing
+response. `GET /api/cost?instruction=&robot=` → `optimize/cost_model.py::
+compute_cost()`'s real `CompiledSkillCost`. `GET /api/compare?instruction=&robots=`
+→ `compare_robots()`'s real weighted ranking + Pareto-optimal subset + honest
+`skipped` reasons. `GET /api/benchmark?robots=` → `run_benchmark()`'s real report
+(small default subset — `franka_panda`/`ur5e`/`kuka_iiwa` — to keep a live
+dashboard call fast; the CLI's `roboweaver benchmark` is where the full matrix
+runs). `GET /api/graph` and `GET /api/graph/path?from=&to=` → the real ingested
+knowledge graph and BFS path from item 2 (replaces the old demo-graph response the
+`/api/knowledge` route served). Verified live: server started, every new route
+curled against the real running process — real 39-node/213-edge graph, a real
+3-hop path, real cost/compare/benchmark numbers, `explain_passes=1` returning real
+pass records. `frontend/src/types/index.ts` gained matching TypeScript types
+(`PipelineTraceResult`, `CompiledSkillCostResult`, `RobotComparisonResult`,
+`BenchmarkReportResult`, `KnowledgeGraphResult`, `GraphPathResult`) mirroring the
+real Python response shapes field-for-field; `frontend/src/lib/api.ts` gained
+matching fetch methods (`cost`, `compare`, `benchmark`, `graph`, `graphPath`, and
+`compile(...)` gained an `explainPasses` flag) using the same
+timeout/error-handling conventions as the existing ones. `npx tsc --noEmit` clean.
+
+**4 — Frontend IDE-shell rebuild.** Restructures the app's layout around a
+VSCode/Antigravity-style shell; the established "Cyberpunk-Neon" visual identity
+and the separate Iron-Man 3D-model palette are both left untouched — this is a
+structural change, not a re-theme. New `frontend/src/components/ide/`:
+`TabsContext.tsx` (a `TabType`-keyed open/active-tab model — each view is a
+singleton tab, opening an already-open one just focuses it, since the views
+re-fetch their own data on mount and have no per-instance identity to multiplex);
+`tabMeta.ts` (single source of truth for tab icon/label, replacing the old
+`Sidebar.tsx`'s own hardcoded copy); `ActivityBar.tsx` (the old `Sidebar.tsx`'s nine
+real nav destinations narrowed to an icon-only strip, plus an Explorer-visibility
+toggle); `ExplorerPanel.tsx` (a file-tree-style browser over the exact same real
+data the full-page views already fetch — Robots from `/api/robots`, Skills from the
+new `/api/graph`'s real `SKILL` nodes, Knowledge from `/api/nexus/packages`,
+Discovered from `/api/discover` — grouped as collapsible sections instead of a
+page-sized grid; clicking a leaf opens the corresponding tab); `TabStrip.tsx`
+(closable VSCode-style tab pills, at least one always stays open);
+`TerminalPanel.tsx` (the one genuinely new interaction: a collapsible,
+drag-resizable bottom panel with three buttons — compile trace, compare, benchmark
+— each triggering one real call to item 3's dashboard endpoints and rendering the
+real response as a monospace, severity-colored feed; explicitly **not** a PTY or an
+interactive shell, stated in its own file comment, no arbitrary command input
+exists); `StatusBar.tsx` (real connection status, real registered-robot count,
+real open-tab count). `app/page.tsx` restructured to compose
+`ActivityBar + ExplorerPanel + (TabStrip + main + TerminalPanel) + StatusBar`
+instead of the old `Sidebar + TopBar + single active view`; every existing view
+(`CompilerView`, `WorkcellBuilderView`, `KnowledgeNexusView`, `FleetRegistryView`,
+`RobotConnectView`, `LiveSimulationView`) is reused unchanged as tab content — none
+of them were rewritten. `Sidebar.tsx`/`TopBar.tsx` deleted (confirmed unreferenced
+by `grep` before removal) rather than left as dead code.
+**Verified in a real browser, not just typechecked:** `npm run dev` +
+`roboweaver dashboard --port 8080` started for real; driven end-to-end with
+Playwright (already a devDependency, previously unused) against a real Chromium —
+opened 4 tabs simultaneously (Overview, Compiler, Fleet Registry, Knowledge Nexus),
+triggered a real `explain_passes=1` compile and a real benchmark from the Terminal
+panel and confirmed the real pass records / RW201 warnings / `51/51 cells compiled
+clean` benchmark line rendered with correct severity coloring, closed a tab,
+collapsed the Explorer panel, and opened the Digital Twin tab to confirm the
+three.js viewport still renders unchanged inside the new tab context — zero
+console/page errors across the whole run. `npx tsc --noEmit` and `npm run lint`
+both clean.
+
+**Tests added:** `tests/test_plan_motion_generalization.py` (4),
+`tests/test_new_actions_routing.py` (4), `tests/test_orchestrator.py` (3),
+`tests/test_knowledge_graph.py` (6), plus 4 new cases in
+`tests/test_choreography_verification.py` and regression fixes across
+`tests/test_optimize_passes.py`/`tests/test_simulation_validation.py` — 254/254
+passing (`python -m pytest tests/ -q`). No new automated frontend tests (matches
+the existing project convention — Playwright was used here as a one-off manual-
+verification driver, not wired into CI).
