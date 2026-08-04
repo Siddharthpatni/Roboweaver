@@ -100,6 +100,10 @@ export interface CompiledSkillResult {
   behavior_tree_xml: string;
   ir: RoboIR;
   diagnostics: CompilerDiagnostic[];
+  /** Only present when compiled with `?explain_passes=1`. */
+  pipeline?: PipelineTraceResult;
+  /** Only present when compiled with `?explain_passes=1`. */
+  skill_pipeline?: PipelineTraceResult;
 }
 
 export class CompilationFailedError extends Error {
@@ -295,4 +299,118 @@ export interface SimulateResult {
   object_status: string;
   stability_score: number;
   slip_risk: number;
+}
+
+/**
+ * One row of a pass-manager trace: what one real compiler pass did.
+ * `timing_s` is measured by the PassManager around the pass's `run()` call, not
+ * self-reported, mirroring `ir/pass_manager.py::PassRecord.to_dict()` and
+ * `optimize/pass_manager.py::SkillPassRecord.to_dict()` (identical shape).
+ */
+export interface PassRecordResult {
+  pass_name: string;
+  generation: number;
+  modified: boolean;
+  skipped: boolean;
+  timing_s: number;
+  diagnostic_count: number;
+  diagnostics: CompilerDiagnostic[];
+  metrics: Record<string, number>;
+}
+
+/**
+ * A full PassManager.run() trace -- generation 0 is the IR/skill before any pass
+ * ran. Mirrors `PipelineTrace.to_dict()` (RoboIR passes) and
+ * `SkillPipelineTrace.to_dict()` (CompiledSkill passes); both produce this same shape.
+ */
+export interface PipelineTraceResult {
+  generations: number;
+  total_timing_s: number;
+  diagnostic_count: number;
+  passes: PassRecordResult[];
+}
+
+/**
+ * Real cost figures computed from an already-compiled skill -- nothing estimated
+ * beyond what the compile pipeline produced. `historical_success_rate` is only
+ * ever a real number from ExecutionMemoryStore, never fabricated when null.
+ * Mirrors `optimize/cost_model.py::CompiledSkillCost`.
+ */
+export interface CompiledSkillCostResult {
+  estimated_cycle_time_s: number;
+  payload_margin_kg: number;
+  total_joint_travel_rad: number;
+  manipulability_margin: number;
+  historical_success_rate: number | null;
+}
+
+export interface RobotRankingEntry {
+  robot: string;
+  score: number;
+  cost: CompiledSkillCostResult;
+}
+
+/**
+ * Mirrors `optimize/cost_model.py::compare_robots()`'s real weighted ranking +
+ * Pareto-optimal subset. `skipped` reports the real compilation-blocking reason
+ * for a robot that genuinely can't run this instruction, never a silent drop.
+ */
+export interface RobotComparisonResult {
+  instruction: string;
+  ranked: RobotRankingEntry[];
+  pareto_optimal: string[];
+  skipped: Record<string, string>;
+}
+
+export interface BenchmarkCellResult {
+  category: string;
+  robot_id: string;
+  instruction: string;
+  success: boolean;
+  compile_time_s: number;
+  error_count: number;
+  warning_count: number;
+  waypoint_pct_reduction: number | null;
+  failure_reason: string | null;
+}
+
+/** Mirrors `benchmark/robobench.py::BenchmarkReport.to_dict()` -- real compile-time
+ * measurement across a scope of skill categories x registered robots, not
+ * simulator-execution benchmarking. */
+export interface BenchmarkReportResult {
+  scope: string;
+  total_cells: number;
+  success_count: number;
+  total_compile_time_s: number;
+  cells: BenchmarkCellResult[];
+}
+
+export interface KnowledgeGraphNode {
+  id: string;
+  name: string;
+  type: string;
+  properties: Record<string, unknown>;
+}
+
+export interface KnowledgeGraphEdge {
+  source_id: string;
+  target_id: string;
+  relation: string;
+  properties: Record<string, unknown>;
+}
+
+/** Mirrors `knowledge/graph.py::RoboticsKnowledgeGraph.to_dict()`, built from the
+ * live registries (`knowledge/ingest_registry.py`) -- real robots, packages, and
+ * NL-reachable skills, not the old hand-seeded demo graph. */
+export interface KnowledgeGraphResult {
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
+}
+
+/** `path` is null when `find_path()` genuinely found no route within max_hops --
+ * never a fabricated connection. */
+export interface GraphPathResult {
+  from: string;
+  to: string;
+  path: string[] | null;
 }

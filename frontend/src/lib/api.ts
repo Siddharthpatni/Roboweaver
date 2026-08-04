@@ -15,6 +15,11 @@ import {
   ConnectionAdvice,
   DiscoveredRobot,
   VersionInfo,
+  CompiledSkillCostResult,
+  RobotComparisonResult,
+  BenchmarkReportResult,
+  KnowledgeGraphResult,
+  GraphPathResult,
 } from '../types';
 
 const API_BASE = process.env.NEXT_PUBLIC_ROBOWEAVER_API ?? 'http://localhost:8080';
@@ -101,8 +106,36 @@ export const RoboWeaverAPI = {
     getJSON<NexusRecommendation>(`/api/nexus/recommend?prompt=${encodeURIComponent(prompt)}`),
   build: (prompt: string) =>
     getJSON<WorkcellBuildResult>(`/api/build?prompt=${encodeURIComponent(prompt)}`),
-  compile: (instruction: string, robot: string = 'franka_panda') =>
-    compileJSON(`/api/compile?instruction=${encodeURIComponent(instruction)}&robot=${encodeURIComponent(robot)}`),
+  compile: (instruction: string, robot: string = 'franka_panda', explainPasses: boolean = false) =>
+    compileJSON(
+      `/api/compile?instruction=${encodeURIComponent(instruction)}&robot=${encodeURIComponent(robot)}` +
+        (explainPasses ? '&explain_passes=1' : '')
+    ),
+  /** Real cost figures for one instruction on one robot (optimize/cost_model.py). */
+  cost: (instruction: string, robot: string = 'franka_panda') =>
+    getJSON<CompiledSkillCostResult>(
+      `/api/cost?instruction=${encodeURIComponent(instruction)}&robot=${encodeURIComponent(robot)}`
+    ),
+  /** Compiles the same instruction across multiple robots and ranks them by real
+   * cost (optimize/cost_model.py::compare_robots()). */
+  compare: (instruction: string, robots: string[]) =>
+    getJSON<RobotComparisonResult>(
+      `/api/compare?instruction=${encodeURIComponent(instruction)}&robots=${encodeURIComponent(robots.join(','))}`,
+      TIMEOUT_SCAN_MS
+    ),
+  /** Real compile-time benchmark (benchmark/robobench.py::run_benchmark()) --
+   * defaults to a small robot subset server-side to keep a live call fast. */
+  benchmark: (robots?: string[]) =>
+    getJSON<BenchmarkReportResult>(
+      `/api/benchmark${robots && robots.length ? `?robots=${encodeURIComponent(robots.join(','))}` : ''}`,
+      TIMEOUT_SCAN_MS
+    ),
+  /** Real knowledge graph built from the live registries (knowledge/ingest_registry.py). */
+  graph: () => getJSON<KnowledgeGraphResult>('/api/graph'),
+  /** Real BFS shortest path between two graph node ids; `path` is null when
+   * genuinely unreachable within max_hops. */
+  graphPath: (from: string, to: string) =>
+    getJSON<GraphPathResult>(`/api/graph/path?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
   simulateGestures: () => getJSON<string[]>('/api/simulate/gestures'),
   simulateObjects: () => getJSON<SimObjectProfile[]>('/api/simulate/objects'),
   simulate: (gesture: string, object: string) =>

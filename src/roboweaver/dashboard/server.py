@@ -17,7 +17,7 @@ from typing import Any
 from roboweaver import __version__ as ROBOWEAVER_VERSION
 from roboweaver.compiler import SkillCompiler
 from roboweaver.codegen.groot2 import export_groot2_xml
-from roboweaver.knowledge import create_default_robotics_knowledge_graph
+from roboweaver.knowledge.ingest_registry import build_graph_from_registry
 from roboweaver.knowledge.package_nexus import RoboticsPackageNexus
 from roboweaver.registry.repository import SkillRepository
 from roboweaver.hardware.registry_robots import ROBOT_REGISTRY
@@ -73,9 +73,21 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
         query = parse_qs(parsed.query)
 
-        if path == "/api/knowledge":
-            kg = create_default_robotics_knowledge_graph()
+        if path == "/api/knowledge" or path == "/api/graph":
+            # Real ingestion (knowledge/ingest_registry.py) -- robots/packages/
+            # skills/edges from the live registries, not the old ~13-node demo graph.
+            kg = build_graph_from_registry()
             self._send_json(kg.to_dict())
+
+        elif path == "/api/graph/path":
+            from_id = query.get("from", [""])[0]
+            to_id = query.get("to", [""])[0]
+            if not from_id or not to_id:
+                self._send_json({"error": "both 'from' and 'to' query params are required"}, status=400)
+                return
+            kg = build_graph_from_registry()
+            path_ids = kg.find_path(from_id, to_id, max_hops=6)
+            self._send_json({"from": from_id, "to": to_id, "path": path_ids})
 
         elif path == "/api/nexus/packages":
             pkgs = RoboticsPackageNexus.get_all_packages()
@@ -335,7 +347,82 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                 "ir": result.ir.to_dict(),
                 "diagnostics": [d.to_dict() for d in result.diagnostics],
             }
+            # Additive: the real Pass Manager traces (ir/pass_manager.py,
+            # optimize/pass_manager.py), opt-in via a query param so the default
+            # response shape/size is unchanged for existing callers.
+            if query.get("explain_passes", ["0"])[0] == "1":
+                if result.pipeline is not None:
+                    res["pipeline"] = result.pipeline.to_dict()
+                if result.skill_pipeline is not None:
+                    res["skill_pipeline"] = result.skill_pipeline.to_dict()
             self._send_json(res)
+
+        elif path == "/api/cost":
+            from roboweaver.optimize.cost_model import compute_cost
+
+            instruction = query.get("instruction", ["Pick up the red cube"])[0]
+            robot_id = query.get("robot", ["franka_panda"])[0]
+            compiler = SkillCompiler(target_robot=robot_id)
+            try:
+                result = compiler.compile_with_diagnostics(instruction, verbose=False)
+            except SkillCompilationError as exc:
+                self._send_json(
+                    {"error": "compilation_failed", "diagnostics": [d.to_dict() for d in exc.diagnostics]},
+                    status=400,
+                )
+                return
+            cost = compute_cost(result.skill, result.ir, compiler.robot_spec)
+            self._send_json({
+                "instruction": instruction, "robot": robot_id,
+                "estimated_cycle_time_s": cost.estimated_cycle_time_s,
+                "payload_margin_kg": cost.payload_margin_kg,
+                "total_joint_travel_rad": cost.total_joint_travel_rad,
+                "manipulability_margin": cost.manipulability_margin,
+                "historical_success_rate": cost.historical_success_rate,
+            })
+
+        elif path == "/api/compare":
+            from roboweaver.optimize.cost_model import compare_robots
+
+            instruction = query.get("instruction", ["Pick up the red cube"])[0]
+            robots_param = query.get("robots", [""])[0]
+            robot_ids = [r.strip() for r in robots_param.split(",") if r.strip()]
+            if not robot_ids:
+                self._send_json({"error": "'robots' query param (comma-separated) is required"}, status=400)
+                return
+            comparison = compare_robots(instruction, robot_ids)
+            self._send_json({
+                "instruction": instruction,
+                "ranked": [
+                    {
+                        "robot": rid, "score": score,
+                        "cost": {
+                            "estimated_cycle_time_s": cost.estimated_cycle_time_s,
+                            "payload_margin_kg": cost.payload_margin_kg,
+                            "total_joint_travel_rad": cost.total_joint_travel_rad,
+                            "manipulability_margin": cost.manipulability_margin,
+                            "historical_success_rate": cost.historical_success_rate,
+                        },
+                    }
+                    for rid, score, cost in comparison.ranked
+                ],
+                "pareto_optimal": comparison.pareto_optimal,
+                "skipped": comparison.skipped,
+            })
+
+        elif path == "/api/benchmark":
+            from roboweaver.benchmark.robobench import run_benchmark
+
+            robots_param = query.get("robots", [""])[0]
+            # A small default subset (not every registered robot) keeps a live
+            # dashboard-triggered call fast and predictable -- the CLI/roboweaver
+            # benchmark command is the place to run the full matrix.
+            robot_ids = (
+                [r.strip() for r in robots_param.split(",") if r.strip()]
+                or ["franka_panda", "ur5e", "kuka_iiwa"]
+            )
+            report = run_benchmark(robot_ids=robot_ids)
+            self._send_json(report.to_dict())
 
         elif path == "/api/discover":
             host = query.get("host", [None])[0]
