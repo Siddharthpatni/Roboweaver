@@ -49,6 +49,40 @@ class RoboticsKnowledgeGraph:
                         targets.append(node)
         return targets
 
+    def find_path(self, start_id: str, end_id: str, max_hops: int = 6) -> list[str] | None:
+        """Real multi-hop BFS over self.edges (undirected -- edges here mostly
+        represent structural relationships like COMPATIBLE_WITH/REQUIRES_TOOL where
+        traversing "backwards" is still a meaningful path, e.g. "which skill leads
+        to this package"). Returns the first-found shortest path of node ids
+        (inclusive of start/end), or None if unreachable within max_hops."""
+        if start_id not in self.nodes or end_id not in self.nodes:
+            return None
+        if start_id == end_id:
+            return [start_id]
+
+        adjacency: dict[str, set[str]] = {node_id: set() for node_id in self.nodes}
+        for edge in self.edges:
+            if edge.source_id in adjacency and edge.target_id in adjacency:
+                adjacency[edge.source_id].add(edge.target_id)
+                adjacency[edge.target_id].add(edge.source_id)
+
+        visited = {start_id}
+        frontier = [[start_id]]
+        hops = 0
+        while frontier and hops < max_hops:
+            next_frontier: list[list[str]] = []
+            for path in frontier:
+                current = path[-1]
+                for neighbor in adjacency.get(current, ()):
+                    if neighbor == end_id:
+                        return path + [neighbor]
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        next_frontier.append(path + [neighbor])
+            frontier = next_frontier
+            hops += 1
+        return None
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize graph to primitive dictionary."""
         return {

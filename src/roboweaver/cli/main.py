@@ -663,6 +663,45 @@ def cmd_build_system(args) -> int:
     return 0
 
 
+def cmd_graph(args) -> int:
+    """Real knowledge graph (knowledge/ingest_registry.py, gap-fix batch item 2):
+    build (real nodes/edges from ROBOT_REGISTRY/PACKAGE_CATALOG/skill taxonomy),
+    path (real multi-hop BFS), export-obsidian (real Obsidian-compatible notes)."""
+    from roboweaver.knowledge.ingest_registry import build_graph_from_registry
+
+    action = args.graph_action
+    graph = build_graph_from_registry()
+
+    if action == "build":
+        as_json = getattr(args, "json", False)
+        if as_json:
+            print(json.dumps(graph.to_dict(), indent=2))
+        else:
+            print(f"\n\033[1;35mRoboWeaver Knowledge Graph\033[0m — real ingestion from live registries")
+            print(f"  Nodes: {len(graph.nodes)}  Edges: {len(graph.edges)}")
+        if getattr(args, "output", None):
+            graph.save(args.output)
+            print(f"  \033[0;32m✓ Saved to {args.output}\033[0m\n")
+        return 0
+
+    if action == "path":
+        path = graph.find_path(args.from_id, args.to_id, max_hops=getattr(args, "max_hops", 6))
+        if path is None:
+            print(f"\n\033[1;31m✗ No path\033[0m found from '{args.from_id}' to '{args.to_id}' "
+                  f"within {getattr(args, 'max_hops', 6)} hops.\n")
+            return 1
+        print(f"\n\033[1;35mPath\033[0m: " + " → ".join(f"\033[36m{n}\033[0m" for n in path) + "\n")
+        return 0
+
+    if action == "export-obsidian":
+        from roboweaver.knowledge.obsidian_export import export_to_obsidian
+        out = export_to_obsidian(graph, args.output_dir)
+        print(f"\n\033[1;32m✓ Exported {len(graph.nodes)} real, cross-linked Obsidian notes\033[0m to {out}\n")
+        return 0
+
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="RoboWeaver: Compile Robotics Knowledge into Executable Intelligence"
@@ -681,6 +720,22 @@ def main() -> int:
     p_build = subparsers.add_parser("build", aliases=["prompt"], help="Build complete multi-robot system from natural language prompt")
     p_build.add_argument("prompt", type=str, help="System description prompt (e.g., 'Build ShopMate-R retail assistant with Temi, Pepper, and Franka')")
     p_build.add_argument("--output", type=str, default="./ros2_ws/src", help="Output directory path for ROS 2 package")
+
+    # graph (real knowledge graph: build / path / export-obsidian)
+    p_graph = subparsers.add_parser("graph", help="Real knowledge graph: build, find a path, or export to Obsidian")
+    graph_sub = p_graph.add_subparsers(dest="graph_action", required=True)
+
+    p_graph_build = graph_sub.add_parser("build", help="Build the real knowledge graph from live registries")
+    p_graph_build.add_argument("--output", type=str, default=None, help="Optional JSON file path to save the graph to")
+    p_graph_build.add_argument("--json", action="store_true", help="Print the graph as JSON")
+
+    p_graph_path = graph_sub.add_parser("path", help="Find a real multi-hop path between two node ids")
+    p_graph_path.add_argument("from_id", type=str, help="Source node id, e.g. skill_tighten_bolt")
+    p_graph_path.add_argument("to_id", type=str, help="Target node id, e.g. package_nav2_bringup")
+    p_graph_path.add_argument("--max-hops", dest="max_hops", type=int, default=6)
+
+    p_graph_obsidian = graph_sub.add_parser("export-obsidian", help="Export the real graph as Obsidian-compatible markdown notes")
+    p_graph_obsidian.add_argument("output_dir", type=str, help="Output directory for the .md notes")
 
     # sim (Real-Time Kinematic & Force Simulation)
     p_sim = subparsers.add_parser("sim", help="Run real-time kinematic and grasping force simulation")
@@ -799,6 +854,8 @@ def main() -> int:
         return cmd_nexus(args)
     elif args.command in ("build", "prompt"):
         return cmd_build_system(args)
+    elif args.command == "graph":
+        return cmd_graph(args)
     elif args.command == "sim":
         return cmd_sim(args)
     elif args.command == "compile":
