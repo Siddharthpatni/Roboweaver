@@ -601,14 +601,14 @@ def cmd_advise(args) -> int:
 def cmd_dashboard(args) -> int:
     if getattr(args, "no_self_heal", False):
         from roboweaver.dashboard.server import start_dashboard_server
-        start_dashboard_server(port=args.port)
+        start_dashboard_server(port=args.port, host=args.host)
     else:
         # Default: a crashed server restarts itself automatically (exponential
         # backoff, no cap on retries) -- no human needs to notice it died and
         # rerun this command. Ctrl+C still stops it; that is the deliberate
         # off switch, not something the loop requires to keep running.
         from roboweaver.dashboard.server import run_dashboard_supervised
-        run_dashboard_supervised(port=args.port)
+        run_dashboard_supervised(port=args.port, host=args.host)
     return 0
 
 
@@ -836,6 +836,11 @@ def main() -> int:
     # dashboard
     p_dash = subparsers.add_parser("dashboard", help="Launch web dashboard control center")
     p_dash.add_argument("--port", type=int, default=8080, help="HTTP port")
+    p_dash.add_argument(
+        "--host", type=str, default="127.0.0.1",
+        help="Bind address (default 127.0.0.1, localhost-only). Pass 0.0.0.0 to "
+             "expose on the LAN -- only do this on a trusted network.",
+    )
     p_dash.add_argument(
         "--no-self-heal", action="store_true",
         help="Disable auto-restart on crash (self-healing is on by default)",

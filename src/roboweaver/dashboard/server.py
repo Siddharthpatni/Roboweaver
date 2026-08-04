@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import platform as platform_module
+import re
 import socketserver
 import sys
 import time
@@ -43,8 +44,33 @@ _SELF_HEALING_ACTIVE = False
 # can never drift out of sync with ir/schema.py.
 _IR_VERSION = RoboIR.__dataclass_fields__["ir_version"].default
 
+# A browser only sends an `Origin` header on a cross-origin request -- a
+# same-page navigation or a non-browser client (curl, the CLI) sends none.
+# Matching against "any localhost/127.0.0.1 port" (not a fixed :3000) so the
+# real frontend still works if its dev server picks a different port, while
+# an external site (whose Origin is its own real domain) is rejected before
+# any handler runs -- the previous wildcard CORS header didn't stop that
+# fetch from firing (CORS only gates whether JS can *read* the response, not
+# whether the request is sent), so a malicious page could silently trigger a
+# real side effect like /api/connect. This check does stop it.
+_ALLOWED_ORIGIN_RE = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$")
+
+# Generous enough to never cut off a legitimate slow call (the LLM connect
+# advisor can take up to 45s) -- this bounds a stalled *socket* read/write
+# (a slow-loris-style client, or one that stops reading its response), not
+# how long our own request handling is allowed to run.
+_SOCKET_TIMEOUT_S = 60
+
+_MAX_INSTRUCTION_LEN = 2000
+_MAX_ROBOTS_PARAM = 20
+
+
+def _is_allowed_origin(origin: str | None) -> bool:
+    return origin is not None and bool(_ALLOWED_ORIGIN_RE.match(origin))
+
 
 class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
+    timeout = _SOCKET_TIMEOUT_S
 
     def do_GET(self):
         """Backstop around _route(): every branch in _route() is expected to
@@ -56,6 +82,11 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
         gets a real response no matter what a handler does internally: the
         client either gets the intended answer or a clean 500, never silence.
         """
+        origin = self.headers.get("Origin")
+        if origin is not None and not _is_allowed_origin(origin):
+            self.send_error(403, "Origin not allowed")
+            return
+        self._request_origin = origin
         try:
             self._route()
         except BrokenPipeError:
@@ -108,6 +139,8 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/nexus/recommend":
             prompt = query.get("prompt", ["Build ShopMate-R retail assistant with Temi, Pepper, and Franka"])[0]
+            if self._reject_if_too_long(prompt, "prompt"):
+                return
             rec = RoboticsPackageNexus.recommend_stack_for_prompt(prompt)
             self._send_json(rec)
 
@@ -192,7 +225,8 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/xml")
             self.send_header("Content-Disposition", f'attachment; filename="{spec.id}.urdf"')
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Access-Control-Allow-Origin", "*")
+            if self._request_origin is not None:
+                self.send_header("Access-Control-Allow-Origin", self._request_origin)
             self.end_headers()
             self.wfile.write(body)
 
@@ -225,6 +259,8 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                 "prompt",
                 ["Build ShopMate-R retail assistant with Temi for navigation, Pepper for customer interaction, and Franka arm for restocking"],
             )[0]
+            if self._reject_if_too_long(prompt, "prompt"):
+                return
 
             parsed = SystemPromptParser.parse(prompt)
             choreographer = MultiRobotChoreographer(workcell_name=parsed.workcell_name)
@@ -315,6 +351,8 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/compile":
             instruction = query.get("instruction", ["Pick up the red cube"])[0]
             robot_id = query.get("robot", ["franka_panda"])[0]
+            if self._reject_if_too_long(instruction, "instruction"):
+                return
 
             compiler = SkillCompiler(target_robot=robot_id)
             try:
@@ -362,6 +400,8 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
 
             instruction = query.get("instruction", ["Pick up the red cube"])[0]
             robot_id = query.get("robot", ["franka_panda"])[0]
+            if self._reject_if_too_long(instruction, "instruction"):
+                return
             compiler = SkillCompiler(target_robot=robot_id)
             try:
                 result = compiler.compile_with_diagnostics(instruction, verbose=False)
@@ -385,10 +425,18 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             from roboweaver.optimize.cost_model import compare_robots
 
             instruction = query.get("instruction", ["Pick up the red cube"])[0]
+            if self._reject_if_too_long(instruction, "instruction"):
+                return
             robots_param = query.get("robots", [""])[0]
             robot_ids = [r.strip() for r in robots_param.split(",") if r.strip()]
             if not robot_ids:
                 self._send_json({"error": "'robots' query param (comma-separated) is required"}, status=400)
+                return
+            if len(robot_ids) > _MAX_ROBOTS_PARAM:
+                self._send_json(
+                    {"error": f"'robots' accepts at most {_MAX_ROBOTS_PARAM} ids -- each one compiles a full skill."},
+                    status=400,
+                )
                 return
             comparison = compare_robots(instruction, robot_ids)
             self._send_json({
@@ -421,6 +469,12 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                 [r.strip() for r in robots_param.split(",") if r.strip()]
                 or ["franka_panda", "ur5e", "kuka_iiwa"]
             )
+            if len(robot_ids) > _MAX_ROBOTS_PARAM:
+                self._send_json(
+                    {"error": f"'robots' accepts at most {_MAX_ROBOTS_PARAM} ids -- each compiles every skill category."},
+                    status=400,
+                )
+                return
             report = run_benchmark(robot_ids=robot_ids)
             self._send_json(report.to_dict())
 
@@ -555,9 +609,26 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # Echoes the real, already-validated request Origin back (do_GET already
+        # rejected anything not matching _ALLOWED_ORIGIN_RE) instead of "*" --
+        # a non-browser client (no Origin header) needs no CORS header at all.
+        origin = getattr(self, "_request_origin", None)
+        if origin is not None:
+            self.send_header("Access-Control-Allow-Origin", origin)
         self.end_headers()
         self.wfile.write(body)
+
+    def _reject_if_too_long(self, value: str, field_name: str) -> bool:
+        """Every instruction/prompt-shaped query param routes into a real
+        compile, so an unbounded one is a cheap way to burn CPU on one
+        request -- caught here, before it reaches the compiler, rather than
+        relying on the compiler itself to bail out quickly."""
+        if len(value) > _MAX_INSTRUCTION_LEN:
+            self._send_json(
+                {"error": f"'{field_name}' exceeds {_MAX_INSTRUCTION_LEN} characters."}, status=400
+            )
+            return True
+        return False
 
     def log_message(self, format, *args):
         pass  # Quiet logging
@@ -577,15 +648,17 @@ class ReusableHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
 
-def start_dashboard_server(port: int = 8080) -> None:
+def start_dashboard_server(port: int = 8080, host: str = "127.0.0.1") -> None:
     global _PROCESS_START_TIME
-    server_address = ("", port)
+    server_address = (host, port)
     httpd = ReusableHTTPServer(server_address, DashboardHTTPRequestHandler)
     # Reset on every call, not just the first: after a self-healing restart
     # this is a fresh server instance, so "uptime" should mean time since
     # *this* instance came up, not the OS process's whole lifetime.
     _PROCESS_START_TIME = time.monotonic()
-    print(f"\n\033[1;32m🚀 RoboWeaver API server running at: http://localhost:{port}\033[0m")
+    print(f"\n\033[1;32m🚀 RoboWeaver API server running at: http://{host}:{port}\033[0m")
+    if host not in ("127.0.0.1", "localhost"):
+        print(f"   \033[1;33m⚠ Bound to {host} -- reachable from other machines on this network.\033[0m")
     print(f"   Frontend (Engineering Workbench): cd frontend && npm run dev -> http://localhost:3000")
     print("   Press Ctrl+C to stop server.\n")
     try:
@@ -595,7 +668,7 @@ def start_dashboard_server(port: int = 8080) -> None:
         httpd.server_close()
 
 
-def run_dashboard_supervised(port: int = 8080, max_backoff_s: float = 30.0) -> None:
+def run_dashboard_supervised(port: int = 8080, host: str = "127.0.0.1", max_backoff_s: float = 30.0) -> None:
     """Self-healing supervisor loop: if the server process dies for any reason
     other than a deliberate Ctrl+C, restart it automatically -- no human has
     to notice it went down and rerun the CLI command.
@@ -617,7 +690,7 @@ def run_dashboard_supervised(port: int = 8080, max_backoff_s: float = 30.0) -> N
     attempt = 0
     while True:
         try:
-            start_dashboard_server(port=port)
+            start_dashboard_server(port=port, host=host)
             return  # only reached via a clean, deliberate KeyboardInterrupt shutdown
         except KeyboardInterrupt:
             # A second Ctrl+C during the backoff sleep below also lands here
