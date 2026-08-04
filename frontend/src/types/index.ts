@@ -3,6 +3,7 @@ export type TabType =
   | 'compiler'
   | 'builder'
   | 'nexus'
+  | 'graph'
   | 'fleet'
   | 'connect'
   | 'simulation'

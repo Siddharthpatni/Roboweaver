@@ -15,6 +15,7 @@ import {
   Wand2,
   Code2,
   Database,
+  Share2,
   Boxes,
   Cpu,
   Radar,
@@ -51,6 +52,10 @@ const KnowledgeNexusView = dynamic(
   () => import('../components/KnowledgeNexusView').then((m) => m.KnowledgeNexusView),
   { ssr: false, loading: tabLoading }
 );
+const KnowledgeGraphView = dynamic(
+  () => import('../components/KnowledgeGraphView').then((m) => m.KnowledgeGraphView),
+  { ssr: false, loading: tabLoading }
+);
 const FleetRegistryView = dynamic(
   () => import('../components/FleetRegistryView').then((m) => m.FleetRegistryView),
   { ssr: false, loading: tabLoading }
@@ -80,6 +85,7 @@ function Workbench() {
   const [packages, setPackages] = useState<NexusPackage[]>([]);
   const [discovered, setDiscovered] = useState<DiscoveredRobot[]>([]);
   const [version, setVersion] = useState<VersionInfo | null>(null);
+  const [graphNodeCount, setGraphNodeCount] = useState(0);
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [terminalRobot, setTerminalRobot] = useState('franka_panda');
 
@@ -108,6 +114,10 @@ function Workbench() {
     RoboWeaverAPI.version()
       .then(setVersion)
       .catch(() => setVersion(null));
+
+    RoboWeaverAPI.graph()
+      .then((g) => setGraphNodeCount(g.nodes.length))
+      .catch(() => {});
   }, []);
 
   return (
@@ -129,6 +139,7 @@ function Workbench() {
           {activeTab === 'compiler' && <CompilerView />}
           {activeTab === 'builder' && <WorkcellBuilderView />}
           {activeTab === 'nexus' && <KnowledgeNexusView />}
+          {activeTab === 'graph' && <KnowledgeGraphView />}
           {activeTab === 'fleet' && <FleetRegistryView />}
           {activeTab === 'connect' && <RobotConnectView />}
           {activeTab === 'simulation' && <LiveSimulationView />}
@@ -185,7 +196,7 @@ function Workbench() {
                 )}
 
                 {/* KPI row */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 stagger-children">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4 stagger-children">
                   {[
                     {
                       tab: 'compiler' as TabType,
@@ -209,6 +220,13 @@ function Workbench() {
                       label: 'Indexed ROS 2 packages',
                       value: String(packages.length),
                       icon: Database,
+                      tint: 'text-cyan-400',
+                    },
+                    {
+                      tab: 'graph' as TabType,
+                      label: 'Knowledge graph nodes',
+                      value: String(graphNodeCount),
+                      icon: Share2,
                       tint: 'text-cyan-400',
                     },
                     {

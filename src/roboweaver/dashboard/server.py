@@ -120,6 +120,37 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             path_ids = kg.find_path(from_id, to_id, max_hops=6)
             self._send_json({"from": from_id, "to": to_id, "path": path_ids})
 
+        elif path == "/api/graph/export-obsidian":
+            # Same real export the CLI's `roboweaver graph export-obsidian`
+            # command produces (knowledge/obsidian_export.py) -- written to a
+            # server-side temp directory (never a client-supplied path) and
+            # streamed back as a zip, so "download the Obsidian vault" is a
+            # real one-click action from the browser instead of a CLI-only
+            # capability.
+            import io
+            import tempfile
+            import zipfile
+
+            from roboweaver.knowledge.obsidian_export import export_to_obsidian
+
+            kg = build_graph_from_registry()
+            with tempfile.TemporaryDirectory() as tmpdir:
+                out_dir = export_to_obsidian(kg, tmpdir)
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for md_file in sorted(Path(out_dir).glob("*.md")):
+                        zf.write(md_file, arcname=md_file.name)
+                body = buf.getvalue()
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", 'attachment; filename="roboweaver-knowledge-graph-obsidian.zip"')
+            self.send_header("Content-Length", str(len(body)))
+            if self._request_origin is not None:
+                self.send_header("Access-Control-Allow-Origin", self._request_origin)
+            self.end_headers()
+            self.wfile.write(body)
+
         elif path == "/api/nexus/packages":
             pkgs = RoboticsPackageNexus.get_all_packages()
             self._send_json([

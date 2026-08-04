@@ -136,6 +136,16 @@ export const RoboWeaverAPI = {
    * genuinely unreachable within max_hops. */
   graphPath: (from: string, to: string) =>
     getJSON<GraphPathResult>(`/api/graph/path?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+  /** Downloads the same real Obsidian vault `roboweaver graph export-obsidian`
+   * produces on the CLI -- one .md file per real node, cross-linked with
+   * real [[wikilinks]] -- as a zip, generated server-side into a temp dir. */
+  graphExportObsidian: async (): Promise<Blob> => {
+    const res = await fetchWithTimeout('/api/graph/export-obsidian', TIMEOUT_SCAN_MS);
+    if (!res.ok) {
+      throw new Error(`RoboWeaver API /api/graph/export-obsidian responded ${res.status}`);
+    }
+    return res.blob();
+  },
   simulateGestures: () => getJSON<string[]>('/api/simulate/gestures'),
   simulateObjects: () => getJSON<SimObjectProfile[]>('/api/simulate/objects'),
   simulate: (gesture: string, object: string) =>
