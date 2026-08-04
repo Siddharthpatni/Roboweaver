@@ -110,11 +110,16 @@ class RobotComparison:
     ranked: list[tuple[str, float, CompiledSkillCost]]
     pareto_optimal: list[str]
     skipped: dict[str, str] = field(default_factory=dict)  # robot_id -> why it couldn't be compiled
+    # "explicit" when the caller named robot_ids; "knowledge_graph" when they were
+    # omitted and derived from the real graph's SUITABLE_FOR edges instead --
+    # exposed so a caller (CLI/API/UI) can honestly say where the candidate set
+    # came from rather than presenting a graph-derived guess as a user choice.
+    candidate_source: str = "explicit"
 
 
 def compare_robots(
     instruction: str,
-    robot_ids: list[str],
+    robot_ids: list[str] | None = None,
     weights: dict[str, float] | None = None,
     memory: "ExecutionMemoryStore | None" = None,
 ) -> RobotComparison:
@@ -123,8 +128,23 @@ def compare_robots(
     weighted-sum comparison, not a Pareto-front solver with a continuous frontier)
     and the real Pareto-optimal subset. A robot that genuinely can't compile this
     instruction (e.g. a missing declared capability) is reported in `skipped` with
-    the real blocking reason, not silently dropped or faked into the ranking."""
+    the real blocking reason, not silently dropped or faked into the ranking.
+
+    `robot_ids=None` is not "compare nothing" -- it means "I don't know which
+    robots are even candidates," and the real knowledge graph answers that: every
+    robot id its own SUITABLE_FOR edges connect to this instruction's real skill
+    category (`knowledge/ingest_registry.py::suggest_robots_for_instruction()`),
+    the same real gate (e.g. force/torque sensing for TIGHTEN_BOLT) the graph
+    already enforces elsewhere. This is the graph actually deciding which robots
+    get compared, not just documenting robot/package relationships."""
     from roboweaver.compiler import SkillCompiler
+
+    candidate_source = "explicit"
+    if robot_ids is None:
+        from roboweaver.knowledge.ingest_registry import suggest_robots_for_instruction
+
+        robot_ids = suggest_robots_for_instruction(instruction)
+        candidate_source = "knowledge_graph"
     from roboweaver.ir import SkillCompilationError
 
     weights = weights or _DEFAULT_WEIGHTS
@@ -143,4 +163,6 @@ def compare_robots(
     scored = [(rid, _weighted_score(costs[rid], weights), costs[rid]) for rid in costs]
     scored.sort(key=lambda t: t[1], reverse=True)
 
-    return RobotComparison(ranked=scored, pareto_optimal=pareto_front(costs), skipped=skipped)
+    return RobotComparison(
+        ranked=scored, pareto_optimal=pareto_front(costs), skipped=skipped, candidate_source=candidate_source
+    )

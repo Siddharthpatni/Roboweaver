@@ -361,6 +361,9 @@ export interface RobotComparisonResult {
   ranked: RobotRankingEntry[];
   pareto_optimal: string[];
   skipped: Record<string, string>;
+  /** 'explicit' when the caller named robots; 'knowledge_graph' when they were
+   * omitted and the real graph's SUITABLE_FOR edges supplied the candidates. */
+  candidate_source: 'explicit' | 'knowledge_graph';
 }
 
 export interface BenchmarkCellResult {

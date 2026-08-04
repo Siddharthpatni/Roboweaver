@@ -618,3 +618,86 @@ both clean.
 passing (`python -m pytest tests/ -q`). No new automated frontend tests (matches
 the existing project convention — Playwright was used here as a one-off manual-
 verification driver, not wired into CI).
+
+## UI fidelity fixes, dashboard hardening, Obsidian graph frontend, graph-driven compilation — **Done** (2026-08-04)
+
+Four follow-up batches, each triggered by direct user feedback rather than
+self-scoped, and each verified live (real browser via Playwright, real curl
+against a live server, or both) rather than by inspection alone.
+
+**1 — UI fidelity ("why does everything look fake").** The IDE shell's default
+views were empty until a user acted (`CompilerView`/`WorkcellBuilderView` now
+auto-run their default example on mount); the Terminal panel defaulted open
+and empty, eating ~240px on every tab (now defaults collapsed); the Overview
+KPI card hardcoded the literal string `'RH56F1-E2'` and visibly clipped (now
+matches the other cards' real `apiOnline`-derived Ready/Offline state); and
+the Digital Twin's Inspire Hand/TurtleBot 4 viewport was a hand-rolled
+canvas-2D perspective projection (`Robotic3DViewport.tsx`, deleted) whose
+"Wireframe" toggle set state nobody read. Replaced with real three.js
+(`DigitalTwinViewport.tsx`, `robot3d/InspireHandMesh.tsx`,
+`robot3d/TurtleBotMesh.tsx`) using the same OrbitControls/lighting/auto-fit
+rig already proven for the Franka CAD mesh — segment lengths from each
+robot's real `RobotSpec.links`, finger bend still driven by real
+`InspireHandSimulator` telemetry, Wireframe now a real per-mesh material
+property threaded through every part.
+
+**2 — Dashboard hardening.** The API bound to all interfaces
+(`server_address = ("", port)`) with a wildcard `Access-Control-Allow-Origin:
+*`. Bound to `127.0.0.1` by default now (`--host 0.0.0.0` is the explicit,
+warned opt-in); an Origin allow-list (`_ALLOWED_ORIGIN_RE`, any
+`http(s)://localhost|127.0.0.1|[::1]` port) rejects a disallowed request with
+`403` in `do_GET()` *before* any handler runs — real, because CORS response
+headers alone don't stop a cross-origin `fetch()` from firing, only from
+being *read*, so the old wildcard let any open webpage silently trigger a
+real side effect like `/api/connect`. `DashboardHTTPRequestHandler.timeout =
+60` bounds a stalled socket; instruction/prompt params capped at 2000 chars,
+robot-list params at 20. `tests/test_dashboard_hardening.py` (8 tests) spins
+up the real server on an ephemeral port.
+
+**3 — Real Obsidian knowledge graph, in the frontend.** The graph existed but
+had no frontend consumer. `GET /api/graph/export-obsidian` streams the same
+real vault `roboweaver graph export-obsidian` writes to disk, zipped
+server-side into a temp dir. `KnowledgeGraphView.tsx` (new `graph` tab) is a
+real `d3-force` simulation over `/api/graph`'s real response — drag, zoom,
+search-highlight, click a node for its real properties, or run the real
+`/api/graph/path` BFS between two clicked nodes. Node/edge counts (39/213)
+and the force layout were verified live; labels are hidden below a zoom/hover/
+selection threshold specifically because a 39-node, 213-edge hub-heavy graph
+(a no-sensor-requirement skill connects to all 11 robots) turned out
+genuinely illegible with every label always on — a real, empirically-found
+UX bug, not a design guess.
+
+**4 — The knowledge graph actually influencing compilation.** Direct response
+to review feedback that the graph "acts more like documentation" — it should
+"actively influence... capability selection." `SkillCompiler.classify_category()`
+(new, public) exposes the exact real classification `compile()` itself routes
+through (`_parse_intent()` + `ACTION_CATEGORY_MAP`), robot-independent, without
+duplicating the keyword-scoring logic or requiring a full compile.
+`knowledge/ingest_registry.py::suggest_robots_for_instruction()` uses it to
+look up the instruction's real skill node and return every robot id the
+graph's own `SUITABLE_FOR` edges connect to it — the same real force/torque
+gate the graph already enforces elsewhere, read, not re-derived.
+`optimize/cost_model.py::compare_robots()`'s `robot_ids` is now `| None`:
+omitted, it calls the graph lookup instead of requiring the caller to already
+know which robots are candidates, and `RobotComparison.candidate_source`
+(`"explicit"` vs `"knowledge_graph"`) reports which happened so no caller can
+present a graph-derived guess as a user choice. Wired through
+`roboweaver compare INSTRUCTION` (`--robots` now optional) and
+`GET /api/compare` (`robots` param now optional) — both verified live.
+**A real, non-obvious result surfaced immediately**: for `"Tighten the M8
+bolt"`, the graph correctly proposes `shadow_hand`/`robotiq_hand` as
+candidates (they declare `has_force_torque_sensor=True`), but both genuinely
+fail to compile (`skipped`, real IK non-convergence) — the graph narrows
+candidates on a coarse, real signal; the compiler's simulation-grounded
+compile step remains the actual authority on whether a candidate works. This
+is the intended architecture, not a bug: the graph informs, it doesn't
+override verification. **Deliberately not touched**: `package_nexus.py::
+recommend_stack_for_prompt()` (the Knowledge Nexus "Architecture recommender")
+stays keyword-matched — reworking its scenario-specific heuristics
+(`"shopmate"`, `"retail"`, ...) onto generic graph traversal is a
+larger, separate redesign, and the UI already honestly labels it
+"keyword-matched, not ML-based" rather than overclaiming.
+
+**Tests added:** `tests/test_dashboard_hardening.py` (8),
+`tests/test_graph_driven_compilation.py` (4), plus 2 new cases in
+`tests/test_cost_model.py` — 268/268 passing (`python -m pytest tests/ -q`).

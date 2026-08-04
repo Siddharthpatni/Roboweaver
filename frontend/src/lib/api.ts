@@ -117,10 +117,13 @@ export const RoboWeaverAPI = {
       `/api/cost?instruction=${encodeURIComponent(instruction)}&robot=${encodeURIComponent(robot)}`
     ),
   /** Compiles the same instruction across multiple robots and ranks them by real
-   * cost (optimize/cost_model.py::compare_robots()). */
-  compare: (instruction: string, robots: string[]) =>
+   * cost (optimize/cost_model.py::compare_robots()). Omit `robots` (or pass an
+   * empty array) to let the real knowledge graph suggest candidates instead --
+   * the response's `candidate_source` says which happened. */
+  compare: (instruction: string, robots?: string[]) =>
     getJSON<RobotComparisonResult>(
-      `/api/compare?instruction=${encodeURIComponent(instruction)}&robots=${encodeURIComponent(robots.join(','))}`,
+      `/api/compare?instruction=${encodeURIComponent(instruction)}` +
+        (robots && robots.length ? `&robots=${encodeURIComponent(robots.join(','))}` : ''),
       TIMEOUT_SCAN_MS
     ),
   /** Real compile-time benchmark (benchmark/robobench.py::run_benchmark()) --

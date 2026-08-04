@@ -242,7 +242,7 @@ def cmd_compare(args) -> int:
     from roboweaver.optimize.cost_model import compare_robots
 
     instruction = args.instruction
-    robot_ids = [r.strip() for r in args.robots.split(",") if r.strip()]
+    robot_ids = [r.strip() for r in args.robots.split(",") if r.strip()] if args.robots else None
     as_json = getattr(args, "json", False)
 
     comparison = compare_robots(instruction, robot_ids)
@@ -250,6 +250,7 @@ def cmd_compare(args) -> int:
     if as_json:
         print(json.dumps({
             "instruction": instruction,
+            "candidate_source": comparison.candidate_source,
             "ranked": [
                 {"robot": rid, "score": score, "cost": {
                     "estimated_cycle_time_s": cost.estimated_cycle_time_s,
@@ -266,6 +267,9 @@ def cmd_compare(args) -> int:
         return 0
 
     print(f"\n\033[1;35mRobot Comparison\033[0m — \"{instruction}\"")
+    if comparison.candidate_source == "knowledge_graph":
+        candidates = sorted({rid for rid, _, _ in comparison.ranked} | set(comparison.skipped))
+        print(f"  \033[2m--robots not given -- knowledge graph suggested: {', '.join(candidates) or '(none suitable)'}\033[0m")
     print("─" * 88)
     for rid, score, cost in comparison.ranked:
         pareto_mark = "\033[32m★ pareto-optimal\033[0m" if rid in comparison.pareto_optimal else ""
@@ -768,7 +772,11 @@ def main() -> int:
     # compare
     p_compare = subparsers.add_parser("compare", help="Compare an instruction's real compiled cost across multiple robots")
     p_compare.add_argument("instruction", type=str, help="Instruction to compile and compare")
-    p_compare.add_argument("--robots", type=str, required=True, help="Comma-separated robot ids, e.g. panda,ur5e,kuka_iiwa")
+    p_compare.add_argument(
+        "--robots", type=str, default=None,
+        help="Comma-separated robot ids, e.g. panda,ur5e,kuka_iiwa. Omit to let the real "
+             "knowledge graph suggest candidates via its own SUITABLE_FOR edges.",
+    )
 
     # benchmark
     p_bench = subparsers.add_parser("benchmark", help="RoboBench: real compile-pipeline measurement across robots x skill categories")

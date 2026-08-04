@@ -110,6 +110,18 @@ class SkillCompiler:
         else:
             self.robot_spec = target_robot
 
+    def classify_category(self, instruction: str) -> IndustrialSkillCategory:
+        """The real skill category `compile()` itself will route this instruction
+        to -- Stage 1's intent parse plus `ACTION_CATEGORY_MAP`, with no robot
+        embodiment involved (intent parsing never reads `self.robot_spec`). A
+        public entry point to that classification alone, so callers that need to
+        know *what kind of skill this is* (e.g. a knowledge-graph candidate-robot
+        lookup, before any robot is even chosen) don't have to duplicate the
+        keyword-scoring logic in `_parse_intent` -- or fully compile just to get
+        an Action out of it."""
+        intent = self._parse_intent(instruction)
+        return ACTION_CATEGORY_MAP.get(intent.action, IndustrialSkillCategory.PICK_AND_PLACE)
+
     def compile(self, instruction: str, verbose: bool = True) -> CompiledSkill:
         """Compile natural language instruction into a CompiledSkill."""
         if verbose:

@@ -459,11 +459,12 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             if self._reject_if_too_long(instruction, "instruction"):
                 return
             robots_param = query.get("robots", [""])[0]
-            robot_ids = [r.strip() for r in robots_param.split(",") if r.strip()]
-            if not robot_ids:
-                self._send_json({"error": "'robots' query param (comma-separated) is required"}, status=400)
-                return
-            if len(robot_ids) > _MAX_ROBOTS_PARAM:
+            # Omitting 'robots' is a real, distinct request now, not an error --
+            # it means "let the knowledge graph suggest candidates" (real
+            # SUITABLE_FOR edges for this instruction's real skill category), not
+            # "compare nothing." compare_robots(robot_ids=None) does that lookup.
+            robot_ids = [r.strip() for r in robots_param.split(",") if r.strip()] or None
+            if robot_ids is not None and len(robot_ids) > _MAX_ROBOTS_PARAM:
                 self._send_json(
                     {"error": f"'robots' accepts at most {_MAX_ROBOTS_PARAM} ids -- each one compiles a full skill."},
                     status=400,
@@ -472,6 +473,7 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             comparison = compare_robots(instruction, robot_ids)
             self._send_json({
                 "instruction": instruction,
+                "candidate_source": comparison.candidate_source,
                 "ranked": [
                     {
                         "robot": rid, "score": score,

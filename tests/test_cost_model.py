@@ -105,6 +105,27 @@ def test_compare_robots_reports_a_genuinely_incompatible_robot_as_skipped():
     print(f"  -> temi skipped with real reason: {comparison.skipped['temi']} [PASSED]")
 
 
+def test_compare_robots_derives_candidates_from_the_real_knowledge_graph_when_omitted():
+    print("\n[TEST 6] Testing compare_robots(robot_ids=None) derives real candidates from the knowledge graph...")
+    comparison = compare_robots("Tighten the M8 bolt")
+    assert comparison.candidate_source == "knowledge_graph"
+    considered = {rid for rid, _, _ in comparison.ranked} | set(comparison.skipped)
+    # Same real gate the graph enforces elsewhere (ingest_registry.py):
+    # temi has no force/torque sensor, so TIGHTEN's skill node never got an edge
+    # to it -- it must be genuinely absent, not just unranked.
+    assert "temi" not in considered
+    assert "franka_panda" in considered
+    print(f"  -> candidate_source=knowledge_graph; {len(considered)} real graph-suitable robots considered, "
+          f"temi correctly absent [PASSED]")
+
+
+def test_compare_robots_explicit_robots_still_reports_explicit_source():
+    print("\n[TEST 7] Testing compare_robots() with explicit robot_ids reports candidate_source='explicit'...")
+    comparison = compare_robots("Pick up the red cube", ["franka_panda", "ur5e"])
+    assert comparison.candidate_source == "explicit"
+    print("  -> explicit robot_ids leaves candidate_source as 'explicit', not silently switched [PASSED]")
+
+
 if __name__ == "__main__":
     print("=== STARTING OPTIMIZATION ENGINE / COST MODEL (ITEM 8) VERIFICATION ===")
     test_cost_fields_match_independently_recomputed_values()
@@ -112,4 +133,6 @@ if __name__ == "__main__":
     test_pareto_front_excludes_a_strictly_dominated_robot()
     test_compare_robots_ranks_and_reports_pareto_subset()
     test_compare_robots_reports_a_genuinely_incompatible_robot_as_skipped()
+    test_compare_robots_derives_candidates_from_the_real_knowledge_graph_when_omitted()
+    test_compare_robots_explicit_robots_still_reports_explicit_source()
     print("\n=== ALL OPTIMIZATION ENGINE TESTS PASSED SUCCESSFULLY ===")

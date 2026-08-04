@@ -99,3 +99,25 @@ def build_graph_from_registry() -> RoboticsKnowledgeGraph:
             )
 
     return graph
+
+
+def suggest_robots_for_instruction(instruction: str, graph: RoboticsKnowledgeGraph | None = None) -> list[str]:
+    """The knowledge graph actually deciding something, not just documenting it:
+    classifies `instruction` into its real skill category (the exact
+    classification `SkillCompiler.compile()` itself would route to --
+    `SkillCompiler.classify_category()`, not a second, possibly-drifted keyword
+    check), then returns every robot id the real graph's own `SUITABLE_FOR`
+    edges connect to that skill node. A skill that needs force/torque sensing
+    (e.g. TIGHTEN_BOLT) only returns real force/torque-capable robots, because
+    that's how `build_graph_from_registry()` built the edge in the first place
+    -- this reads that same real graph, it doesn't re-derive the gate."""
+    from roboweaver.compiler import SkillCompiler
+
+    category = SkillCompiler().classify_category(instruction)
+    skill_node_id = f"skill_{category.value.lower()}"
+    graph = graph if graph is not None else build_graph_from_registry()
+    return [
+        edge.target_id[len("robot_"):]
+        for edge in graph.edges
+        if edge.source_id == skill_node_id and edge.relation is RelationType.SUITABLE_FOR
+    ]
