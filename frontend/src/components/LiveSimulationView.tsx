@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { ShieldCheck, AlertTriangle, Cable, Hand, Radio, Loader2 } from 'lucide-react';
 import { RoboWeaverAPI } from '../lib/api';
 import { SimObjectProfile, SimulateResult } from '../types';
-import { Robotic3DViewport } from './Robotic3DViewport';
+import { DigitalTwinViewport } from './DigitalTwinViewport';
 import { Robot3DModel } from './Robot3DModel';
 
 const FINGER_LABELS = ['Thumb Flex', 'Thumb Abduct', 'Index Finger', 'Middle Finger', 'Ring Finger', 'Pinky Finger'];
@@ -88,6 +88,7 @@ export const LiveSimulationView: React.FC = () => {
   };
 
   const graspState = GRASP_STATE_MAP[gesture] ?? 'Open';
+  const selectedObject = objects.find((o) => o.id === objectKey);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -125,7 +126,11 @@ export const LiveSimulationView: React.FC = () => {
           </div>
         )}
 
-        <Robotic3DViewport graspState={graspState} actuatorPositions={result?.actuator_positions} />
+        <DigitalTwinViewport
+          graspState={graspState}
+          actuatorPositions={result?.actuator_positions}
+          heldObjectDiameterM={selectedObject ? selectedObject.diameter_mm / 1000 : undefined}
+        />
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           <div className="lg:col-span-8 space-y-5">

@@ -190,12 +190,6 @@ export const CompilerView: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    RoboWeaverAPI.robots()
-      .then(setRobots)
-      .catch(() => {});
-  }, []);
-
   const handleCompile = async () => {
     if (!instruction.trim()) return;
     setLoading(true);
@@ -215,6 +209,18 @@ export const CompilerView: React.FC = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    RoboWeaverAPI.robots()
+      .then(setRobots)
+      .catch(() => {});
+    // Compiles the default example immediately so the tab opens on a real,
+    // populated result instead of an empty console -- the same compile a
+    // user would trigger manually, just run once up front.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    handleCompile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleCopy = () => {
     if (!result) return;

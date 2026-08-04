@@ -44,7 +44,7 @@ interface TerminalPanelProps {
 }
 
 export const TerminalPanel: React.FC<TerminalPanelProps> = ({ robots, robot, onRobotChange }) => {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const [height, setHeight] = useState(DEFAULT_HEIGHT);
   const [entries, setEntries] = useState<TerminalEntry[]>([]);
   const [busy, setBusy] = useState<string | null>(null);

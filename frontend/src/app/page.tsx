@@ -25,7 +25,7 @@ import {
 
 // Every tab body is loaded on demand rather than bundled into the initial
 // page. LiveSimulationView alone pulls in three.js + @react-three/fiber +
-// @react-three/drei -- a ~1MB chunk -- via Robotic3DViewport/Robot3DModel.
+// @react-three/drei -- a ~1MB chunk -- via DigitalTwinViewport/Robot3DModel.
 // Before this, that shipped to every visitor on first paint even if they
 // never opened Digital Twin. `ssr: false` on all of them because every view
 // fetches its own data client-side (RoboWeaverAPI) and renders nothing
@@ -228,9 +228,9 @@ function Workbench() {
                     {
                       tab: 'simulation' as TabType,
                       label: 'Digital twin',
-                      value: 'RH56F1-E2',
+                      value: apiOnline ? 'Ready' : 'Offline',
                       icon: Cpu,
-                      tint: 'text-violet-400',
+                      tint: apiOnline ? 'text-violet-400' : 'text-rose-400',
                     },
                   ].map((kpi) => (
                     <button

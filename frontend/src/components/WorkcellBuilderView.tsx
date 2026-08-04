@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Wand2,
   ArrowDown,
@@ -38,6 +38,14 @@ export const WorkcellBuilderView: React.FC = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    // Builds the default example immediately so the tab opens on a real,
+    // populated result instead of an empty console.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    handleBuild();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleCopy = () => {
     if (!result) return;
