@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, ContactShadows, Bounds } from '@react-three/drei';
 import { Box } from 'lucide-react';
 import { RoboWeaverAPI } from '../lib/api';
 import { RobotLinkSpec } from '../types';
 import { InspireHandMesh } from './robot3d/InspireHandMesh';
+import { InspireHandCADModel } from './robot3d/InspireHandCADModel';
 import { TurtleBotMesh } from './robot3d/TurtleBotMesh';
 
 type TwinRobot = 'inspire_hand' | 'turtlebot4';
@@ -93,19 +94,45 @@ export function DigitalTwinViewport({ graspState, actuatorPositions, heldObjectD
           <directionalLight position={[-0.6, 0.45, -0.3]} intensity={0.4} color="#ffb300" />
           <directionalLight position={[0, -0.3, 0.6]} intensity={0.15} color="#d81f10" />
           <Grid args={[1.2, 1.2]} cellColor="#1c1c1c" sectionColor="#3d2e05" fadeDistance={2} infiniteGrid position={[0, -0.005, 0]} />
-          {currentLinks && (
-            <Bounds key={selected} fit clip margin={1.35}>
-              {selected === 'inspire_hand' ? (
-                <InspireHandMesh
-                  links={currentLinks}
+          {currentLinks && selected === 'inspire_hand' && wireframe && (
+            <Bounds key={`${selected}-wireframe`} fit clip margin={1.35}>
+              <InspireHandMesh
+                links={currentLinks}
+                actuatorPositions={actuatorPositions}
+                graspState={graspState}
+                heldObjectDiameterM={heldObjectDiameterM}
+                wireframe={wireframe}
+              />
+            </Bounds>
+          )}
+          {currentLinks && selected === 'inspire_hand' && !wireframe && (
+            // Real CAD mesh (dex-urdf, MIT) -- see InspireHandCADModel.tsx.
+            // Falls back to the procedural mesh while the GLBs stream in.
+            <Suspense
+              fallback={
+                <Bounds key={`${selected}-fallback`} fit clip margin={1.35}>
+                  <InspireHandMesh
+                    links={currentLinks}
+                    actuatorPositions={actuatorPositions}
+                    graspState={graspState}
+                    heldObjectDiameterM={heldObjectDiameterM}
+                    wireframe={false}
+                  />
+                </Bounds>
+              }
+            >
+              <Bounds key={selected} fit clip margin={1.35}>
+                <InspireHandCADModel
                   actuatorPositions={actuatorPositions}
                   graspState={graspState}
                   heldObjectDiameterM={heldObjectDiameterM}
-                  wireframe={wireframe}
                 />
-              ) : (
-                <TurtleBotMesh links={currentLinks} wireframe={wireframe} />
-              )}
+              </Bounds>
+            </Suspense>
+          )}
+          {currentLinks && selected === 'turtlebot4' && (
+            <Bounds key={selected} fit clip margin={1.35}>
+              <TurtleBotMesh links={currentLinks} wireframe={wireframe} />
             </Bounds>
           )}
           <ContactShadows position={[0, -0.003, 0]} opacity={0.5} scale={1} blur={2} far={0.5} color="#000000" />
