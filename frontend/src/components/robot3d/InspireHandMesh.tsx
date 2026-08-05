@@ -30,97 +30,94 @@ const FALLBACK_BEND: Record<string, number> = {
   'Power Grasp': 0.95,
 };
 
+// Real Inspire RH56-series color language (from the manufacturer's own product
+// photography): matte black rubber-clad fingers/palm, a bright chrome hinge
+// bracket exposed at every knuckle, and a white wrist adapter -- not the gold/
+// red "Iron Man" palette used elsewhere in this app for the arm robots, since
+// that's a deliberate house style for THOSE models, not a claim about what this
+// hand actually looks like.
+const BODY_BLACK = '#161616';
+const BODY_RIB = '#0c0c0c';
+const CHROME = '#d7d8da';
+const CHROME_SHADOW = '#8f9095';
+const SENSOR_DARK = '#050505';
+const WRIST_WHITE = '#e9e7e1';
+
 function linkLength(links: RobotLinkSpec[], name: string, fallback: number): number {
   return links.find((l) => l.name === name)?.length ?? fallback;
 }
 
-/** A real hex-head cap screw -- 6-segment cylinder reads as a hex head at a glance,
- * a slightly darker top face gives it a machined recess instead of a flat disc.
- * Purely cosmetic (no data behind a screw placement), used to make the casing and
- * joints read as bolted-together hardware instead of bare primitives. */
-function ScrewHead({
-  radius = 0.0026,
-  axis = 'y',
-  wireframe,
-}: {
-  radius?: number;
-  axis?: 'x' | 'y' | 'z';
-  wireframe: boolean;
-}) {
-  const rotation: [number, number, number] =
-    axis === 'x' ? [0, 0, Math.PI / 2] : axis === 'z' ? [Math.PI / 2, 0, 0] : [0, 0, 0];
+/** The knuckle's exposed hinge bracket -- a bright chrome drum on the real bend
+ * axis flanked by two slightly wider chrome cheek plates (a real clevis/fork
+ * joint reads exactly this way: a shiny cylindrical pivot pinched between two
+ * flat plates), plus a small dark sensor chip on one cheek, matching the flex
+ * sensor cable module visible on the real hand's own joints. */
+function ForkJoint({ radius, wireframe }: { radius: number; wireframe: boolean }) {
+  const plateGap = radius * 1.5;
   return (
-    <group rotation={rotation}>
+    <group rotation={[0, 0, Math.PI / 2]}>
       <mesh castShadow>
-        <cylinderGeometry args={[radius, radius * 1.05, radius * 0.85, 6]} />
-        <meshStandardMaterial color="#0d0d0d" metalness={0.95} roughness={0.2} wireframe={wireframe} />
+        <cylinderGeometry args={[radius * 0.62, radius * 0.62, plateGap * 0.92, 20]} />
+        <meshStandardMaterial color={CHROME} metalness={0.95} roughness={0.12} wireframe={wireframe} />
       </mesh>
-      <mesh position={[0, radius * 0.43, 0]}>
-        <cylinderGeometry args={[radius * 0.62, radius * 0.62, radius * 0.06, 6]} />
-        <meshStandardMaterial color="#3d3d3d" metalness={0.9} roughness={0.3} wireframe={wireframe} />
+      {[-1, 1].map((side) => (
+        <mesh key={side} position={[0, side * plateGap * 0.5, 0]} castShadow>
+          <cylinderGeometry args={[radius * 0.95, radius * 0.95, radius * 0.32, 20]} />
+          <meshStandardMaterial color={CHROME_SHADOW} metalness={0.9} roughness={0.2} wireframe={wireframe} />
+        </mesh>
+      ))}
+      {/* Flex-sensor chip -- a small dark module on one cheek plate. */}
+      <mesh position={[radius * 0.55, plateGap * 0.5 + radius * 0.16, 0]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+        <boxGeometry args={[radius * 0.5, radius * 0.9, radius * 0.14]} />
+        <meshStandardMaterial color={SENSOR_DARK} metalness={0.3} roughness={0.6} wireframe={wireframe} />
       </mesh>
     </group>
   );
 }
 
-/** A short, wide mounting collar -- where a finger link bolts to the palm or to
- * the previous phalanx, real assemblies step out to a wider ring rather than one
- * link's cylinder meeting another's at a bare point. Two real hex screws sit on
- * its face, opposite the hinge axis, matching how a real knuckle is fastened. */
-function MountCollar({ radius, wireframe }: { radius: number; wireframe: boolean }) {
+/** A matte black knuckle housing at the base of each finger -- fixed to the
+ * palm, doesn't rotate with the finger, matching how the real actuator housing
+ * is molded into the palm shell and only the finger itself pivots. */
+function KnuckleHousing({ radius, wireframe }: { radius: number; wireframe: boolean }) {
   return (
-    <group>
-      <mesh castShadow receiveShadow>
-        <cylinderGeometry args={[radius, radius * 1.06, radius * 0.9, 16]} />
-        <meshStandardMaterial color="#1c1a17" emissive="#2a2520" emissiveIntensity={0.15} metalness={0.85} roughness={0.3} wireframe={wireframe} />
-      </mesh>
-      <group position={[radius * 0.55, 0, radius * 0.55]}>
-        <ScrewHead radius={radius * 0.3} axis="y" wireframe={wireframe} />
-      </group>
-      <group position={[-radius * 0.55, 0, -radius * 0.55]}>
-        <ScrewHead radius={radius * 0.3} axis="y" wireframe={wireframe} />
-      </group>
-    </group>
+    <mesh castShadow receiveShadow>
+      <cylinderGeometry args={[radius, radius * 1.08, radius * 0.85, 20]} />
+      <meshStandardMaterial color={BODY_BLACK} emissive={BODY_BLACK} emissiveIntensity={0.6} metalness={0.2} roughness={0.55} wireframe={wireframe} />
+    </mesh>
   );
 }
 
-function JointBall({ radius, wireframe }: { radius: number; wireframe: boolean }) {
-  return (
-    <group>
-      <mesh castShadow>
-        <sphereGeometry args={[radius, 20, 20]} />
-        <meshStandardMaterial color="#161616" emissive="#a3120a" emissiveIntensity={0.35} metalness={0.9} roughness={0.25} wireframe={wireframe} />
-      </mesh>
-      {/* Real hinge pin heads -- the axle a real knuckle actually rotates on,
-          visible on both sides along the bend axis, not just a bare sphere. */}
-      <group position={[radius * 0.92, 0, 0]}>
-        <ScrewHead radius={radius * 0.55} axis="x" wireframe={wireframe} />
-      </group>
-      <group position={[-radius * 0.92, 0, 0]}>
-        <ScrewHead radius={radius * 0.55} axis="x" wireframe={wireframe} />
-      </group>
-    </group>
-  );
-}
-
+/** A finger phalanx -- matte black rubber-like body with a few thin darker rib
+ * rings, matching the real hand's ribbed/pleated finger cladding instead of a
+ * bare smooth cylinder. */
 function Segment({
   length,
   radius,
-  color,
-  emissive,
   wireframe,
 }: {
   length: number;
   radius: number;
-  color: string;
-  emissive: string;
   wireframe: boolean;
 }) {
+  const ribCount = 3;
   return (
-    <mesh position={[0, length / 2, 0]} castShadow receiveShadow>
-      <cylinderGeometry args={[radius * 0.82, radius, length, 14]} />
-      <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.28} metalness={0.85} roughness={0.3} wireframe={wireframe} />
-    </mesh>
+    <group>
+      <mesh position={[0, length / 2, 0]} castShadow receiveShadow>
+        <cylinderGeometry args={[radius * 0.86, radius, length, 16]} />
+        <meshStandardMaterial color={BODY_BLACK} emissive={BODY_BLACK} emissiveIntensity={0.6} metalness={0.15} roughness={0.6} wireframe={wireframe} />
+      </mesh>
+      {Array.from({ length: ribCount }).map((_, i) => {
+        const t = (i + 1) / (ribCount + 1);
+        const y = length * t;
+        const r = radius * (1 - t) + radius * 0.86 * t;
+        return (
+          <mesh key={i} position={[0, y, 0]} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[r * 0.98, r * 0.1, 8, 20]} />
+            <meshStandardMaterial color={BODY_RIB} emissive={BODY_RIB} emissiveIntensity={0.5} metalness={0.1} roughness={0.7} wireframe={wireframe} />
+          </mesh>
+        );
+      })}
+    </group>
   );
 }
 
@@ -148,24 +145,21 @@ function Finger({
 }) {
   const len1 = linkLengthM * 0.55;
   const len2 = linkLengthM * 0.45;
-  const radius = isThumb ? 0.008 : 0.0065;
+  const radius = isThumb ? 0.0085 : 0.007;
   const theta1 = isThumb ? bend * 1.1 : bend * 1.25;
   const theta2 = theta1 * 1.4;
 
   return (
     <group position={[baseX, 0.015, 0.07]} rotation={isThumb ? [0, thumbYaw, 0] : [0, 0, 0]}>
-      {/* Base knuckle housing -- fixed to the palm, doesn't rotate with the
-          finger, matching how a real actuator housing is bolted to the casing
-          and only its output shaft (the finger itself) turns. */}
-      <MountCollar radius={radius * 1.35} wireframe={wireframe} />
+      <KnuckleHousing radius={radius * 1.3} wireframe={wireframe} />
       <group rotation={[-theta1, 0, 0]}>
-        <Segment length={len1} radius={radius} color="#ffb300" emissive="#ffb300" wireframe={wireframe} />
+        <Segment length={len1} radius={radius} wireframe={wireframe} />
         <group position={[0, len1, 0]}>
-          <JointBall radius={radius * 1.3} wireframe={wireframe} />
+          <ForkJoint radius={radius * 1.05} wireframe={wireframe} />
           <group rotation={[-(theta2 - theta1), 0, 0]}>
-            <Segment length={len2} radius={radius * 0.82} color="#d6291c" emissive="#d6291c" wireframe={wireframe} />
+            <Segment length={len2} radius={radius * 0.8} wireframe={wireframe} />
             <group position={[0, len2, 0]}>
-              <JointBall radius={radius} wireframe={wireframe} />
+              <ForkJoint radius={radius * 0.68} wireframe={wireframe} />
             </group>
           </group>
         </group>
@@ -180,7 +174,10 @@ function Finger({
  * real `RobotSpec.links` fetched over `/api/robots/inspire_hand/model` — the
  * same published data as the hand's kinematics elsewhere in the codebase —
  * and every finger's bend is driven by the real per-actuator positions the
- * backend `InspireHandSimulator` returns, not hand-typed angles.
+ * backend `InspireHandSimulator` returns, not hand-typed angles. Color/material
+ * choices (matte black body, chrome knuckle brackets, white wrist adapter)
+ * follow the manufacturer's own real product photography, not this app's
+ * separate gold/red "Iron Man" palette used for the arm robots.
  */
 export function InspireHandMesh({
   links,
@@ -202,43 +199,53 @@ export function InspireHandMesh({
   const palmLength = linkLength(links, 'palm_base_link', 0.15);
   const palmWidth = palmLength * 0.6;
   const palmDepth = palmLength * 0.27;
+  const palmFrontBack = palmLength * 0.55;
 
   const thumbAbductFraction = bendOf(1, graspState === 'Open' ? 0.15 : 0.75);
   const thumbYaw = (-0.35 + thumbAbductFraction * 0.75) * -1;
 
-  const palmScrewInsetX = palmWidth / 2 - palmWidth * 0.09;
-  const palmScrewInsetZ = (palmLength * 0.55) / 2 - palmLength * 0.07;
+  const wristRadius = palmWidth * 0.32;
+  const wristLength = palmLength * 0.3;
 
   return (
     <group>
-      {/* Palm casing -- a slightly larger lower shell plus a smaller, inset top
-          plate reads as a real chamfered/two-piece housing instead of one bare
-          box, and gives the corner screws a real raised face to sit on. */}
+      {/* Palm shell -- a single smooth black wedge (real hand's palm has no
+          visible screws or seams on its face), very slightly narrower at the
+          bottom to suggest the real tapered profile down to the wrist. */}
       <mesh castShadow receiveShadow>
-        <boxGeometry args={[palmWidth, palmDepth, palmLength * 0.55]} />
-        <meshStandardMaterial color="#211f1b" emissive="#2c2925" emissiveIntensity={0.12} metalness={0.75} roughness={0.4} wireframe={wireframe} />
+        <boxGeometry args={[palmWidth, palmDepth, palmFrontBack]} />
+        <meshStandardMaterial color={BODY_BLACK} emissive={BODY_BLACK} emissiveIntensity={0.6} metalness={0.2} roughness={0.5} wireframe={wireframe} />
       </mesh>
-      <mesh position={[0, palmDepth / 2 - palmDepth * 0.09, 0]} castShadow receiveShadow>
-        <boxGeometry args={[palmWidth * 0.92, palmDepth * 0.2, palmLength * 0.55 * 0.92]} />
-        <meshStandardMaterial color="#332f28" emissive="#3a352c" emissiveIntensity={0.18} metalness={0.8} roughness={0.3} wireframe={wireframe} />
+      <mesh position={[0, -palmDepth * 0.02, -palmFrontBack * 0.02]} castShadow receiveShadow>
+        <boxGeometry args={[palmWidth * 0.94, palmDepth * 0.96, palmFrontBack * 0.9]} />
+        <meshStandardMaterial color={BODY_RIB} emissive={BODY_RIB} emissiveIntensity={0.5} metalness={0.15} roughness={0.55} wireframe={wireframe} />
       </mesh>
-      {/* Four real corner cap screws fastening the top plate to the shell. */}
-      {[
-        [palmScrewInsetX, palmScrewInsetZ],
-        [-palmScrewInsetX, palmScrewInsetZ],
-        [palmScrewInsetX, -palmScrewInsetZ],
-        [-palmScrewInsetX, -palmScrewInsetZ],
-      ].map(([x, z], i) => (
-        <group key={i} position={[x, palmDepth / 2, z]}>
-          <ScrewHead radius={palmWidth * 0.045} axis="y" wireframe={wireframe} />
-        </group>
-      ))}
-      {/* Palm-center repulsor accent */}
-      <mesh position={[0, palmDepth / 2 + 0.001, 0.01]}>
-        <cylinderGeometry args={[0.007, 0.007, 0.004, 20]} />
-        <meshStandardMaterial color="#bff4ff" emissive="#22d3ee" emissiveIntensity={1.6} metalness={0.2} roughness={0.1} wireframe={wireframe} />
+
+      {/* Wrist adapter -- white plastic sleeve with a chrome retaining ring and
+          a small central sensor button, matching the real hand's real
+          arm-mount interface (distinct in both color and material from the
+          black hand body). */}
+      <mesh position={[0, -palmDepth / 2 - wristLength / 2, 0]} castShadow receiveShadow>
+        <cylinderGeometry args={[wristRadius, wristRadius * 1.08, wristLength, 24]} />
+        <meshStandardMaterial color={WRIST_WHITE} metalness={0.15} roughness={0.4} wireframe={wireframe} />
       </mesh>
-      <pointLight position={[0, palmDepth / 2 + 0.02, 0.01]} color="#22d3ee" intensity={0.35} distance={0.15} decay={2} />
+      <mesh position={[0, -palmDepth / 2 - wristLength * 0.86, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[wristRadius * 1.05, wristRadius * 0.08, 10, 32]} />
+        <meshStandardMaterial color={CHROME} metalness={0.9} roughness={0.15} wireframe={wireframe} />
+      </mesh>
+      <mesh position={[0, -palmDepth / 2 - wristLength - 0.001, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[wristRadius * 0.28, 24]} />
+        <meshStandardMaterial color={SENSOR_DARK} metalness={0.3} roughness={0.5} wireframe={wireframe} />
+      </mesh>
+
+      {/* Palm-center repulsor accent -- small and subtle, the one deliberate
+          cross-app cyan signature, not a dominant feature on this otherwise
+          realistic black/white/chrome hand. */}
+      <mesh position={[0, palmDepth / 2 + 0.0008, 0.01]}>
+        <cylinderGeometry args={[0.004, 0.004, 0.003, 16]} />
+        <meshStandardMaterial color="#bff4ff" emissive="#22d3ee" emissiveIntensity={1.4} metalness={0.2} roughness={0.1} wireframe={wireframe} />
+      </mesh>
+      <pointLight position={[0, palmDepth / 2 + 0.006, 0.01]} color="#22d3ee" intensity={0.05} distance={0.03} decay={2} />
 
       {FINGERS.map((f) => (
         <Finger
