@@ -68,8 +68,12 @@ here:
   selection in `compare_robots()` (see `ARCHITECTURE.md`).
 - **A hardened, localhost-only dashboard API** — binds `127.0.0.1` by default, a real
   Origin allow-list (not wildcard CORS), a socket timeout, capped input sizes.
-- **A VSCode/Antigravity-style IDE-shell frontend** with a real three.js digital twin,
-  replacing an earlier canvas-2D sketch.
+- **A pipeline-first Compiler Studio frontend** — real per-pass flow visualization
+  (`/api/compile?explain_passes=1` rendered as a real flow, not a text feed), a real
+  cross-robot RoboIR diff view (`/api/diff`), and a real three.js digital twin.
+  Replaced an earlier VSCode/Antigravity-style IDE shell (Activity Bar/Explorer
+  tree/tab strip/Terminal drawer) that read as a generic file-navigation tool rather
+  than a compiler.
 
 ## Genuinely Still Open
 

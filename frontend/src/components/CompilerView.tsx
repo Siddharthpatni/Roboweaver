@@ -17,6 +17,7 @@ import {
 import { RoboWeaverAPI } from '../lib/api';
 import { RobotProfile, CompiledSkillResult, CompilerDiagnostic } from '../types';
 import { CompilationFailedError } from '../types';
+import { PipelineTraceView } from './PipelineTraceView';
 
 const EXAMPLES = [
   'Pick the red cube and place it into the blue bin',
@@ -197,7 +198,7 @@ export const CompilerView: React.FC = () => {
     setBlockingDiagnostics(null);
     setResult(null);
     try {
-      const data = await RoboWeaverAPI.compile(instruction, robotId);
+      const data = await RoboWeaverAPI.compile(instruction, robotId, true);
       setResult(data);
     } catch (e) {
       if (e instanceof CompilationFailedError) {
@@ -353,6 +354,8 @@ export const CompilerView: React.FC = () => {
               </div>
               <span className="font-data text-[11.5px] text-slate-500">{result.ir.skill.id}</span>
             </div>
+
+            <PipelineTraceView pipeline={result.pipeline} skillPipeline={result.skill_pipeline} />
 
             {result.diagnostics.length > 0 && (
               <div className="app-card p-5 space-y-3">

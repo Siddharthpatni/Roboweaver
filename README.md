@@ -123,8 +123,9 @@ multi-objective cost model that the knowledge graph now feeds candidates into; a
 safety kernel and bounded formal verification; RoboBench (a real compile-pipeline
 benchmark); a real, generalized motion planner reaching all 17 NL-routable skill
 categories; a real, registry-ingested knowledge graph with Obsidian export; a hardened,
-localhost-only dashboard API; a VSCode-style IDE-shell frontend with a real three.js
-digital twin.
+localhost-only dashboard API; a pipeline-first Compiler Studio frontend — real per-pass
+flow visualization, a real cross-robot RoboIR diff view, and a real three.js digital
+twin.
 
 Full list with file citations, plus what's genuinely still open and why (perception,
 RoboIR-as-computational-graph, motion planning as a real pass, more genuine

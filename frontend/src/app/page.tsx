@@ -3,36 +3,30 @@
 import React, { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { TabsProvider, useTabs } from '../components/ide/TabsContext';
-import { ActivityBar } from '../components/ide/ActivityBar';
-import { ExplorerPanel } from '../components/ide/ExplorerPanel';
-import { TabStrip } from '../components/ide/TabStrip';
-import { TerminalPanel } from '../components/ide/TerminalPanel';
-import { StatusBar } from '../components/ide/StatusBar';
+import { TopNav } from '../components/nav/TopNav';
 import { RoboWeaverAPI } from '../lib/api';
-import { TabType, RobotProfile, NexusPackage, DiscoveredRobot, VersionInfo } from '../types';
+import { ViewType, RobotProfile, NexusPackage, DiscoveredRobot, VersionInfo } from '../types';
 import {
   Wand2,
   Code2,
   Database,
   Share2,
   Boxes,
-  Cpu,
   Radar,
+  Gauge,
   ArrowUpRight,
   AlertTriangle,
   Info,
 } from 'lucide-react';
 
-// Every tab body is loaded on demand rather than bundled into the initial
+// Every view body is loaded on demand rather than bundled into the initial
 // page. LiveSimulationView alone pulls in three.js + @react-three/fiber +
 // @react-three/drei -- a ~1MB chunk -- via DigitalTwinViewport/Robot3DModel.
-// Before this, that shipped to every visitor on first paint even if they
-// never opened Digital Twin. `ssr: false` on all of them because every view
-// fetches its own data client-side (RoboWeaverAPI) and renders nothing
-// meaningful without a browser; the shared loading fallback keeps the tab
-// switch from looking broken while the chunk streams in.
-const tabLoading = () => (
+// `ssr: false` on all of them because every view fetches its own data
+// client-side (RoboWeaverAPI) and renders nothing meaningful without a
+// browser; the shared loading fallback keeps navigation from looking broken
+// while the chunk streams in.
+const viewLoading = () => (
   <div className="h-full flex items-center justify-center">
     <div className="flex items-center gap-2.5 text-slate-500 text-[13px]">
       <div className="w-4 h-4 rounded-full border-2 border-cyan-400/30 border-t-cyan-400 animate-spin" />
@@ -42,52 +36,48 @@ const tabLoading = () => (
 );
 
 const CompilerView = dynamic(() => import('../components/CompilerView').then((m) => m.CompilerView), {
-  ssr: false, loading: tabLoading,
+  ssr: false, loading: viewLoading,
+});
+const CompareView = dynamic(() => import('../components/CompareView').then((m) => m.CompareView), {
+  ssr: false, loading: viewLoading,
+});
+const BenchmarkView = dynamic(() => import('../components/BenchmarkView').then((m) => m.BenchmarkView), {
+  ssr: false, loading: viewLoading,
 });
 const WorkcellBuilderView = dynamic(
   () => import('../components/WorkcellBuilderView').then((m) => m.WorkcellBuilderView),
-  { ssr: false, loading: tabLoading }
+  { ssr: false, loading: viewLoading }
 );
 const KnowledgeNexusView = dynamic(
   () => import('../components/KnowledgeNexusView').then((m) => m.KnowledgeNexusView),
-  { ssr: false, loading: tabLoading }
+  { ssr: false, loading: viewLoading }
 );
 const KnowledgeGraphView = dynamic(
   () => import('../components/KnowledgeGraphView').then((m) => m.KnowledgeGraphView),
-  { ssr: false, loading: tabLoading }
+  { ssr: false, loading: viewLoading }
 );
 const FleetRegistryView = dynamic(
   () => import('../components/FleetRegistryView').then((m) => m.FleetRegistryView),
-  { ssr: false, loading: tabLoading }
+  { ssr: false, loading: viewLoading }
 );
 // The heaviest one: three.js + react-three-fiber + drei live behind this import.
 const LiveSimulationView = dynamic(
   () => import('../components/LiveSimulationView').then((m) => m.LiveSimulationView),
-  { ssr: false, loading: tabLoading }
+  { ssr: false, loading: viewLoading }
 );
 const RobotConnectView = dynamic(
   () => import('../components/RobotConnectView').then((m) => m.RobotConnectView),
-  { ssr: false, loading: tabLoading }
+  { ssr: false, loading: viewLoading }
 );
 
 export default function Home() {
-  return (
-    <TabsProvider initialTab="dashboard">
-      <Workbench />
-    </TabsProvider>
-  );
-}
-
-function Workbench() {
-  const { activeTab, openTab } = useTabs();
+  const [activeView, setActiveView] = useState<ViewType>('overview');
   const [apiOnline, setApiOnline] = useState(false);
   const [robots, setRobots] = useState<RobotProfile[]>([]);
   const [packages, setPackages] = useState<NexusPackage[]>([]);
   const [discovered, setDiscovered] = useState<DiscoveredRobot[]>([]);
   const [version, setVersion] = useState<VersionInfo | null>(null);
   const [graphNodeCount, setGraphNodeCount] = useState(0);
-  const [explorerOpen, setExplorerOpen] = useState(true);
-  const [terminalRobot, setTerminalRobot] = useState('franka_panda');
 
   useEffect(() => {
     RoboWeaverAPI.robots()
@@ -101,16 +91,14 @@ function Workbench() {
       .then(setPackages)
       .catch(() => {});
 
-    // One passive scan on load so the sidebar badge and the dashboard card
-    // reflect what is actually reachable. RobotConnectView re-scans on demand.
+    // One passive scan on load so the overview KPI reflects what is actually
+    // reachable. RobotConnectView re-scans on demand.
     RoboWeaverAPI.discover()
       .then((res) => setDiscovered(res.discovered))
       .catch(() => setDiscovered([]));
 
-    // Real version/uptime/self-heal status straight from the running
-    // process -- the sidebar previously hardcoded "v2.0.0", which didn't even
-    // match the real package version (0.1.0). null while unknown, never a
-    // fabricated placeholder.
+    // Real version/uptime/self-heal status straight from the running process --
+    // null while unknown, never a fabricated placeholder.
     RoboWeaverAPI.version()
       .then(setVersion)
       .catch(() => setVersion(null));
@@ -122,29 +110,21 @@ function Workbench() {
 
   return (
     <div className="flex flex-col h-screen w-screen bg-app-surface text-slate-100 overflow-hidden">
-      <div className="flex flex-1 min-h-0">
-        <ActivityBar
-          explorerOpen={explorerOpen}
-          onToggleExplorer={() => setExplorerOpen((o) => !o)}
-          apiOnline={apiOnline}
-        />
+      <TopNav active={activeView} onNavigate={setActiveView} apiOnline={apiOnline} />
 
-        {explorerOpen && <ExplorerPanel robots={robots} packages={packages} discovered={discovered} />}
+      <main className="flex-1 min-h-0 overflow-hidden relative">
+        <ErrorBoundary resetKey={activeView}>
+          {activeView === 'compile' && <CompilerView />}
+          {activeView === 'compare' && <CompareView />}
+          {activeView === 'workcell' && <WorkcellBuilderView />}
+          {activeView === 'packages' && <KnowledgeNexusView />}
+          {activeView === 'graph' && <KnowledgeGraphView />}
+          {activeView === 'robots' && <FleetRegistryView />}
+          {activeView === 'connect' && <RobotConnectView />}
+          {activeView === 'twin' && <LiveSimulationView />}
+          {activeView === 'benchmark' && <BenchmarkView />}
 
-        <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
-          <TabStrip />
-
-          <main className="flex-1 min-h-0 overflow-hidden relative">
-        <ErrorBoundary resetKey={activeTab}>
-          {activeTab === 'compiler' && <CompilerView />}
-          {activeTab === 'builder' && <WorkcellBuilderView />}
-          {activeTab === 'nexus' && <KnowledgeNexusView />}
-          {activeTab === 'graph' && <KnowledgeGraphView />}
-          {activeTab === 'fleet' && <FleetRegistryView />}
-          {activeTab === 'connect' && <RobotConnectView />}
-          {activeTab === 'simulation' && <LiveSimulationView />}
-
-          {activeTab === 'dashboard' && (
+          {activeView === 'overview' && (
             <div className="h-full overflow-y-auto">
               <div className="max-w-6xl mx-auto p-8 space-y-8">
                 {/* Hero */}
@@ -170,17 +150,17 @@ function Workbench() {
                   </div>
                   <div className="flex items-center gap-2.5 shrink-0 relative">
                     <button
-                      onClick={() => openTab('compiler')}
+                      onClick={() => setActiveView('compile')}
                       className="flex items-center gap-2 px-4 py-2.5 btn-neon text-[13px]"
                     >
                       <Code2 className="w-4 h-4" />
                       Compile a skill
                     </button>
                     <button
-                      onClick={() => openTab('builder')}
+                      onClick={() => setActiveView('compare')}
                       className="px-4 py-2.5 rounded-lg border border-cyan-400/15 hover:border-cyan-400/35 hover:bg-cyan-500/[0.06] text-slate-300 hover:text-cyan-200 text-[13px] font-medium transition-all"
                     >
-                      Build a workcell
+                      Compare robots
                     </button>
                   </div>
                 </div>
@@ -199,61 +179,58 @@ function Workbench() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4 stagger-children">
                   {[
                     {
-                      tab: 'compiler' as TabType,
+                      view: 'compile' as ViewType,
                       label: 'RoboIR compiler',
-                      // Reflects the real health check (apiOnline, from the
-                      // /api/robots probe on mount) instead of a permanent
-                      // "Ready" that stayed true even with the backend down.
                       value: apiOnline ? 'Ready' : 'Offline',
                       icon: Code2,
                       tint: apiOnline ? 'text-cyan-400' : 'text-rose-400',
                     },
                     {
-                      tab: 'builder' as TabType,
+                      view: 'workcell' as ViewType,
                       label: 'Workcell builder',
                       value: apiOnline ? 'Ready' : 'Offline',
                       icon: Wand2,
                       tint: apiOnline ? 'text-cyan-400' : 'text-rose-400',
                     },
                     {
-                      tab: 'nexus' as TabType,
+                      view: 'packages' as ViewType,
                       label: 'Indexed ROS 2 packages',
                       value: String(packages.length),
                       icon: Database,
                       tint: 'text-cyan-400',
                     },
                     {
-                      tab: 'graph' as TabType,
+                      view: 'graph' as ViewType,
                       label: 'Knowledge graph nodes',
                       value: String(graphNodeCount),
                       icon: Share2,
                       tint: 'text-cyan-400',
                     },
                     {
-                      tab: 'fleet' as TabType,
+                      view: 'robots' as ViewType,
                       label: 'Registered robots',
                       value: String(robots.length),
                       icon: Boxes,
                       tint: 'text-rose-400',
                     },
                     {
-                      tab: 'connect' as TabType,
+                      view: 'connect' as ViewType,
                       label: 'Reachable endpoints',
                       value: String(discovered.length),
                       icon: Radar,
                       tint: 'text-violet-400',
                     },
                     {
-                      tab: 'simulation' as TabType,
-                      label: 'Digital twin',
+                      view: 'benchmark' as ViewType,
+                      label: 'Compile-time benchmark',
                       value: apiOnline ? 'Ready' : 'Offline',
-                      icon: Cpu,
+                      icon: Gauge,
                       tint: apiOnline ? 'text-violet-400' : 'text-rose-400',
                     },
                   ].map((kpi) => (
                     <button
                       key={kpi.label}
-                      onClick={() => openTab(kpi.tab)}
+                      onClick={() => setActiveView(kpi.view)}
                       className="app-card p-5 text-left group hover:-translate-y-0.5 transition-transform duration-200"
                     >
                       <div className="flex items-center justify-between mb-3">
@@ -271,7 +248,7 @@ function Workbench() {
                     <div className="flex items-center justify-between">
                       <h3 className="text-[13.5px] font-semibold text-slate-200">Fleet registry</h3>
                       <button
-                        onClick={() => openTab('fleet')}
+                        onClick={() => setActiveView('robots')}
                         className="flex items-center gap-1 text-[12px] font-medium text-emerald-400 hover:text-emerald-300 transition-colors"
                       >
                         Open <ArrowUpRight className="w-3.5 h-3.5" />
@@ -282,7 +259,7 @@ function Workbench() {
                       {robots.slice(0, 4).map((r) => (
                         <div
                           key={r.id}
-                          onClick={() => openTab('fleet')}
+                          onClick={() => setActiveView('robots')}
                           className="app-well rounded-lg px-3.5 py-2.5 cursor-pointer hover:border-white/[0.12] transition-colors flex items-center justify-between gap-3"
                         >
                           <div className="min-w-0">
@@ -307,7 +284,7 @@ function Workbench() {
                     <div className="flex items-center justify-between">
                       <h3 className="text-[13.5px] font-semibold text-slate-200">Indexed packages</h3>
                       <button
-                        onClick={() => openTab('nexus')}
+                        onClick={() => setActiveView('packages')}
                         className="flex items-center gap-1 text-[12px] font-medium text-emerald-400 hover:text-emerald-300 transition-colors"
                       >
                         Open <ArrowUpRight className="w-3.5 h-3.5" />
@@ -318,7 +295,7 @@ function Workbench() {
                       {packages.slice(0, 4).map((pkg) => (
                         <div
                           key={pkg.id}
-                          onClick={() => openTab('nexus')}
+                          onClick={() => setActiveView('packages')}
                           className="app-well rounded-lg px-3.5 py-2.5 cursor-pointer hover:border-white/[0.12] transition-colors"
                         >
                           <div className="flex items-center justify-between gap-2">
@@ -340,7 +317,7 @@ function Workbench() {
                     <div className="pt-3 border-t border-white/[0.06] flex items-center justify-between gap-3">
                       <span className="text-[12px] text-slate-500">Test grasp kinematics before deploy?</span>
                       <button
-                        onClick={() => openTab('simulation')}
+                        onClick={() => setActiveView('twin')}
                         className="shrink-0 px-3 py-1.5 rounded-lg bg-violet-500/10 hover:bg-violet-500/15 text-violet-300 text-[12px] font-medium border border-violet-500/20 transition-colors"
                       >
                         Digital twin →
@@ -357,7 +334,7 @@ function Workbench() {
                       <h3 className="text-[13.5px] font-semibold text-slate-200">Robot connections</h3>
                     </div>
                     <button
-                      onClick={() => openTab('connect')}
+                      onClick={() => setActiveView('connect')}
                       className="flex items-center gap-1 text-[12px] font-medium text-cyan-400 hover:text-cyan-300 transition-colors"
                     >
                       Open <ArrowUpRight className="w-3.5 h-3.5" />
@@ -369,7 +346,7 @@ function Workbench() {
                       {discovered.slice(0, 4).map((d) => (
                         <div
                           key={`${d.host}:${d.port}`}
-                          onClick={() => openTab('connect')}
+                          onClick={() => setActiveView('connect')}
                           className="app-well rounded-lg px-3.5 py-2.5 cursor-pointer hover:border-cyan-400/25 transition-colors flex items-center justify-between gap-3"
                         >
                           <div className="min-w-0">
@@ -394,37 +371,7 @@ function Workbench() {
             </div>
           )}
 
-          {activeTab === 'activity' && (
-            <div className="h-full overflow-y-auto">
-              <div className="max-w-3xl mx-auto p-8 space-y-5">
-                <div>
-                  <span className="kicker">Agent Activity</span>
-                  <h2 className="text-[19px] font-semibold text-white mt-1">What the pipeline actually does</h2>
-                  <p className="text-[13px] text-slate-400 mt-1.5 leading-relaxed">
-                    RoboWeaver keeps no synthetic activity log. This is the real compile pipeline that runs
-                    whenever you submit a prompt from the Workcell Builder.
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  {[
-                    ['SystemPromptParser', 'Extracts the robot fleet and task clauses from your prompt.'],
-                    ['SkillCompiler', 'Resolves each instruction into an intent, task graph, and N-DOF IK solution per target robot.'],
-                    ['MultiRobotChoreographer', 'Topologically sorts steps into parallel and sequential DAG execution tiers.'],
-                    ['Groot2 BehaviorTree + ROS 2 codegen', 'Synthesizes a composite BehaviorTree XML and a multi-namespace ROS 2 package.'],
-                  ].map(([name, desc], i) => (
-                    <div key={name} className="app-card px-4 py-3 flex items-start gap-3">
-                      <span className="text-[11px] font-data text-slate-600 shrink-0 mt-0.5">{i + 1}</span>
-                      <p className="text-[13px] text-slate-300 leading-relaxed">
-                        <span className="text-emerald-400 font-medium">{name}</span> — {desc}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'settings' && (
+          {activeView === 'settings' && (
             <div className="h-full overflow-y-auto">
               <div className="max-w-2xl mx-auto p-8 space-y-6">
                 <div>
@@ -509,18 +456,7 @@ function Workbench() {
             </div>
           )}
         </ErrorBoundary>
-          </main>
-
-            <TerminalPanel robots={robots} robot={terminalRobot} onRobotChange={setTerminalRobot} />
-          </div>
-        </div>
-
-      <StatusBar
-        apiOnline={apiOnline}
-        robotCount={robots.length}
-        activeRobot={terminalRobot}
-        version={version?.roboweaver_version}
-      />
+      </main>
     </div>
   );
 }

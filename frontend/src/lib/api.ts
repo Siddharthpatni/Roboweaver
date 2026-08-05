@@ -20,6 +20,7 @@ import {
   BenchmarkReportResult,
   KnowledgeGraphResult,
   GraphPathResult,
+  IRDiffResult,
 } from '../types';
 
 const API_BASE = process.env.NEXT_PUBLIC_ROBOWEAVER_API ?? 'http://localhost:8080';
@@ -148,6 +149,22 @@ export const RoboWeaverAPI = {
       throw new Error(`RoboWeaver API /api/graph/export-obsidian responded ${res.status}`);
     }
     return res.blob();
+  },
+  /** Real cross-robot RoboIR diff (ir/diff.py::diff_ir()) -- the same comparison
+   * `roboweaver diff INSTRUCTION --robot X --robot2 Y` produces on the CLI. Throws
+   * with the real diagnostics when either robot genuinely can't compile the
+   * instruction, rather than returning a fabricated/empty diff. */
+  diff: async (instruction: string, robot: string, robot2: string): Promise<IRDiffResult> => {
+    const path = `/api/diff?instruction=${encodeURIComponent(instruction)}&robot=${encodeURIComponent(robot)}&robot2=${encodeURIComponent(robot2)}`;
+    const res = await fetchWithTimeout(path, TIMEOUT_FAST_MS);
+    const body = await res.json();
+    if (!res.ok) {
+      if (body && body.error === 'compilation_failed') {
+        throw new CompilationFailedError(body.diagnostics);
+      }
+      throw new Error(`RoboWeaver API ${path} responded ${res.status}`);
+    }
+    return body as IRDiffResult;
   },
   simulateGestures: () => getJSON<string[]>('/api/simulate/gestures'),
   simulateObjects: () => getJSON<SimObjectProfile[]>('/api/simulate/objects'),

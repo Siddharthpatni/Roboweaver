@@ -220,16 +220,35 @@ That's the intended shape: the graph informs, it doesn't override verification.
 process restart) correctly reconstructs the full compiled skill via
 `SkillPackage.from_dict()` — verified in `tests/test_ir.py`.
 
-## Frontend — IDE Shell, Not a Nav Menu
+## Frontend — Compiler Studio, Not an IDE
 
-Restructured around a VSCode/Antigravity-style shell: an icon-only Activity Bar, a
-real-data Explorer tree (robots/skills/knowledge/discovered endpoints, all fetched live,
-none hardcoded), a closable multi-tab strip, a Terminal panel, and a Status Bar.
+An earlier revision of this frontend was a VSCode/Antigravity-style IDE shell —
+Activity Bar, Explorer file-tree, multi-tab strip, Terminal drawer. External review
+feedback argued that shape undermines the project's own identity: a robotics
+*compiler* presented as a generic file-navigation tool. Rebuilt around a pipeline-first
+`TopNav` instead: **Compile → Compare → Workcell → Benchmark** render as a connected
+sequence (real pipeline-adjacent stages, `components/nav/TopNav.tsx`), with
+Robots/Digital Twin/Knowledge Graph/Packages/Connect/Settings as a plain destination
+list — a single active view at a time (`useState`, no tab-open state, no new state
+library). The cyan/violet/rose visual identity carried over unchanged; what changed is
+structure, not palette.
 
-The **Terminal panel** is a live structured-output viewer — real compile-trace,
-compare, and benchmark results rendered as a severity-colored feed from the dashboard
-API — explicitly *not* a PTY or an interactive shell; there is no arbitrary command
-input.
+**`components/PipelineTraceView.tsx`** is the new centerpiece on the Compile page:
+`/api/compile?explain_passes=1`'s real per-pass `timing_s`/`modified`/`skipped`/
+`diagnostics`/`metrics` (already real since Phase 2, previously only shown as a flat
+Terminal-panel text feed) rendered as a real horizontal flow — timing bars, real
+metric chips (e.g. `WaypointDecimationPass`'s real `waypoints_before=204,
+waypoints_after=44, pct_reduction=78.43`), connected by arrows.
+
+**`components/RoboIRDiffView.tsx`** + a new `GET /api/diff?instruction=&robot=&robot2=`
+route back the Compare page's real cross-robot RoboIR diff — the godbolt.org-style
+"one instruction, compare targets" moment. Deliberately *not* a per-pass diff within a
+single compile: `ir/diff.py::diff_trace()`'s own docstring says that comparison shows
+"no differences" for almost every real compile today, since the three registered
+RoboIR passes are diagnostics-only. The cross-robot comparison
+(`ir/diff.py::diff_ir()`, the same real function `roboweaver diff --robot2` already
+used) is the substantive one — compiling the same instruction for two robots produces
+real `field_changes` (`execution.dof`, `constraints.payload_kg`, ...).
 
 The **Digital Twin view** is real three.js, not a canvas sketch: the Inspire Hand and
 TurtleBot 4 meshes are built from each robot's real published `RobotSpec.links`
@@ -247,4 +266,13 @@ robots) turned out genuinely illegible with every label always on, an empiricall
 UX fix, not a design guess.
 
 Every view fetches its own data client-side from the dashboard API; an offline backend
-is a disclosed state (`Engine offline` in the status bar), never a silently stale UI.
+is a disclosed state (`Engine offline` in the nav bar), never a silently stale UI.
+
+**Honestly out of scope for this pass** (named, not silently dropped): React Flow/
+Cytoscape-based non-linear pipeline visualization (today's pipeline is linear — a
+graph library earns its place once motion-planning/scheduling passes exist);
+Framer Motion transitions; a Monaco editor for instruction/RoboIR editing; ECharts
+benchmark history/dashboards; Zustand/TanStack Query global state (proportionate to
+~11 views, each fetching its own data, not yet a real pain point); an Execution
+Memory timeline; trajectory replay/velocity/acceleration visualization in the Digital
+Twin.

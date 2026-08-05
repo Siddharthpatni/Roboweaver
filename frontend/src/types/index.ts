@@ -1,13 +1,16 @@
-export type TabType =
-  | 'dashboard'
-  | 'compiler'
-  | 'builder'
-  | 'nexus'
+/** Compiler Studio navigation destinations -- pipeline-stage-shaped, not a file
+ * explorer's tab-open model. Exactly one is active at a time. */
+export type ViewType =
+  | 'overview'
+  | 'compile'
+  | 'compare'
+  | 'workcell'
+  | 'robots'
+  | 'twin'
   | 'graph'
-  | 'fleet'
+  | 'packages'
   | 'connect'
-  | 'simulation'
-  | 'activity'
+  | 'benchmark'
   | 'settings';
 
 export interface RobotProfile {
@@ -78,6 +81,24 @@ export interface RoboIR {
   required_capabilities: { perception: string[]; manipulation: string[]; sensing: string[] };
   execution: { robot_id: string; dof: number; planner: string; controller: string };
   verification: { collision_check: boolean; simulation_required: boolean; safety_checks: string[] };
+}
+
+/**
+ * Real cross-robot RoboIR diff -- mirrors `ir/diff.py::IRDiff`. `field_changes`
+ * values are always `[before, after]` pairs. Per-pass diffing (comparing a single
+ * compile's own pipeline trace) is deliberately not exposed this way: the three
+ * registered RoboIR passes are diagnostics-only today, so that comparison would
+ * show "no differences" for almost every real compile -- this type only ever
+ * backs the honest, substantive cross-robot comparison (`GET /api/diff`).
+ */
+export interface IRDiffResult {
+  instruction: string;
+  from_robot: string;
+  to_robot: string;
+  field_changes: Record<string, [unknown, unknown]>;
+  objects_added: RoboIRObject[];
+  objects_removed: RoboIRObject[];
+  objects_changed: { before: RoboIRObject; after: RoboIRObject }[];
 }
 
 export interface CompilerDiagnostic {

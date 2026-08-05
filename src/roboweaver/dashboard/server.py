@@ -426,6 +426,60 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                     res["skill_pipeline"] = result.skill_pipeline.to_dict()
             self._send_json(res)
 
+        elif path == "/api/diff":
+            # Real cross-robot RoboIR diff -- mirrors cli/main.py::cmd_diff()'s
+            # --robot2 path exactly (same compile calls, same ir/diff.py::diff_ir()).
+            # Per that function's own docstring, per-pass diffing (no robot2) shows
+            # "no differences" for almost every real compile today, since the three
+            # registered RoboIR passes are diagnostics-only -- this endpoint
+            # deliberately only exposes the honest, substantive comparison.
+            from roboweaver.ir.diff import diff_ir
+
+            instruction = query.get("instruction", ["Pick up the red cube"])[0]
+            if self._reject_if_too_long(instruction, "instruction"):
+                return
+            robot_id = query.get("robot", ["franka_panda"])[0]
+            robot2_id = query.get("robot2", [""])[0]
+            if not robot2_id:
+                self._send_json({"error": "'robot2' query param is required"}, status=400)
+                return
+
+            compiler = SkillCompiler(target_robot=robot_id)
+            try:
+                result = compiler.compile_with_diagnostics(instruction, verbose=False)
+            except SkillCompilationError as exc:
+                self._send_json(
+                    {"error": "compilation_failed", "robot": robot_id,
+                     "diagnostics": [d.to_dict() for d in exc.diagnostics]},
+                    status=400,
+                )
+                return
+
+            compiler2 = SkillCompiler(target_robot=robot2_id)
+            try:
+                result2 = compiler2.compile_with_diagnostics(instruction, verbose=False)
+            except SkillCompilationError as exc:
+                self._send_json(
+                    {"error": "compilation_failed", "robot": robot2_id,
+                     "diagnostics": [d.to_dict() for d in exc.diagnostics]},
+                    status=400,
+                )
+                return
+
+            diff = diff_ir(result.ir, result2.ir)
+            self._send_json({
+                "instruction": instruction,
+                "from_robot": robot_id,
+                "to_robot": robot2_id,
+                "field_changes": {k: list(v) for k, v in diff.field_changes.items()},
+                "objects_added": [o.to_dict() for o in diff.objects_added],
+                "objects_removed": [o.to_dict() for o in diff.objects_removed],
+                "objects_changed": [
+                    {"before": old.to_dict(), "after": new.to_dict()}
+                    for old, new in diff.objects_changed
+                ],
+            })
+
         elif path == "/api/cost":
             from roboweaver.optimize.cost_model import compute_cost
 

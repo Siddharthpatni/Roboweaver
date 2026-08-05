@@ -701,3 +701,72 @@ larger, separate redesign, and the UI already honestly labels it
 **Tests added:** `tests/test_dashboard_hardening.py` (8),
 `tests/test_graph_driven_compilation.py` (4), plus 2 new cases in
 `tests/test_cost_model.py` — 268/268 passing (`python -m pytest tests/ -q`).
+
+## Compiler Studio: frontend rebuilt around the pipeline, not files — **Done** (2026-08-05)
+
+External review feedback (independent of the graph-driven-compilation ask above)
+argued the IDE-shell frontend undermines RoboWeaver's own identity — a robotics
+*compiler* presented as a VSCode-style file-navigation tool (Activity Bar, Explorer
+tree, multi-tab strip, Terminal drawer). Full detail in
+[`ARCHITECTURE.md`](ARCHITECTURE.md)'s "Frontend — Compiler Studio, Not an IDE"
+section; summarized here for the change log.
+
+**Deleted:** `frontend/src/components/ide/` in full (`ActivityBar.tsx`,
+`ExplorerPanel.tsx`, `StatusBar.tsx`, `TabStrip.tsx`, `TabsContext.tsx`,
+`tabMeta.ts`, `TerminalPanel.tsx`) — the shell chrome and its multi-tab-open state
+model.
+
+**New navigation:** `components/nav/TopNav.tsx` — a horizontal bar with
+Compile/Compare/Workcell/Benchmark rendered as a connected pipeline sequence, plus
+Overview/Robots/Digital Twin/Knowledge Graph/Packages/Connect/Settings as a plain
+destination list. Single active view (`useState`), no new state-management
+dependency — proportionate to 11 views, each already fetching its own data.
+
+**Two genuinely new real features**, grounded by reading `ir/diff.py` directly before
+building anything (its own docstring, and `cli/main.py::cmd_diff()`'s, both already
+say per-pass diffing shows "no differences" for almost every real compile today,
+since the three registered RoboIR passes are diagnostics-only — building the diff
+viewer around that would have been honest but empty):
+
+1. **`components/PipelineTraceView.tsx`** — the compile pipeline made visible.
+   `/api/compile?explain_passes=1`'s real per-pass timing/modified/skipped/
+   diagnostics/metrics (real since Phase 2, previously only a Terminal-panel text
+   feed) rendered as a real horizontal flow with timing bars and metric chips.
+   Zero new backend work — presentation only.
+2. **Real cross-robot RoboIR diff.** New `GET /api/diff?instruction=&robot=&robot2=`
+   in `dashboard/server.py`, mirroring `cli/main.py::cmd_diff()`'s `--robot2` path
+   exactly (`ir/diff.py::diff_ir()`), same Origin-check/input-cap hardening as every
+   other route. `components/RoboIRDiffView.tsx` renders real `field_changes`/
+   `objects_added`/`objects_removed` — the godbolt.org-style "one instruction,
+   compare targets" moment, e.g. `franka_panda → ur5e` on "Pick up the red cube"
+   shows a real `execution.dof: 7 → 6`. New `components/CompareView.tsx` composes
+   this with the existing `compare_robots()` ranking (previously only reachable via
+   the deleted Terminal panel) as a first-class page.
+
+**New `components/BenchmarkView.tsx`** — RoboBench as a real sortable table
+(click any column header) instead of Terminal text; no charting dependency added.
+
+**Reused as-is, re-homed not rewritten** (real, tested, no dependency on the old
+shell): `DigitalTwinViewport.tsx`, `robot3d/InspireHandMesh.tsx`,
+`robot3d/TurtleBotMesh.tsx`, `Robot3DModel.tsx`, `FrankaMeshModel.tsx`,
+`KnowledgeGraphView.tsx`, `FleetRegistryView.tsx`, `RobotConnectView.tsx`,
+`WorkcellBuilderView.tsx`, `KnowledgeNexusView.tsx`. `CompilerView.tsx` kept its real
+RoboIR/BT-XML rendering; its diagnostics-list-only view is now preceded by
+`PipelineTraceView` as the page's centerpiece.
+
+**Explicitly deferred, not built this round** (named, not silently dropped): React
+Flow/Cytoscape-based non-linear pipeline visualization (today's pipeline is linear);
+Framer Motion transitions; a Monaco editor for instruction/RoboIR editing; ECharts
+benchmark history; Zustand/TanStack Query global state; an Execution Memory timeline;
+trajectory replay/velocity/acceleration visualization in the Digital Twin.
+
+**Verified live:** `npx tsc --noEmit` and `npm run lint` clean; every nav destination
+driven via Playwright against a real `npm run dev` + `roboweaver dashboard` — a real
+compile showing real pass cards, a real graph-derived compare (including two robots
+that pass the graph's coarse capability gate but genuinely fail to compile,
+correctly shown as `skipped`), a real cross-robot diff, Digital Twin/Knowledge
+Graph/Fleet/Connect all working unchanged in their new home — zero console errors.
+Fresh screenshots and a re-recorded demo GIF against the new UI (`docs/media/`).
+
+**Tests added:** `tests/test_dashboard_diff_route.py` (4, real `/api/diff` against a
+live server) — 272/272 passing (`python -m pytest tests/ -q`).
