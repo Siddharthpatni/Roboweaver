@@ -34,12 +34,72 @@ function linkLength(links: RobotLinkSpec[], name: string, fallback: number): num
   return links.find((l) => l.name === name)?.length ?? fallback;
 }
 
+/** A real hex-head cap screw -- 6-segment cylinder reads as a hex head at a glance,
+ * a slightly darker top face gives it a machined recess instead of a flat disc.
+ * Purely cosmetic (no data behind a screw placement), used to make the casing and
+ * joints read as bolted-together hardware instead of bare primitives. */
+function ScrewHead({
+  radius = 0.0026,
+  axis = 'y',
+  wireframe,
+}: {
+  radius?: number;
+  axis?: 'x' | 'y' | 'z';
+  wireframe: boolean;
+}) {
+  const rotation: [number, number, number] =
+    axis === 'x' ? [0, 0, Math.PI / 2] : axis === 'z' ? [Math.PI / 2, 0, 0] : [0, 0, 0];
+  return (
+    <group rotation={rotation}>
+      <mesh castShadow>
+        <cylinderGeometry args={[radius, radius * 1.05, radius * 0.85, 6]} />
+        <meshStandardMaterial color="#0d0d0d" metalness={0.95} roughness={0.2} wireframe={wireframe} />
+      </mesh>
+      <mesh position={[0, radius * 0.43, 0]}>
+        <cylinderGeometry args={[radius * 0.62, radius * 0.62, radius * 0.06, 6]} />
+        <meshStandardMaterial color="#3d3d3d" metalness={0.9} roughness={0.3} wireframe={wireframe} />
+      </mesh>
+    </group>
+  );
+}
+
+/** A short, wide mounting collar -- where a finger link bolts to the palm or to
+ * the previous phalanx, real assemblies step out to a wider ring rather than one
+ * link's cylinder meeting another's at a bare point. Two real hex screws sit on
+ * its face, opposite the hinge axis, matching how a real knuckle is fastened. */
+function MountCollar({ radius, wireframe }: { radius: number; wireframe: boolean }) {
+  return (
+    <group>
+      <mesh castShadow receiveShadow>
+        <cylinderGeometry args={[radius, radius * 1.06, radius * 0.9, 16]} />
+        <meshStandardMaterial color="#1c1a17" emissive="#2a2520" emissiveIntensity={0.15} metalness={0.85} roughness={0.3} wireframe={wireframe} />
+      </mesh>
+      <group position={[radius * 0.55, 0, radius * 0.55]}>
+        <ScrewHead radius={radius * 0.3} axis="y" wireframe={wireframe} />
+      </group>
+      <group position={[-radius * 0.55, 0, -radius * 0.55]}>
+        <ScrewHead radius={radius * 0.3} axis="y" wireframe={wireframe} />
+      </group>
+    </group>
+  );
+}
+
 function JointBall({ radius, wireframe }: { radius: number; wireframe: boolean }) {
   return (
-    <mesh castShadow>
-      <sphereGeometry args={[radius, 16, 16]} />
-      <meshStandardMaterial color="#161616" emissive="#a3120a" emissiveIntensity={0.35} metalness={0.9} roughness={0.25} wireframe={wireframe} />
-    </mesh>
+    <group>
+      <mesh castShadow>
+        <sphereGeometry args={[radius, 20, 20]} />
+        <meshStandardMaterial color="#161616" emissive="#a3120a" emissiveIntensity={0.35} metalness={0.9} roughness={0.25} wireframe={wireframe} />
+      </mesh>
+      {/* Real hinge pin heads -- the axle a real knuckle actually rotates on,
+          visible on both sides along the bend axis, not just a bare sphere. */}
+      <group position={[radius * 0.92, 0, 0]}>
+        <ScrewHead radius={radius * 0.55} axis="x" wireframe={wireframe} />
+      </group>
+      <group position={[-radius * 0.92, 0, 0]}>
+        <ScrewHead radius={radius * 0.55} axis="x" wireframe={wireframe} />
+      </group>
+    </group>
   );
 }
 
@@ -94,6 +154,10 @@ function Finger({
 
   return (
     <group position={[baseX, 0.015, 0.07]} rotation={isThumb ? [0, thumbYaw, 0] : [0, 0, 0]}>
+      {/* Base knuckle housing -- fixed to the palm, doesn't rotate with the
+          finger, matching how a real actuator housing is bolted to the casing
+          and only its output shaft (the finger itself) turns. */}
+      <MountCollar radius={radius * 1.35} wireframe={wireframe} />
       <group rotation={[-theta1, 0, 0]}>
         <Segment length={len1} radius={radius} color="#ffb300" emissive="#ffb300" wireframe={wireframe} />
         <group position={[0, len1, 0]}>
@@ -142,13 +206,33 @@ export function InspireHandMesh({
   const thumbAbductFraction = bendOf(1, graspState === 'Open' ? 0.15 : 0.75);
   const thumbYaw = (-0.35 + thumbAbductFraction * 0.75) * -1;
 
+  const palmScrewInsetX = palmWidth / 2 - palmWidth * 0.09;
+  const palmScrewInsetZ = (palmLength * 0.55) / 2 - palmLength * 0.07;
+
   return (
     <group>
-      {/* Palm casing */}
+      {/* Palm casing -- a slightly larger lower shell plus a smaller, inset top
+          plate reads as a real chamfered/two-piece housing instead of one bare
+          box, and gives the corner screws a real raised face to sit on. */}
       <mesh castShadow receiveShadow>
         <boxGeometry args={[palmWidth, palmDepth, palmLength * 0.55]} />
-        <meshStandardMaterial color="#2c2925" emissive="#3a352c" emissiveIntensity={0.15} metalness={0.75} roughness={0.35} wireframe={wireframe} />
+        <meshStandardMaterial color="#211f1b" emissive="#2c2925" emissiveIntensity={0.12} metalness={0.75} roughness={0.4} wireframe={wireframe} />
       </mesh>
+      <mesh position={[0, palmDepth / 2 - palmDepth * 0.09, 0]} castShadow receiveShadow>
+        <boxGeometry args={[palmWidth * 0.92, palmDepth * 0.2, palmLength * 0.55 * 0.92]} />
+        <meshStandardMaterial color="#332f28" emissive="#3a352c" emissiveIntensity={0.18} metalness={0.8} roughness={0.3} wireframe={wireframe} />
+      </mesh>
+      {/* Four real corner cap screws fastening the top plate to the shell. */}
+      {[
+        [palmScrewInsetX, palmScrewInsetZ],
+        [-palmScrewInsetX, palmScrewInsetZ],
+        [palmScrewInsetX, -palmScrewInsetZ],
+        [-palmScrewInsetX, -palmScrewInsetZ],
+      ].map(([x, z], i) => (
+        <group key={i} position={[x, palmDepth / 2, z]}>
+          <ScrewHead radius={palmWidth * 0.045} axis="y" wireframe={wireframe} />
+        </group>
+      ))}
       {/* Palm-center repulsor accent */}
       <mesh position={[0, palmDepth / 2 + 0.001, 0.01]}>
         <cylinderGeometry args={[0.007, 0.007, 0.004, 20]} />
