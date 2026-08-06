@@ -2,19 +2,22 @@
 name = "roboweaver"
 version = "0.1.0"
 description = "Compile Robotics Knowledge into Executable Intelligence"
-requires-python = ">=3.10"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10,<3.13"
 dependencies = [
-    "pyserial>=3.5",
+    "pyserial>=3.5,<4",
 ]
 
 [project.optional-dependencies]
 sim = [
-    "mujoco>=3.0",
-    "numpy>=1.24",
-    "imageio[ffmpeg]>=2.31",
+    "mujoco>=3.0,<4",
+    "numpy>=1.24,<3",
+    "imageio[ffmpeg]>=2.31,<3",
 ]
 test = [
-    "pytest>=7.0",
+    "pytest>=7.0,<9",
+    "build>=1.2,<2",
 ]
 
 [project.scripts]
