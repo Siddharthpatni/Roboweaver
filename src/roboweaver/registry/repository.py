@@ -4,6 +4,7 @@ RoboWeaver Skill Repository Engine — indexes, searches, and version-manages sk
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from roboweaver.identifiers import require_safe_identifier
