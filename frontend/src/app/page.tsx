@@ -443,9 +443,10 @@ export default function Home() {
                 )}
 
                 <p className="text-[12.5px] text-slate-500 leading-relaxed">
-                  Override the backend location with the{' '}
+                  Requests use the same-origin server proxy by default, keeping the API token out of browser
+                  JavaScript. For local development only, override the backend location with the{' '}
                   <code className="font-data text-slate-400">NEXT_PUBLIC_ROBOWEAVER_API</code> environment variable
-                  at build time if the dashboard server runs on a different host or port.
+                  at build time.
                 </p>
 
                 <div className="flex items-start gap-3 px-4 py-3.5 rounded-lg bg-white/[0.02] border border-white/[0.06]">

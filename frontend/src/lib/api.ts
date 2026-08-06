@@ -31,7 +31,10 @@ import {
   AIModelMutationResult,
 } from '../types';
 
-const API_BASE = process.env.NEXT_PUBLIC_ROBOWEAVER_API ?? 'http://localhost:8080';
+// Same-origin by default: the Next.js server route attaches the backend token,
+// so it is never compiled into browser JavaScript. Direct API access remains an
+// explicit local-development override only.
+const API_BASE = process.env.NEXT_PUBLIC_ROBOWEAVER_API ?? '/api/roboweaver';
 
 // Every call site below picks one of these explicitly rather than relying on a
 // single default: a LAN sweep or an LLM call legitimately takes far longer than
