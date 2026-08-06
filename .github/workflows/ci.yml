@@ -169,7 +169,7 @@ jobs:
           cleanup() { docker compose down --volumes; }
           trap cleanup EXIT
           docker compose up --detach --build
-          curl --fail --retry 30 --retry-connrefused --retry-delay 1 \
+          curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 1 \
             http://127.0.0.1:3000/api/roboweaver/api/version
           curl --fail http://127.0.0.1:8080/health/ready
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
