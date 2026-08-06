@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { GitCompare, Wand2, Loader2, AlertTriangle, Share2, Trophy } from 'lucide-react';
+import { GitCompare, Wand2, Loader2, AlertTriangle, Share2, Trophy, Brain } from 'lucide-react';
 import { RoboWeaverAPI } from '../lib/api';
 import { RobotProfile, RobotComparisonResult, IRDiffResult, CompilationFailedError } from '../types';
 import { RoboIRDiffView } from './RoboIRDiffView';
@@ -27,6 +27,7 @@ export const CompareView: React.FC = () => {
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
   const [diff, setDiff] = useState<IRDiffResult | null>(null);
+  const [explainDiff, setExplainDiff] = useState(false);
 
   useEffect(() => {
     RoboWeaverAPI.robots()
@@ -67,7 +68,7 @@ export const CompareView: React.FC = () => {
     setDiffError(null);
     setDiff(null);
     try {
-      const data = await RoboWeaverAPI.diff(instruction, diffFrom, diffTo);
+      const data = await RoboWeaverAPI.diff(instruction, diffFrom, diffTo, explainDiff);
       setDiff(data);
     } catch (e) {
       if (e instanceof CompilationFailedError) {
@@ -246,12 +247,37 @@ export const CompareView: React.FC = () => {
                 {diffLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <GitCompare className="w-3.5 h-3.5" />}
                 Diff
               </button>
+              <button
+                type="button"
+                onClick={() => setExplainDiff((v) => !v)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[12px] ${
+                  explainDiff
+                    ? 'border-violet-400/30 bg-violet-500/10 text-violet-300'
+                    : 'border-white/[0.08] bg-white/[0.03] text-slate-500'
+                }`}
+              >
+                <Brain className="w-3.5 h-3.5" /> AI summary {explainDiff ? 'on' : 'off'}
+              </button>
             </div>
             {diffError && <p className="text-[12px] text-rose-300">{diffError}</p>}
           </div>
         )}
 
         {diff && <RoboIRDiffView diff={diff} />}
+        {diff && (diff.explanation !== undefined || diff.explanation_error) && (
+          <div className="app-card p-5 border-violet-400/20 space-y-2">
+            <div className="flex items-center gap-2">
+              <Brain className="w-4 h-4 text-violet-300" />
+              <h3 className="text-[13px] font-semibold text-slate-200">AI cross-robot summary</h3>
+              {diff.explanation_model && <span className="font-data text-[10px] text-slate-600">{diff.explanation_model}</span>}
+            </div>
+            {diff.explanation ? (
+              <p className="text-[12.5px] text-slate-300 whitespace-pre-wrap leading-relaxed">{diff.explanation}</p>
+            ) : (
+              <p className="text-[12px] text-amber-300">{diff.explanation_error ?? 'No AI summary returned.'}</p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
