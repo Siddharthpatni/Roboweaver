@@ -29,6 +29,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
+from urllib.parse import urlparse
 
 
 DEFAULT_HOST = "http://localhost:11434"
@@ -99,6 +100,23 @@ def _http_error_text(exc: urllib.error.HTTPError, model: str) -> str:
     return f"Ollama returned HTTP {exc.code} for model '{model}'{detail}"
 
 
+def _validate_http_origin(value: str) -> str:
+    """Accept an HTTP(S) origin only; urllib also supports unsafe local schemes."""
+    candidate = value.strip().rstrip("/")
+    parsed = urlparse(candidate)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("OLLAMA_HOST must be an HTTP(S) origin with a hostname.")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("OLLAMA_HOST must not contain credentials.")
+    if parsed.path or parsed.params or parsed.query or parsed.fragment:
+        raise ValueError("OLLAMA_HOST must not contain a path, parameters, query, or fragment.")
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("OLLAMA_HOST contains an invalid port.") from exc
+    return candidate
+
+
 @dataclass
 class OllamaResponse:
     """Result of a single Ollama generate/chat call. `text` is None whenever
@@ -149,7 +167,7 @@ class OllamaManager:
     not enforced — tests construct separate instances with different hosts."""
 
     def __init__(self, host: str | None = None, default_model: str | None = None):
-        self.host = (host or _config_value("OLLAMA_HOST", DEFAULT_HOST)).rstrip("/")
+        self.host = _validate_http_origin(host or _config_value("OLLAMA_HOST", DEFAULT_HOST))
         self.default_model = default_model or _config_value("ROBOWEAVER_MODEL_DEFAULT", DEFAULT_MODEL)
         self._latency_history: list[float] = []
         self._runtime_feature_models: dict[str, str] = {}
@@ -162,7 +180,7 @@ class OllamaManager:
     def is_available(self, timeout: float = 3.0) -> bool:
         """Real reachability probe. Returns False on any failure."""
         try:
-            with urllib.request.urlopen(f"{self.host}/api/tags", timeout=timeout) as resp:
+            with urllib.request.urlopen(f"{self.host}/api/tags", timeout=timeout) as resp:  # nosec B310
                 return resp.status == 200
         except (urllib.error.URLError, OSError, TimeoutError):
             return False
@@ -170,7 +188,7 @@ class OllamaManager:
     def get_version(self, timeout: float = 3.0) -> str | None:
         """Return the Ollama server version string, or None if unreachable."""
         try:
-            with urllib.request.urlopen(f"{self.host}/api/version", timeout=timeout) as resp:
+            with urllib.request.urlopen(f"{self.host}/api/version", timeout=timeout) as resp:  # nosec B310
                 body = json.loads(resp.read().decode("utf-8"))
             return body.get("version")
         except (urllib.error.URLError, OSError, TimeoutError, json.JSONDecodeError):
@@ -179,7 +197,7 @@ class OllamaManager:
     def list_models(self, timeout: float = 5.0) -> list[OllamaModel]:
         """Models actually pulled on this Ollama instance — never a hardcoded list."""
         try:
-            with urllib.request.urlopen(f"{self.host}/api/tags", timeout=timeout) as resp:
+            with urllib.request.urlopen(f"{self.host}/api/tags", timeout=timeout) as resp:  # nosec B310
                 body = json.loads(resp.read().decode("utf-8"))
             models = []
             for m in body.get("models", []):
@@ -268,7 +286,7 @@ class OllamaManager:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
                 body = json.loads(resp.read().decode("utf-8"))
             status = body.get("status", "")
             if "success" in status.lower():
@@ -327,7 +345,7 @@ class OllamaManager:
 
         start = time.monotonic()
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
                 envelope = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             return OllamaResponse(
@@ -396,7 +414,7 @@ class OllamaManager:
         pieces: list[str] = []
         token_count: int | None = None
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
                 for raw_line in resp:
                     if not raw_line.strip():
                         continue
@@ -481,7 +499,7 @@ class OllamaManager:
 
         start = time.monotonic()
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
                 envelope = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             return OllamaResponse(

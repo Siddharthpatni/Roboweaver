@@ -48,6 +48,17 @@ class TestOllamaManagerAvailability(unittest.TestCase):
         mgr = OllamaManager(host="http://localhost:1")
         self.assertFalse(mgr.is_available())
 
+    def test_non_http_or_credentialed_hosts_are_rejected(self):
+        for host in (
+            "file:///etc/passwd",
+            "ftp://localhost:11434",
+            "http://user:password@localhost:11434",
+            "http://localhost:11434/unexpected/path",
+            "http://localhost:70000",
+        ):
+            with self.subTest(host=host), self.assertRaises(ValueError):
+                OllamaManager(host=host)
+
     @patch("roboweaver.nlu.ollama_manager.urllib.request.urlopen")
     def test_reachable_host_reports_available(self, mock_urlopen):
         mock_urlopen.return_value = FakeHTTPResponse(b'{"models":[]}', 200)
