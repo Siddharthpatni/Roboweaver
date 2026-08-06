@@ -5,13 +5,28 @@ controller interfaces, launch files, and MoveIt2 integration packages.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 from roboweaver.types import CompiledSkill
 from roboweaver.codegen.groot2 import export_groot2_xml
 
+if TYPE_CHECKING:
+    from roboweaver.codegen.ai_codegen import AICodeReviewer
 
-def generate_ros2_package(skill: CompiledSkill, output_dir: str | Path) -> Path:
-    """Generate a complete deployable ROS2 package directory for a compiled skill."""
+
+def generate_ros2_package(
+    skill: CompiledSkill,
+    output_dir: str | Path,
+    ai_review: bool = False,
+    reviewer: "AICodeReviewer | None" = None,
+) -> Path:
+    """Generate a complete deployable ROS2 package directory.
+
+    With ``ai_review=True`` the deterministic source remains untouched and the
+    optional annotated candidate plus a machine-readable review are written as
+    sidecars.  An unavailable model therefore cannot break deployable output.
+    """
     out = Path(output_dir)
     skill_slug = f"{skill.intent.action.value.lower()}_{skill.intent.object_name}".replace(" ", "_")
     pkg_dir = out / f"roboweaver_{skill_slug}"
@@ -141,6 +156,34 @@ if __name__ == '__main__':
     main()
 """
     (pkg_dir / "action_server.py").write_text(py_code, encoding="utf-8")
+
+    if ai_review:
+        if reviewer is None:
+            from roboweaver.codegen.ai_codegen import AICodeReviewer
+            reviewer = AICodeReviewer()
+        review = reviewer.review_ros2(
+            py_code,
+            robot_id=skill.motion_plan.robot_model,
+            action=skill.intent.action.value,
+            object_name=skill.intent.object_name,
+            dof=len(next(iter(skill.motion_plan.trajectories.values())).start_pose)
+            if skill.motion_plan.trajectories else 0,
+        )
+        if review.annotated_code:
+            (pkg_dir / "action_server.ai_review.py").write_text(
+                review.annotated_code.rstrip() + "\n", encoding="utf-8"
+            )
+        (pkg_dir / "ai_review.json").write_text(
+            json.dumps({
+                "model": review.model,
+                "latency_s": review.latency_s,
+                "issues": review.issues,
+                "suggestions": review.suggestions,
+                "error": review.error,
+                "annotated_file": "action_server.ai_review.py" if review.annotated_code else None,
+            }, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
     # 5. Save launch file (.launch.py)
     launch_py = f"""from launch import LaunchDescription

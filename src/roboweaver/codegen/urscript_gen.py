@@ -16,13 +16,24 @@ would load on real hardware.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from roboweaver.hardware.robot_spec import RobotSpec
 from roboweaver.types import CompiledSkill, TaskType
 
+if TYPE_CHECKING:
+    from roboweaver.codegen.ai_codegen import AICodeReviewer
 
-def generate_urscript(skill: CompiledSkill, robot_spec: RobotSpec, output_path: str | Path) -> Path:
+
+def generate_urscript(
+    skill: CompiledSkill,
+    robot_spec: RobotSpec,
+    output_path: str | Path,
+    ai_review: bool = False,
+    reviewer: "AICodeReviewer | None" = None,
+) -> Path:
     """Walks the real, compiled task_graph in order, emitting one real URScript
     statement per task: MOVE_TO -> movej() per real waypoint (spaced by that
     segment's real per-step duration), OPEN_GRIPPER/CLOSE_GRIPPER ->
@@ -66,5 +77,31 @@ def generate_urscript(skill: CompiledSkill, robot_spec: RobotSpec, output_path: 
     lines.append("")
     lines.append(f"{program_name}()")
 
-    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    code = "\n".join(lines) + "\n"
+    out.write_text(code, encoding="utf-8")
+    if ai_review:
+        if reviewer is None:
+            from roboweaver.codegen.ai_codegen import AICodeReviewer
+            reviewer = AICodeReviewer()
+        review = reviewer.review_urscript(
+            code,
+            robot_id=robot_spec.id,
+            action=skill.intent.action.value,
+            object_name=skill.intent.object_name,
+            dof=robot_spec.dof,
+        )
+        annotated_path = out.with_name(f"{out.stem}.ai_review{out.suffix}")
+        if review.annotated_code:
+            annotated_path.write_text(review.annotated_code.rstrip() + "\n", encoding="utf-8")
+        out.with_name(f"{out.stem}.ai_review.json").write_text(
+            json.dumps({
+                "model": review.model,
+                "latency_s": review.latency_s,
+                "issues": review.issues,
+                "suggestions": review.suggestions,
+                "error": review.error,
+                "annotated_file": annotated_path.name if review.annotated_code else None,
+            }, indent=2) + "\n",
+            encoding="utf-8",
+        )
     return out
