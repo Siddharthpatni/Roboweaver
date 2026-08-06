@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import urlparse
 
+from roboweaver.json_utils import loads_strict
+
 
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_MODEL = "llama3.1:8b"
@@ -92,7 +94,7 @@ def _http_error_text(exc: urllib.error.HTTPError, model: str) -> str:
     """Surface Ollama's safe JSON error without calling an HTTP error 'offline'."""
     detail = ""
     try:
-        body = json.loads(exc.read().decode("utf-8"))
+        body = loads_strict(exc.read().decode("utf-8"))
         if isinstance(body.get("error"), str):
             detail = f": {body['error']}"
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
@@ -189,7 +191,7 @@ class OllamaManager:
         """Return the Ollama server version string, or None if unreachable."""
         try:
             with urllib.request.urlopen(f"{self.host}/api/version", timeout=timeout) as resp:  # nosec B310
-                body = json.loads(resp.read().decode("utf-8"))
+                body = loads_strict(resp.read().decode("utf-8"))
             return body.get("version")
         except (urllib.error.URLError, OSError, TimeoutError, json.JSONDecodeError):
             return None
@@ -198,7 +200,7 @@ class OllamaManager:
         """Models actually pulled on this Ollama instance — never a hardcoded list."""
         try:
             with urllib.request.urlopen(f"{self.host}/api/tags", timeout=timeout) as resp:  # nosec B310
-                body = json.loads(resp.read().decode("utf-8"))
+                body = loads_strict(resp.read().decode("utf-8"))
             models = []
             for m in body.get("models", []):
                 details = m.get("details", {})
@@ -287,7 +289,7 @@ class OllamaManager:
         )
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
-                body = json.loads(resp.read().decode("utf-8"))
+                body = loads_strict(resp.read().decode("utf-8"))
             status = body.get("status", "")
             if "success" in status.lower():
                 return True, f"Successfully pulled {model_name}"
@@ -346,7 +348,7 @@ class OllamaManager:
         start = time.monotonic()
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
-                envelope = json.loads(resp.read().decode("utf-8"))
+                envelope = loads_strict(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             return OllamaResponse(
                 text=None, model=resolved_model,
@@ -419,7 +421,7 @@ class OllamaManager:
                     if not raw_line.strip():
                         continue
                     try:
-                        envelope = json.loads(raw_line.decode("utf-8"))
+                        envelope = loads_strict(raw_line.decode("utf-8"))
                     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                         yield OllamaStreamChunk(
                             done=True, model=resolved_model,
@@ -500,7 +502,7 @@ class OllamaManager:
         start = time.monotonic()
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
-                envelope = json.loads(resp.read().decode("utf-8"))
+                envelope = loads_strict(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             return OllamaResponse(
                 text=None, model=resolved_model,

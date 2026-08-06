@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from roboweaver.hardware.registry_robots import ROBOT_REGISTRY
+from roboweaver.json_utils import loads_strict
 from roboweaver.nlu.ollama_manager import OllamaManager, get_manager
 from roboweaver.types import Action
 
@@ -145,13 +146,13 @@ class SkillComposer:
 
         # Try to extract JSON array from the response
         try:
-            parsed = json.loads(raw)
+            parsed = loads_strict(raw)
         except json.JSONDecodeError:
             # Try to find a JSON array in the response
             match = re.search(r'\[.*\]', raw, re.DOTALL)
             if match:
                 try:
-                    parsed = json.loads(match.group(0))
+                    parsed = loads_strict(match.group(0))
                 except json.JSONDecodeError:
                     return SkillComposition(
                         original_instruction=instruction,

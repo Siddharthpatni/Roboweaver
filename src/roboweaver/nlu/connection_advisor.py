@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from roboweaver.hardware.registry_robots import ROBOT_REGISTRY
+from roboweaver.json_utils import loads_strict
 from roboweaver.nlu.ollama_manager import OllamaManager, get_manager
 
 # The only protocols UniversalRobotDriver actually implements a bridge for.
@@ -273,7 +274,7 @@ class OpenRouterBackend(_Backend):
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310
-                envelope = json.loads(resp.read().decode("utf-8"))
+                envelope = loads_strict(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             # Surface the status but never the request headers, which carry the key.
             return "", f"OpenRouter returned HTTP {exc.code} for model '{self.model}'."
@@ -326,7 +327,7 @@ class AnthropicBackend(_Backend):
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310
-                envelope = json.loads(resp.read().decode("utf-8"))
+                envelope = loads_strict(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             return "", f"Anthropic API returned HTTP {exc.code} for model '{self.model}'."
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
@@ -382,7 +383,7 @@ class OpenAIBackend(_Backend):
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310
-                envelope = json.loads(resp.read().decode("utf-8"))
+                envelope = loads_strict(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             return "", f"OpenAI API returned HTTP {exc.code} for model '{self.model}'."
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
@@ -424,7 +425,7 @@ class ConnectionAdvisor:
             )
 
         try:
-            parsed = json.loads(_coerce_json_text(raw))
+            parsed = loads_strict(_coerce_json_text(raw))
         except TypeError as exc:
             return ConnectionAdvice(
                 robot_id=None, protocol=None, uri=None,

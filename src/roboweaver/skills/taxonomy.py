@@ -12,6 +12,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 from dataclasses import dataclass, field
+from roboweaver.json_utils import loads_strict
 from roboweaver.types import Action, TaskDecomposition, TaskType, BTNode
 
 
@@ -77,7 +78,7 @@ class SkillPluginRegistry:
     @classmethod
     def load_from_json(cls, json_path: str | Path) -> int:
         """Load custom skill templates from a JSON/YAML specification file."""
-        data = json.loads(Path(json_path).read_text(encoding="utf-8"))
+        data = loads_strict(Path(json_path).read_text(encoding="utf-8"))
         count = 0
         for item in data.get("skills", []):
             tasks = [

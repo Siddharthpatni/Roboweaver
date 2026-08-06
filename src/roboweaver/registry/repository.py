@@ -4,10 +4,10 @@ RoboWeaver Skill Repository Engine — indexes, searches, and version-manages sk
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from roboweaver.identifiers import require_safe_identifier
+from roboweaver.json_utils import loads_strict
 from roboweaver.registry.package import SkillPackage, SkillPackageMetadata
 
 
@@ -67,7 +67,7 @@ class SkillRepository:
         """
         for f in self.registry_dir.glob("*.json"):
             try:
-                data = json.loads(f.read_text(encoding="utf-8"))
+                data = loads_strict(f.read_text(encoding="utf-8"))
                 pkg = SkillPackage.from_dict(data)
                 if not pkg.metadata.id:
                     pkg.metadata.id = f.stem

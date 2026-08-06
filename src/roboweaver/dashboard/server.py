@@ -36,6 +36,7 @@ from roboweaver.fleet.prompt_builder import SystemPromptParser, MultiRobotChoreo
 from roboweaver.simulation.inspire_sim import InspireHandSimulator
 from roboweaver.hardware.inspire_hand_rs485 import InspireHandRS485Driver
 from roboweaver.ir import RoboIR, SkillCompilationError
+from roboweaver.json_utils import loads_strict
 from roboweaver.hardware.discovery import RobotDiscoveryService, MAX_SCAN_HOSTS
 from roboweaver.codegen.urdf_gen import generate_urdf
 from roboweaver.nlu.connection_advisor import advisor_status, build_advisor
@@ -316,7 +317,7 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             )
             return None
         try:
-            payload = json.loads(self.rfile.read(content_length))
+            payload = loads_strict(self.rfile.read(content_length))
         except (UnicodeDecodeError, json.JSONDecodeError):
             self._send_json({"error": "invalid_json"}, status=400)
             return None

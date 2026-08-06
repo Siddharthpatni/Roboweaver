@@ -102,6 +102,12 @@ def test_confidence_is_clamped():
     assert advice.confidence == 1.0
 
 
+def test_non_finite_confidence_is_rejected():
+    advice = _advise('{"robot_id":"ur5e","protocol":"sim","confidence":NaN,"reasoning":"x"}')
+    assert advice.robot_id is None
+    assert advice.error is not None
+
+
 def test_markdown_fenced_json_is_recovered():
     """Anthropic has no JSON response mode and fences its replies. The payload is
     still valid -- discarding a correct answer over formatting would be a bug."""

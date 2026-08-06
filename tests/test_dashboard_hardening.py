@@ -185,6 +185,15 @@ def test_connect_post_validates_json_and_robot_id(live_server):
     assert body["is_connected"] is False
 
 
+def test_connect_post_rejects_non_finite_json_numbers(live_server):
+    status, _, body = _post(
+        f"{live_server}/api/connect",
+        b'{"robot":NaN,"protocol":"sim","uri":"sim://127.0.0.1:1"}',
+    )
+    assert status == 400
+    assert body["error"] == "invalid_json"
+
+
 def test_connect_post_requires_configured_bearer_token(live_server):
     # Reconfigure this already-loopback test server to exercise the same token
     # enforcement used by a non-loopback deployment.

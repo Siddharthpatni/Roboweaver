@@ -16,9 +16,11 @@ error.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from roboweaver.json_utils import loads_strict
 from roboweaver.nlu.ollama_manager import OllamaManager, get_manager
 
 
@@ -162,14 +164,13 @@ class AICodeReviewer:
 
         if issues_resp.text:
             total_latency += issues_resp.latency_s
-            import json
             try:
                 raw_json = issues_resp.text
                 if not raw_json.lstrip().startswith("{"):
                     import re
                     match = re.search(r'\{.*\}', raw_json, re.DOTALL)
                     raw_json = match.group(0) if match else raw_json
-                parsed = json.loads(raw_json)
+                parsed = loads_strict(raw_json)
                 if isinstance(parsed, dict):
                     issues = [str(i) for i in parsed.get("issues", []) if isinstance(i, str)]
                     suggestions = [str(s) for s in parsed.get("suggestions", []) if isinstance(s, str)]

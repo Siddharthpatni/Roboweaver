@@ -29,6 +29,7 @@ from roboweaver.nlu.ollama_manager import (
     get_manager,
 )
 from roboweaver.types import Action, SkillIntent
+from roboweaver.json_utils import loads_strict
 
 _VALID_ACTIONS = {a.value for a in Action}
 
@@ -102,7 +103,7 @@ class OllamaIntentParser:
 
     def _parse_model_output(self, raw_text: str) -> OllamaParseResult:
         try:
-            parsed: dict[str, Any] = json.loads(raw_text)
+            parsed: dict[str, Any] = loads_strict(raw_text)
         except json.JSONDecodeError as exc:
             return OllamaParseResult(
                 intent=None, raw_response=raw_text, model=self.model,

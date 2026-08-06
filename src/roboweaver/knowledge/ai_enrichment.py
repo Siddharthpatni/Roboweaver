@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
 from roboweaver.hardware.registry_robots import ROBOT_REGISTRY
+from roboweaver.json_utils import loads_strict
 from roboweaver.nlu.ollama_manager import OllamaManager, get_manager
 from roboweaver.skills import IndustrialSkillCategory
 
@@ -390,7 +391,7 @@ class KnowledgeGraphEnricher:
 def _parse_json_array(raw: str) -> list[Any]:
     """Robustly extract a JSON array from model output."""
     try:
-        parsed = json.loads(raw)
+        parsed = loads_strict(raw)
         if isinstance(parsed, list):
             return parsed
         if isinstance(parsed, dict):
@@ -403,7 +404,7 @@ def _parse_json_array(raw: str) -> list[Any]:
         match = re.search(r'\[.*\]', raw, re.DOTALL)
         if match:
             try:
-                return json.loads(match.group(0))
+                return loads_strict(match.group(0))
             except json.JSONDecodeError:
                 pass
         return []
@@ -412,13 +413,13 @@ def _parse_json_array(raw: str) -> list[Any]:
 def _parse_json_object(raw: str) -> dict[str, Any] | None:
     """Extract a JSON object even when a small model wraps it in prose/fences."""
     try:
-        parsed = json.loads(raw)
+        parsed = loads_strict(raw)
         return parsed if isinstance(parsed, dict) else None
     except json.JSONDecodeError:
         match = re.search(r'\{.*\}', raw, re.DOTALL)
         if match:
             try:
-                parsed = json.loads(match.group(0))
+                parsed = loads_strict(match.group(0))
                 return parsed if isinstance(parsed, dict) else None
             except json.JSONDecodeError:
                 pass

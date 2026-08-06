@@ -58,6 +58,15 @@ def test_unknown_action_from_model_output_is_rejected():
     print("  -> Unknown action correctly rejected instead of silently coerced [PASSED]")
 
 
+def test_non_finite_model_parameters_are_rejected():
+    parser = OllamaIntentParser()
+    result = parser._parse_model_output(
+        '{"action":"PICK","object_name":"cube","parameters":{"speed":NaN}}'
+    )
+    assert result.intent is None
+    assert result.error is not None
+
+
 def test_real_local_ollama_parse():
     print("\n[TEST 4] Testing a real local Ollama model against RoboWeaver's Action taxonomy...")
     parser = OllamaIntentParser()
