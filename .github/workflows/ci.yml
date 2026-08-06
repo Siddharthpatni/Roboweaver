@@ -1,5 +1,12 @@
 name: CI
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
@@ -35,6 +42,15 @@ jobs:
         # exited 0 even if added to the list. `pytest tests/` auto-discovers
         # every test file, runs both styles correctly, and can't go stale.
         run: PYTHONPATH=src python3 -m pytest tests/ -v
+
+      - name: Verify imports and installed dependency consistency
+        run: |
+          python3 -m compileall -q src tests
+          python3 -m pip check
+
+      - name: Build distributable artifacts
+        if: matrix.python-version == '3.12'
+        run: python3 -m build
 
       - name: Verify roboweaver CLI entrypoint installs and runs
         run: |
