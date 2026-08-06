@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { TopNav } from '../components/nav/TopNav';
+import { AICopilotPanel } from '../components/AICopilotPanel';
 import { RoboWeaverAPI } from '../lib/api';
 import { ViewType, RobotProfile, NexusPackage, DiscoveredRobot, VersionInfo } from '../types';
 import {
@@ -111,6 +112,9 @@ export default function Home() {
   return (
     <div className="flex flex-col h-screen w-screen bg-app-surface text-slate-100 overflow-hidden">
       <TopNav active={activeView} onNavigate={setActiveView} apiOnline={apiOnline} />
+
+      {/* AI Co-Pilot — persistent floating panel across all views */}
+      <AICopilotPanel activeView={activeView} />
 
       <main className="flex-1 min-h-0 overflow-hidden relative">
         <ErrorBoundary resetKey={activeView}>
