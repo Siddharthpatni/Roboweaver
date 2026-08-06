@@ -4,7 +4,10 @@ docs/COMPILER_ROADMAP.md's v2 vision.
 """
 
 import tempfile
+import threading
 from pathlib import Path
+
+import pytest
 
 from roboweaver.compiler import SkillCompiler
 from roboweaver.hardware import get_robot_spec
@@ -72,6 +75,64 @@ def test_success_rate_reflects_multiple_real_runs():
         rate = store.success_rate("PICK", "franka_panda")
         assert rate is not None
         print(f"  -> 3 real runs recorded; success_rate={rate} [PASSED]")
+
+
+def test_robot_id_cannot_escape_the_store_directory():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = ExecutionMemoryStore(store_dir=tmpdir)
+        with pytest.raises(ValueError, match="robot_id"):
+            store.record({"task": {"robot_id": "../escape", "action": "PICK"}})
+        with pytest.raises(ValueError, match="robot_id"):
+            store.query(robot_id="../escape")
+        assert not (Path(tmpdir).parent / "escape.jsonl").exists()
+
+
+def test_non_finite_and_oversized_records_are_rejected():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = ExecutionMemoryStore(store_dir=tmpdir)
+        with pytest.raises(ValueError):
+            store.record({"task": {"robot_id": "franka_panda"}, "score": float("nan")})
+        with pytest.raises(ValueError, match="exceeds"):
+            store.record({"task": {"robot_id": "franka_panda"}, "data": "x" * 1_048_576})
+
+
+def test_corrupt_records_are_skipped_without_losing_valid_history():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = ExecutionMemoryStore(store_dir=tmpdir)
+        path = Path(tmpdir) / "franka_panda.jsonl"
+        path.write_text(
+            '{"task":{"robot_id":"franka_panda","action":"PICK"},"timestamp":1}\n'
+            'not-json\n'
+            '{"task":{"robot_id":"franka_panda","action":"PICK"},"timestamp":NaN}\n',
+            encoding="utf-8",
+        )
+        records = store.query(robot_id="franka_panda")
+        assert len(records) == 1
+        assert records[0]["timestamp"] == 1
+
+
+def test_concurrent_appends_remain_complete_json_lines():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = ExecutionMemoryStore(store_dir=tmpdir)
+        threads = [
+            threading.Thread(
+                target=store.record,
+                args=({"task": {"robot_id": "franka_panda", "action": "PICK"}, "run": index},),
+            )
+            for index in range(20)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert {record["run"] for record in store.query(robot_id="franka_panda", limit=20)} == set(range(20))
+
+
+@pytest.mark.parametrize("limit", [0, -1, 10_001, True, 1.5])
+def test_query_limit_is_bounded(limit):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with pytest.raises(ValueError, match="limit"):
+            ExecutionMemoryStore(store_dir=tmpdir).query(limit=limit)
 
 
 if __name__ == "__main__":
