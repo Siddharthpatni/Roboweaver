@@ -1,80 +1,85 @@
-name: CI
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-cd-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch: {}
 
 jobs:
   backend:
-    name: Backend tests (Python ${{ matrix.python-version }})
+    name: Backend / Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.12"]
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out source
+        uses: actions/checkout@v6
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
-      - name: Install RoboWeaver (editable, with real deps)
-        run: pip install -e ".[test]"
-
-      - name: Run full backend verification suite
-        # A hardcoded file list here previously meant new test files were
-        # silently never run in CI unless someone remembered to add them --
-        # which is exactly what happened to test_discovery.py,
-        # test_connection_advisor.py and test_urdf_gen.py. Worse: those files
-        # are plain pytest-style (no `if __name__` block), so the old
-        # `python3 "$f"` invocation would have executed zero assertions and
-        # exited 0 even if added to the list. `pytest tests/` auto-discovers
-        # every test file, runs both styles correctly, and can't go stale.
-        run: PYTHONPATH=src python3 -m pytest tests/ -v
-
-      - name: Verify imports and installed dependency consistency
+      - name: Install package and test dependencies
         run: |
-          python3 -m compileall -q src tests
-          python3 -m pip check
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
 
-      - name: Build distributable artifacts
-        if: matrix.python-version == '3.12'
-        run: python3 -m build
+      - name: Run the complete backend suite
+        run: python -m pytest tests/ -q
 
-      - name: Verify roboweaver CLI entrypoint installs and runs
+      - name: Verify imports and dependency consistency
         run: |
-          roboweaver robots | head -5
-          roboweaver nexus list | head -5
+          python -m compileall -q src tests
+          python -m pip check
+
+      - name: Smoke-test the installed CLI
+        run: |
+          roboweaver robots > "${RUNNER_TEMP}/robots.txt"
+          roboweaver nexus list > "${RUNNER_TEMP}/packages.txt"
+          test -s "${RUNNER_TEMP}/robots.txt"
+          test -s "${RUNNER_TEMP}/packages.txt"
 
   frontend:
-    name: Frontend build & lint
+    name: Frontend / Node 22
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
-          cache: "npm"
+          cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install dependencies
+      - name: Install the locked dependency tree
         run: npm ci
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Type-check
         run: npx tsc --noEmit
@@ -82,5 +87,70 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Build
+      - name: Build the production frontend
         run: npm run build
+
+  package:
+    name: Python distribution
+    needs: backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Build the source distribution and wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Install and smoke-test the wheel
+        run: |
+          python -m pip install dist/*.whl
+          roboweaver robots > "${RUNNER_TEMP}/wheel-robots.txt"
+          test -s "${RUNNER_TEMP}/wheel-robots.txt"
+
+  containers:
+    name: Containers${{ startsWith(github.ref, 'refs/tags/v') && ' / publish' || '' }}
+    needs: [backend, frontend, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Build API image
+        run: docker build --tag roboweaver-api:ci .
+
+      - name: Build frontend image
+        run: docker build --tag roboweaver-frontend:ci ./frontend
+
+      - name: Authenticate to GitHub Container Registry
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Publish versioned images
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          image_prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker tag roboweaver-api:ci "${image_prefix}-api:${GITHUB_REF_NAME}"
+          docker tag roboweaver-api:ci "${image_prefix}-api:latest"
+          docker tag roboweaver-frontend:ci "${image_prefix}-frontend:${GITHUB_REF_NAME}"
+          docker tag roboweaver-frontend:ci "${image_prefix}-frontend:latest"
+          docker push "${image_prefix}-api:${GITHUB_REF_NAME}"
+          docker push "${image_prefix}-api:latest"
+          docker push "${image_prefix}-frontend:${GITHUB_REF_NAME}"
+          docker push "${image_prefix}-frontend:latest"

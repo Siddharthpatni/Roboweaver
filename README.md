@@ -1,5 +1,7 @@
 # RoboWeaver
 
+[![CI/CD](https://github.com/Siddharthpatni/Roboweaver/actions/workflows/ci.yml/badge.svg)](https://github.com/Siddharthpatni/Roboweaver/actions/workflows/ci.yml)
+
 **A compiler infrastructure for turning human intent into inspectable, verified robot skills.**
 
 ```text
