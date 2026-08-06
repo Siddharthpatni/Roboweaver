@@ -1,0 +1,36 @@
+services:
+  api:
+    build:
+      context: .
+    environment:
+      ROBOWEAVER_API_TOKEN: ${ROBOWEAVER_API_TOKEN:?Set ROBOWEAVER_API_TOKEN in the environment}
+      ROBOWEAVER_ALLOWED_ORIGINS: http://localhost:3000
+    ports:
+      - "127.0.0.1:8080:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: frontend
+    environment:
+      NEXT_PUBLIC_ROBOWEAVER_API: http://localhost:8080
+    ports:
+      - "127.0.0.1:3000:3000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
