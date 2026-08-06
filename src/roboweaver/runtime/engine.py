@@ -8,7 +8,7 @@ handles grasping & contact dynamics, records visual frame telemetry, and verifie
 from __future__ import annotations
 
 import math
-from typing import Sequence
+from typing import Sequence, TYPE_CHECKING
 
 from roboweaver.types import CompiledSkill, ExecutionResult, TaskType
 from roboweaver.hardware import forward_kinematics_ndof, get_robot_spec, get_franka_panda_spec
@@ -16,6 +16,9 @@ from roboweaver.math3d import Vec3
 from roboweaver.runtime.telemetry import TelemetryRecorder
 from roboweaver.runtime.recovery import RecoveryEngine, FailureMode, RecoveryAction
 from roboweaver.runtime.memory import ExecutionMemoryStore
+
+if TYPE_CHECKING:
+    from roboweaver.runtime.ai_recovery import AIRecoveryAdvisor, AIRecoveryAdvice
 
 
 class SkillRuntime:
@@ -30,6 +33,7 @@ class SkillRuntime:
         render_height: int = 480,
         render_fps: int = 30,
         memory_store: ExecutionMemoryStore | None = None,
+        ai_recovery_advisor: "AIRecoveryAdvisor | None" = None,
     ):
         self.robot_spec = robot_spec or get_franka_panda_spec()
         self.model = model
@@ -46,6 +50,8 @@ class SkillRuntime:
         self.step_count = 0
         self.dt = 0.01
         self._current_task_desc = ""
+        self._current_action = "PICK"
+        self._current_object_name = "object"
 
         # Adaptive grasp threshold based on gripper type
         gripper = getattr(self.robot_spec, 'gripper_type', 'parallel_jaw')
@@ -70,6 +76,9 @@ class SkillRuntime:
         self.telemetry = TelemetryRecorder()
         self.recovery = RecoveryEngine(memory=memory_store)
         self.recovery_log: list = []
+        # Explicit opt-in: simulation never gains an LLM dependency by default.
+        self.ai_recovery_advisor = ai_recovery_advisor
+        self.ai_recovery_log: list["AIRecoveryAdvice"] = []
 
     def execute(self, skill: CompiledSkill, verbose: bool = True) -> ExecutionResult:
         """Execute a compiled skill and return result."""
@@ -78,8 +87,13 @@ class SkillRuntime:
         self.qpos = [0.0] * self.robot_spec.dof
         self.telemetry = TelemetryRecorder()
         self.recovery_log = []
+        self.ai_recovery_log = []
 
         initial_cube_z = self.cube_pos.z
+        self._current_action = skill.intent.action.value if hasattr(skill, "intent") else "PICK"
+        self._current_object_name = (
+            skill.intent.object_name if hasattr(skill, "intent") else "object"
+        )
 
         if verbose:
             print(f"\n\033[1;36m━━━ STAGE 5/6: Execute in Simulation \033[0m")
@@ -140,7 +154,7 @@ class SkillRuntime:
         limits_ok = self._check_joint_limits()
 
         # Action-specific success criteria
-        action = skill.intent.action.value if hasattr(skill, 'intent') else 'PICK'
+        action = self._current_action
         success = self._evaluate_success(action, height_gained, limits_ok)
 
         if not limits_ok:
@@ -148,6 +162,10 @@ class SkillRuntime:
                 FailureMode.JOINT_LIMIT_VIOLATED, context={"retry_count": 0, "robot_id": self.robot_spec.id},
             )
             self.recovery_log.append(plan)
+            self._record_ai_recovery(FailureMode.JOINT_LIMIT_VIOLATED, plan, {
+                "action": action,
+                "joint_limits_violated": True,
+            })
             if verbose:
                 print(f"\n  \033[31m✗ Joint limit violated:\033[0m {plan.reason} -> {plan.recommended_action.value}")
 
@@ -162,6 +180,9 @@ class SkillRuntime:
             telemetry_frame_count=len(self.telemetry.frames),
             recovery_events=[
                 f"{p.failure_mode.value} -> {p.recommended_action.value}: {p.reason}" for p in self.recovery_log
+            ] + [
+                f"AI {a.ai_root_cause or a.ai_explanation}"
+                for a in self.ai_recovery_log if a.ai_explanation
             ],
         )
 
@@ -248,6 +269,10 @@ class SkillRuntime:
                 FailureMode.GRASP_FAILED, context={"retry_count": attempt, "robot_id": self.robot_spec.id},
             )
             self.recovery_log.append(plan)
+            self._record_ai_recovery(FailureMode.GRASP_FAILED, plan, {
+                "action": self._current_action,
+                "object_name": self._current_object_name,
+            }, retry_count=attempt)
             if verbose:
                 print(f"\n  \033[33m⚠ Grasp miss (attempt {attempt + 1}/{max_attempts}):\033[0m "
                       f"{plan.reason} -> {plan.recommended_action.value}")
@@ -279,6 +304,27 @@ class SkillRuntime:
         # outcome: this skill genuinely could not grasp the object.
         if verbose:
             print(f"\n  \033[31m✗ Grasp failed after exhausting all {max_attempts} recovery attempts.\033[0m")
+
+    def _record_ai_recovery(
+        self, failure_mode: FailureMode, plan, context: dict,
+        retry_count: int = 0,
+    ) -> None:
+        """Add optional local-model advice without changing the recovery action."""
+        if self.ai_recovery_advisor is None:
+            return
+        advice = self.ai_recovery_advisor.advise(
+            failure_mode=failure_mode.value,
+            rule_based_action=plan.recommended_action.value,
+            rule_based_reason=plan.reason,
+            robot_id=self.robot_spec.id,
+            robot_spec={
+                "dof": self.robot_spec.dof,
+                "gripper_type": self.robot_spec.gripper_type,
+            },
+            skill_context=context,
+            retry_count=retry_count,
+        )
+        self.ai_recovery_log.append(advice)
 
     def _execute_trajectory(self, waypoints: Sequence[Sequence[float]]) -> None:
         for wp in waypoints:
