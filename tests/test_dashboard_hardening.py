@@ -13,7 +13,13 @@ import urllib.request
 
 import pytest
 
-from roboweaver.dashboard.server import ReusableHTTPServer, DashboardHTTPRequestHandler, _is_allowed_origin
+from roboweaver.dashboard.server import (
+    DashboardHTTPRequestHandler,
+    ReusableHTTPServer,
+    _is_allowed_origin,
+    _is_loopback_bind,
+    start_dashboard_server,
+)
 
 
 @pytest.fixture
@@ -49,6 +55,19 @@ def _get(url: str, origin: str | None = None):
         return exc.code, exc.headers.get("Access-Control-Allow-Origin"), body
 
 
+def _post(url: str, payload, token: str | None = None):
+    data = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    if token is not None:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status, resp.headers, json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.headers, json.loads(exc.read())
+
+
 def test_is_allowed_origin_accepts_any_localhost_or_loopback_port():
     print("\n[TEST 1] Testing _is_allowed_origin() accepts localhost/127.0.0.1 at any port...")
     assert _is_allowed_origin("http://localhost:3000") is True
@@ -72,6 +91,20 @@ def test_default_bind_is_loopback_only(live_server):
     assert status == 200
     assert body["roboweaver_version"]
     print("  -> real request to 127.0.0.1 succeeds (fixture itself proves loopback binds) [PASSED]")
+
+
+def test_loopback_bind_detection_is_exact():
+    assert _is_loopback_bind("127.0.0.1") is True
+    assert _is_loopback_bind("::1") is True
+    assert _is_loopback_bind("localhost") is True
+    assert _is_loopback_bind("0.0.0.0") is False
+    assert _is_loopback_bind("192.168.1.20") is False
+
+
+def test_non_loopback_start_requires_control_token(monkeypatch):
+    monkeypatch.delenv("ROBOWEAVER_API_TOKEN", raising=False)
+    with pytest.raises(RuntimeError, match="ROBOWEAVER_API_TOKEN"):
+        start_dashboard_server(port=0, host="0.0.0.0")
 
 
 def test_request_with_allowed_origin_gets_it_echoed_back(live_server):
@@ -117,6 +150,65 @@ def test_normal_compile_still_works_end_to_end(live_server):
     assert body["instruction"] == "Pick up the red cube"
     assert body["ir"]["skill"]["id"]
     print("  -> real compile still succeeds -- hardening didn't break the normal path [PASSED]")
+
+
+def test_health_endpoints_are_available(live_server):
+    for path, check in (("/health/live", "liveness"), ("/health/ready", "readiness")):
+        status, _, body = _get(f"{live_server}{path}")
+        assert status == 200
+        assert body["status"] == "ok"
+        assert body["check"] == check
+        assert body["version"]
+
+
+def test_connect_get_is_rejected_without_side_effect(live_server):
+    status, _, body = _get(f"{live_server}/api/connect?robot=franka_panda")
+    assert status == 405
+    assert body["error"] == "method_not_allowed"
+
+
+def test_connect_post_validates_json_and_robot_id(live_server):
+    status, headers, body = _post(f"{live_server}/api/connect", b"not-json")
+    assert status == 400
+    assert body["error"] == "invalid_json"
+    assert headers["X-Request-ID"]
+
+    status, _, body = _post(
+        f"{live_server}/api/connect",
+        {"robot": "not_a_robot", "protocol": "sim", "uri": "sim://127.0.0.1:1"},
+    )
+    assert status == 400
+    assert body["is_connected"] is False
+
+
+def test_connect_post_requires_configured_bearer_token(live_server):
+    # Reconfigure this already-loopback test server to exercise the same token
+    # enforcement used by a non-loopback deployment.
+    # The fixture owns the HTTPServer; locate it through a dedicated request is
+    # not possible, so run a second ephemeral server with the token attached.
+    httpd = ReusableHTTPServer(("127.0.0.1", 0), DashboardHTTPRequestHandler)
+    httpd.control_token = "correct-horse-battery-staple"
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+    payload = {"robot": "not_a_robot", "protocol": "sim", "uri": "sim://127.0.0.1:1"}
+    try:
+        status, _, body = _post(f"{base}/api/connect", payload)
+        assert status == 401
+        assert body["error"] == "unauthorized"
+
+        status, _, body = _post(f"{base}/api/connect", payload, token="wrong")
+        assert status == 401
+
+        status, _, body = _post(
+            f"{base}/api/connect", payload, token="correct-horse-battery-staple"
+        )
+        assert status == 400
+        assert body["is_connected"] is False
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=2)
 
 
 if __name__ == "__main__":

@@ -5,11 +5,16 @@ RoboWeaver Web Dashboard Server — serves API endpoints and interactive web con
 from __future__ import annotations
 
 import json
+import hmac
+import ipaddress
+import logging
+import os
 import platform as platform_module
 import re
 import socketserver
 import sys
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -30,7 +35,9 @@ from roboweaver.ir import RoboIR, SkillCompilationError
 from roboweaver.hardware.discovery import RobotDiscoveryService, MAX_SCAN_HOSTS
 from roboweaver.codegen.urdf_gen import generate_urdf
 from roboweaver.nlu.connection_advisor import advisor_status, build_advisor
-from roboweaver.hardware.universal_driver import UniversalRobotDriver
+from roboweaver.hardware.universal_driver import resolve_bridge_class
+
+logger = logging.getLogger("roboweaver.dashboard")
 
 # Set once, when this process actually starts serving -- read by /api/version
 # so the UI reports real process facts (uptime, whether the self-healing
@@ -63,10 +70,29 @@ _SOCKET_TIMEOUT_S = 60
 
 _MAX_INSTRUCTION_LEN = 2000
 _MAX_ROBOTS_PARAM = 20
+_MAX_JSON_BODY_BYTES = 4096
+_CONTROL_TOKEN_ENV = "ROBOWEAVER_API_TOKEN"
+_ALLOWED_ORIGINS_ENV = "ROBOWEAVER_ALLOWED_ORIGINS"
 
 
 def _is_allowed_origin(origin: str | None) -> bool:
-    return origin is not None and bool(_ALLOWED_ORIGIN_RE.match(origin))
+    if origin is None:
+        return False
+    configured = {
+        item.strip().rstrip("/")
+        for item in os.environ.get(_ALLOWED_ORIGINS_ENV, "").split(",")
+        if item.strip()
+    }
+    return bool(_ALLOWED_ORIGIN_RE.match(origin)) or origin.rstrip("/") in configured
+
+
+def _is_loopback_bind(host: str) -> bool:
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
@@ -82,22 +108,100 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
         gets a real response no matter what a handler does internally: the
         client either gets the intended answer or a clean 500, never silence.
         """
+        if not self._prepare_request():
+            return
+        self._run_handler(self._route)
+
+    def do_POST(self):
+        if not self._prepare_request():
+            return
+
+        path = urlparse(self.path).path
+        if path not in ("/api/connect", "/api/ai/pull", "/api/ai/config"):
+            self._send_json({"error": "method_not_allowed"}, status=405)
+            return
+        if not self._authorize_control_request():
+            return
+
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        if path == "/api/connect":
+            self._run_handler(lambda: self._connect_robot(payload))
+        elif path == "/api/ai/pull":
+            self._run_handler(lambda: self._pull_ai_model(payload))
+        else:
+            self._run_handler(lambda: self._configure_ai_model(payload))
+
+    def do_OPTIONS(self):
+        if not self._prepare_request():
+            return
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
+        self.send_header("X-Request-ID", self._request_id)
+        if self._request_origin is not None:
+            self.send_header("Access-Control-Allow-Origin", self._request_origin)
+            self.send_header("Vary", "Origin")
+        self.end_headers()
+
+    def _prepare_request(self) -> bool:
+        self._request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
         origin = self.headers.get("Origin")
         if origin is not None and not _is_allowed_origin(origin):
             self.send_error(403, "Origin not allowed")
-            return
+            return False
         self._request_origin = origin
+        return True
+
+    def _run_handler(self, handler) -> None:
         try:
-            self._route()
+            handler()
         except BrokenPipeError:
             pass  # client already disconnected -- nothing to send or log
-        except Exception as exc:
+        except Exception:
+            logger.exception("Unhandled dashboard request error request_id=%s", self._request_id)
             try:
                 self._send_json(
-                    {"error": "internal_error", "message": str(exc)}, status=500
+                    {"error": "internal_error", "request_id": self._request_id}, status=500
                 )
             except Exception:
                 pass  # socket is unusable; nothing more can be done
+
+    def _authorize_control_request(self) -> bool:
+        expected = getattr(self.server, "control_token", "")
+        if not expected:
+            return True
+        supplied = self.headers.get("Authorization", "")
+        prefix = "Bearer "
+        candidate = supplied[len(prefix):] if supplied.startswith(prefix) else ""
+        if not candidate or not hmac.compare_digest(candidate, expected):
+            self._send_json({"error": "unauthorized"}, status=401)
+            return False
+        return True
+
+    def _read_json_body(self) -> dict[str, Any] | None:
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._send_json({"error": "invalid_content_length"}, status=400)
+            return None
+        if content_length <= 0 or content_length > _MAX_JSON_BODY_BYTES:
+            self._send_json(
+                {"error": f"JSON body must be 1-{_MAX_JSON_BODY_BYTES} bytes."},
+                status=413 if content_length > _MAX_JSON_BODY_BYTES else 400,
+            )
+            return None
+        try:
+            payload = json.loads(self.rfile.read(content_length))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._send_json({"error": "invalid_json"}, status=400)
+            return None
+        if not isinstance(payload, dict):
+            self._send_json({"error": "JSON body must be an object."}, status=400)
+            return None
+        return payload
 
     def _route(self):
         parsed = urlparse(self.path)
@@ -407,6 +511,7 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                     "action": result.skill.intent.action.value,
                     "object_name": result.skill.intent.object_name,
                     "parameters": result.skill.intent.parameters,
+                    "confidence": result.skill.intent.confidence,
                 },
                 "tasks": [
                     {"type": t.type.value, "description": t.description}
@@ -424,6 +529,27 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                     res["pipeline"] = result.pipeline.to_dict()
                 if result.skill_pipeline is not None:
                     res["skill_pipeline"] = result.skill_pipeline.to_dict()
+            # AI is an explicitly requested annotation, never a compile gate.
+            # A missing local model therefore leaves the real result intact and
+            # reports the explanation failure alongside it with HTTP 200.
+            if query.get("explain", ["0"])[0] == "1":
+                from roboweaver.nlu.skill_explainer import SkillExplainer
+                explanation_input = dict(res)
+                if result.pipeline is not None:
+                    explanation_input["pipeline"] = result.pipeline.to_dict()
+                if result.skill_pipeline is not None:
+                    explanation_input["skill_pipeline"] = result.skill_pipeline.to_dict()
+                spec = ROBOT_REGISTRY.get(robot_id)
+                spec_dict = ({
+                    "gripper_type": spec.gripper_type,
+                    "payload_capacity_kg": spec.payload_capacity_kg,
+                    "max_reach_m": spec.max_reach_m,
+                } if spec else None)
+                explanation = SkillExplainer().explain_compilation(explanation_input, spec_dict)
+                res["explanation"] = explanation.text
+                res["explanation_model"] = explanation.model
+                res["explanation_latency_s"] = round(explanation.latency_s, 3)
+                res["explanation_error"] = explanation.error
             self._send_json(res)
 
         elif path == "/api/diff":
@@ -467,7 +593,7 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                 return
 
             diff = diff_ir(result.ir, result2.ir)
-            self._send_json({
+            diff_payload = {
                 "instruction": instruction,
                 "from_robot": robot_id,
                 "to_robot": robot2_id,
@@ -478,7 +604,15 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                     {"before": old.to_dict(), "after": new.to_dict()}
                     for old, new in diff.objects_changed
                 ],
-            })
+            }
+            if query.get("explain", ["0"])[0] == "1":
+                from roboweaver.nlu.skill_explainer import SkillExplainer
+                explanation = SkillExplainer().explain_diff(diff_payload)
+                diff_payload["explanation"] = explanation.text
+                diff_payload["explanation_model"] = explanation.model
+                diff_payload["explanation_latency_s"] = round(explanation.latency_s, 3)
+                diff_payload["explanation_error"] = explanation.error
+            self._send_json(diff_payload)
 
         elif path == "/api/cost":
             from roboweaver.optimize.cost_model import compute_cost
@@ -583,6 +717,13 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(scanner.to_dict(result))
 
+        elif path in ("/health/live", "/health/ready"):
+            self._send_json({
+                "status": "ok",
+                "check": "liveness" if path.endswith("live") else "readiness",
+                "version": ROBOWEAVER_VERSION,
+            })
+
         elif path == "/api/version":
             uptime = (
                 round(time.monotonic() - _PROCESS_START_TIME, 1)
@@ -651,33 +792,325 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             })
 
         elif path == "/api/connect":
+            self._send_json(
+                {"error": "method_not_allowed", "message": "Use POST /api/connect with a JSON body."},
+                status=405,
+            )
+
+        # ── AI Endpoints (all fully offline, Ollama-backed) ────────────
+        # Every /api/ai/* endpoint is additive: if Ollama is unavailable,
+        # the response carries a stated error, never a silent fallback.
+
+        elif path == "/api/ai/status":
+            from roboweaver.nlu.ollama_manager import get_manager
+            self._send_json(get_manager().to_status_dict())
+
+        elif path == "/api/ai/models":
+            from roboweaver.nlu.ollama_manager import get_manager
+            mgr = get_manager()
+            models = mgr.list_models()
+            self._send_json({
+                "available": mgr.is_available(),
+                "models": [
+                    {
+                        "name": m.name,
+                        "size_bytes": m.size_bytes,
+                        "parameter_size": m.parameter_size,
+                        "quantization": m.quantization,
+                    }
+                    for m in models
+                ],
+            })
+
+        elif path == "/api/ai/explain":
+            from roboweaver.nlu.skill_explainer import SkillExplainer
+
+            instruction = query.get("instruction", ["Pick up the red cube"])[0]
             robot_id = query.get("robot", ["franka_panda"])[0]
-            protocol = query.get("protocol", ["ros2"])[0]
-            uri = query.get("uri", ["ros2://localhost"])[0]
-            # Unlike /model and /fk, "robot" here has an explicit, intentional
-            # default (franka_panda) -- that's fine. What must not happen is a
-            # *typo'd* id silently opening a bridge to Panda's kinematics while
-            # the response still gets read as "connected to <typo>".
-            if robot_id not in ROBOT_REGISTRY:
+            if self._reject_if_too_long(instruction, "instruction"):
+                return
+
+            compiler = SkillCompiler(target_robot=robot_id)
+            try:
+                result = compiler.compile_with_diagnostics(instruction, verbose=False)
+            except SkillCompilationError as exc:
                 self._send_json(
-                    {"error": f"Unknown robot id '{robot_id}'.", "is_connected": False}, status=400
+                    {"error": "compilation_failed", "diagnostics": [d.to_dict() for d in exc.diagnostics]},
+                    status=400,
                 )
                 return
+
+            bt_xml = export_groot2_xml(result.skill)
+            compile_result = {
+                "instruction": instruction,
+                "robot": robot_id,
+                "intent": {
+                    "action": result.skill.intent.action.value,
+                    "object_name": result.skill.intent.object_name,
+                    "parameters": result.skill.intent.parameters,
+                    "confidence": result.skill.intent.confidence,
+                },
+                "tasks": [
+                    {"type": t.type.value, "description": t.description}
+                    for t in result.skill.task_graph.tasks
+                ],
+                "ir": result.ir.to_dict(),
+                "diagnostics": [d.to_dict() for d in result.diagnostics],
+            }
+            if result.pipeline is not None:
+                compile_result["pipeline"] = result.pipeline.to_dict()
+            if result.skill_pipeline is not None:
+                compile_result["skill_pipeline"] = result.skill_pipeline.to_dict()
+
+            spec = ROBOT_REGISTRY.get(robot_id)
+            robot_spec_dict = {
+                "gripper_type": spec.gripper_type if spec else "unknown",
+                "payload_capacity_kg": spec.payload_capacity_kg if spec else 0,
+                "max_reach_m": spec.max_reach_m if spec else 0,
+            } if spec else None
+
+            explainer = SkillExplainer()
+            explanation = explainer.explain_compilation(compile_result, robot_spec_dict)
+            self._send_json({
+                "instruction": instruction,
+                "robot": robot_id,
+                "explanation": explanation.text,
+                "model": explanation.model,
+                "latency_s": round(explanation.latency_s, 3),
+                "error": explanation.error,
+            }, status=200 if explanation.text else 503)
+
+        elif path == "/api/ai/diagnose":
+            from roboweaver.runtime.ai_recovery import AIRecoveryAdvisor
+
+            diagnostic_code = query.get("diagnostic", [""])[0].upper()
+            diagnostic_failures = {
+                "RW201": "PERCEPTION_FAILED",
+                "RW301": "PERCEPTION_FAILED",
+                "RW302": "GRASP_FAILED",
+                "RW303": "TARGET_UNREACHABLE",
+                "RW304": "JOINT_LIMIT_VIOLATED",
+                "RW305": "COLLISION_DETECTED",
+                "RW306": "COLLISION_DETECTED",
+                "RW501": "JOINT_LIMIT_VIOLATED",
+                "RW502": "IK_TIMEOUT",
+                "RW505": "JOINT_LIMIT_VIOLATED",
+                "RW506": "TIMEOUT",
+                "RW507": "COLLISION_DETECTED",
+                "RW601": "TIMEOUT",
+                "RW602": "COLLISION_DETECTED",
+                "RW603": "TIMEOUT",
+                "RW604": "TARGET_UNREACHABLE",
+                "RW605": "COLLISION_DETECTED",
+            }
+            if diagnostic_code and diagnostic_code not in diagnostic_failures:
+                self._send_json({"error": f"Unknown diagnostic code '{diagnostic_code}'"}, status=400)
+                return
+            failure_mode = query.get(
+                "failure", [diagnostic_failures.get(diagnostic_code, "GRASP_FAILED")]
+            )[0]
+            robot_id = query.get("robot", ["franka_panda"])[0]
+            action = query.get("action", ["PICK"])[0]
+
+            from roboweaver.runtime.recovery import RecoveryEngine, FailureMode as FM
             try:
-                spec = ROBOT_REGISTRY[robot_id]
-                bridge = UniversalRobotDriver.connect_robot(spec, protocol=protocol, uri=uri)
-                status = bridge.connect()
+                fm = FM(failure_mode)
+            except ValueError:
+                self._send_json({"error": f"Unknown failure mode '{failure_mode}'"}, status=400)
+                return
+
+            engine = RecoveryEngine()
+            plan = engine.diagnose(fm)
+
+            spec = ROBOT_REGISTRY.get(robot_id)
+            spec_dict = {
+                "dof": spec.dof if spec else 7,
+                "gripper_type": spec.gripper_type if spec else "unknown",
+            }
+
+            advisor = AIRecoveryAdvisor()
+            advice = advisor.advise(
+                failure_mode=failure_mode,
+                rule_based_action=plan.recommended_action.value,
+                rule_based_reason=plan.reason,
+                robot_id=robot_id,
+                robot_spec=spec_dict,
+                skill_context={"action": action, "diagnostic_code": diagnostic_code or None},
+            )
+
+            self._send_json({
+                "failure_mode": failure_mode,
+                "diagnostic_code": diagnostic_code or None,
+                "robot": robot_id,
+                "rule_based_action": advice.rule_based_action,
+                "rule_based_reason": advice.rule_based_reason,
+                "ai_explanation": advice.ai_explanation,
+                "ai_root_cause": advice.ai_root_cause,
+                "fix_description": advice.fix_description,
+                "confidence": advice.confidence,
+                "suggested_parameter_changes": advice.ai_suggested_params,
+                "model": advice.model,
+                "latency_s": round(advice.latency_s, 3),
+                "error": advice.error,
+            })
+
+        elif path == "/api/ai/compose":
+            from roboweaver.nlu.skill_composer import SkillComposer
+
+            instruction = query.get("instruction", [""])[0]
+            if not instruction:
+                self._send_json({"error": "'instruction' query param is required"}, status=400)
+                return
+            if self._reject_if_too_long(instruction, "instruction"):
+                return
+
+            composer = SkillComposer()
+            composition = composer.compose(instruction)
+
+            self._send_json({
+                "original_instruction": composition.original_instruction,
+                "steps": [
+                    {
+                        "step_id": s.step_id,
+                        "instruction": s.instruction,
+                        "action": s.action,
+                        "target_object": s.target_object,
+                        "suggested_robot": s.suggested_robot,
+                        "depends_on": s.depends_on,
+                        "reasoning": s.reasoning,
+                    }
+                    for s in composition.steps
+                ],
+                "suggested_robots": composition.suggested_robots,
+                "choreography_prompt": composition.choreography_prompt,
+                "model": composition.model,
+                "latency_s": round(composition.latency_s, 3),
+                "error": composition.error,
+            }, status=200 if composition.steps else 503)
+
+        elif path == "/api/ai/enrich":
+            from roboweaver.knowledge.ai_enrichment import KnowledgeGraphEnricher
+
+            mode = query.get("mode", ["edges"])[0]
+            enricher = KnowledgeGraphEnricher()
+
+            if mode == "describe":
+                robot_id = query.get("robot", [""])[0]
+                if not robot_id:
+                    self._send_json({"error": "'robot' param required for describe mode"}, status=400)
+                    return
+                result = enricher.describe_robot(robot_id)
                 self._send_json({
-                    "robot_id": status.robot_id,
-                    "is_connected": status.is_connected,
-                    "protocol": status.protocol,
-                    "dof": status.dof,
-                    "active_controllers": status.active_controllers,
-                    "latency_ms": status.latency_ms,
-                    "message": status.message,
+                    "mode": "describe",
+                    "descriptions": [
+                        {
+                            "robot_id": d.robot_id,
+                            "summary": d.summary,
+                            "strengths": d.strengths,
+                            "limitations": d.limitations,
+                            "ideal_tasks": d.ideal_tasks,
+                        }
+                        for d in result.robot_descriptions
+                    ],
+                    "model": result.model,
+                    "latency_s": round(result.latency_s, 3),
+                    "error": result.error,
                 })
-            except Exception as exc:
-                self._send_json({"error": str(exc), "is_connected": False}, status=400)
+            elif mode == "summary":
+                node_id = query.get("node", [""])[0]
+                if not node_id:
+                    self._send_json({"error": "'node' param required for summary mode"}, status=400)
+                    return
+                graph = build_graph_from_registry()
+                result = enricher.summarize_obsidian_node(graph, node_id)
+                self._send_json({
+                    "mode": "summary",
+                    "summaries": [
+                        {"node_id": s.node_id, "summary": s.summary}
+                        for s in result.obsidian_summaries
+                    ],
+                    "model": result.model,
+                    "latency_s": round(result.latency_s, 3),
+                    "error": result.error,
+                }, status=200 if result.obsidian_summaries else 503)
+            elif mode == "pairings":
+                result = enricher.suggest_pairings()
+                self._send_json({
+                    "mode": "pairings",
+                    "pairings": [
+                        {
+                            "robot_a": p.robot_a,
+                            "robot_b": p.robot_b,
+                            "reasoning": p.reasoning,
+                            "suggested_tasks": p.suggested_tasks,
+                        }
+                        for p in result.robot_pairings
+                    ],
+                    "model": result.model,
+                    "latency_s": round(result.latency_s, 3),
+                    "error": result.error,
+                })
+            else:
+                graph = build_graph_from_registry()
+                existing_edges = [
+                    (
+                        edge.target_id.removeprefix("robot_"),
+                        edge.source_id.removeprefix("skill_").upper(),
+                    )
+                    for edge in graph.edges
+                    if edge.relation.value == "SUITABLE_FOR"
+                    and edge.source_id.startswith("skill_")
+                    and edge.target_id.startswith("robot_")
+                ]
+                result = enricher.suggest_edges(existing_edges)
+                self._send_json({
+                    "mode": "edges",
+                    "suggestions": [
+                        {
+                            "robot_id": e.robot_id,
+                            "skill_category": e.skill_category,
+                            "confidence": e.confidence,
+                            "reasoning": e.reasoning,
+                        }
+                        for e in result.edge_suggestions
+                    ],
+                    "model": result.model,
+                    "latency_s": round(result.latency_s, 3),
+                    "error": result.error,
+                })
+
+        elif path == "/api/ai/chat":
+            from roboweaver.nlu.ollama_manager import get_manager
+
+            message = query.get("message", [""])[0]
+            if not message:
+                self._send_json({"error": "'message' query param is required"}, status=400)
+                return
+            if self._reject_if_too_long(message, "message"):
+                return
+
+            mgr = get_manager()
+            if query.get("stream", ["0"])[0] == "1":
+                self._send_ai_chat_stream(mgr, message)
+                return
+            resp = mgr.generate(
+                prompt=message,
+                feature="chat",
+                system=(
+                    "You are RoboWeaver AI, a helpful assistant for the RoboWeaver "
+                    "robotics compiler platform. You help users understand robot skill "
+                    "compilation, motion planning, RoboIR, behavior trees, and the "
+                    "RoboWeaver pipeline. Be precise, technical, and concise."
+                ),
+                temperature=0.4,
+            )
+            self._send_json({
+                "message": message,
+                "response": resp.text,
+                "model": resp.model,
+                "latency_s": round(resp.latency_s, 3),
+                "error": resp.error,
+            }, status=200 if resp.text else 503)
 
         elif path == "/" or path == "/index.html":
             self._send_json(
@@ -696,12 +1129,14 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Request-ID", getattr(self, "_request_id", "unknown"))
         # Echoes the real, already-validated request Origin back (do_GET already
         # rejected anything not matching _ALLOWED_ORIGIN_RE) instead of "*" --
         # a non-browser client (no Origin header) needs no CORS header at all.
         origin = getattr(self, "_request_origin", None)
         if origin is not None:
             self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(body)
 
@@ -717,8 +1152,110 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             return True
         return False
 
+    def _connect_robot(self, payload: dict[str, Any]) -> None:
+        robot_id = payload.get("robot", "franka_panda")
+        protocol = payload.get("protocol", "ros2")
+        uri = payload.get("uri", "ros2://localhost")
+        if not all(isinstance(value, str) for value in (robot_id, protocol, uri)):
+            self._send_json({"error": "robot, protocol, and uri must be strings."}, status=400)
+            return
+        if robot_id not in ROBOT_REGISTRY:
+            self._send_json(
+                {"error": f"Unknown robot id '{robot_id}'.", "is_connected": False}, status=400
+            )
+            return
+        try:
+            spec = ROBOT_REGISTRY[robot_id]
+            bridge = resolve_bridge_class(protocol)(spec, uri)
+            status = bridge.connect()
+            self._send_json({
+                "robot_id": status.robot_id,
+                "is_connected": status.is_connected,
+                "protocol": status.protocol,
+                "dof": status.dof,
+                "active_controllers": status.active_controllers,
+                "latency_ms": status.latency_ms,
+                "message": status.message,
+            }, status=200 if status.is_connected else 400)
+        except Exception:
+            logger.exception("Robot connection failed request_id=%s robot_id=%s", self._request_id, robot_id)
+            self._send_json(
+                {"error": "connection_failed", "is_connected": False, "request_id": self._request_id},
+                status=400,
+            )
+
+    def _pull_ai_model(self, payload: dict[str, Any]) -> None:
+        from roboweaver.nlu.ollama_manager import get_manager
+        model = payload.get("model")
+        if not isinstance(model, str) or not model.strip():
+            self._send_json({"error": "'model' must be a non-empty string."}, status=400)
+            return
+        model = model.strip()
+        if len(model) > 128 or any(c.isspace() for c in model):
+            self._send_json({"error": "Invalid Ollama model name."}, status=400)
+            return
+        success, message = get_manager().pull_model(model)
+        self._send_json(
+            {"success": success, "model": model, "message": message},
+            status=200 if success else 503,
+        )
+
+    def _configure_ai_model(self, payload: dict[str, Any]) -> None:
+        from roboweaver.nlu.ollama_manager import get_manager
+        feature = payload.get("feature")
+        model = payload.get("model")
+        if not isinstance(feature, str) or not isinstance(model, str):
+            self._send_json({"error": "'feature' and 'model' must be strings."}, status=400)
+            return
+        mgr = get_manager()
+        pulled = {m.name for m in mgr.list_models()}
+        if model not in pulled:
+            self._send_json(
+                {"error": f"Model '{model}' is not pulled locally."}, status=400,
+            )
+            return
+        try:
+            mgr.set_model_for_feature(feature, model)
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+        self._send_json({
+            "success": True,
+            "feature": feature,
+            "model": mgr.model_for_feature(feature),
+        })
+
+    def _send_ai_chat_stream(self, manager: Any, message: str) -> None:
+        """Proxy Ollama's token stream as newline-delimited JSON."""
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("X-Request-ID", self._request_id)
+        if self._request_origin is not None:
+            self.send_header("Access-Control-Allow-Origin", self._request_origin)
+            self.send_header("Vary", "Origin")
+        self.end_headers()
+        system = (
+            "You are RoboWeaver AI, a helpful assistant for the RoboWeaver robotics "
+            "compiler platform. Help users understand robot skill compilation, motion "
+            "planning, RoboIR, behavior trees, and safety. Be precise and concise."
+        )
+        for chunk in manager.generate_stream(
+            prompt=message, feature="chat", system=system, temperature=0.4,
+        ):
+            payload = {
+                "token": chunk.text,
+                "done": chunk.done,
+                "model": chunk.model,
+                "latency_s": round(chunk.latency_s, 3),
+                "error": chunk.error,
+            }
+            self.wfile.write(json.dumps(payload).encode("utf-8") + b"\n")
+            self.wfile.flush()
+
     def log_message(self, format, *args):
-        pass  # Quiet logging
+        logger.info("client=%s request_id=%s %s", self.client_address[0], getattr(self, "_request_id", "unknown"), format % args)
 
 
 class ReusableHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
@@ -737,8 +1274,14 @@ class ReusableHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
 
 def start_dashboard_server(port: int = 8080, host: str = "127.0.0.1") -> None:
     global _PROCESS_START_TIME
+    control_token = os.environ.get(_CONTROL_TOKEN_ENV, "")
+    if not _is_loopback_bind(host) and not control_token:
+        raise RuntimeError(
+            f"Refusing non-loopback bind without {_CONTROL_TOKEN_ENV}. Set a strong token first."
+        )
     server_address = (host, port)
     httpd = ReusableHTTPServer(server_address, DashboardHTTPRequestHandler)
+    httpd.control_token = control_token
     # Reset on every call, not just the first: after a self-healing restart
     # this is a fresh server instance, so "uptime" should mean time since
     # *this* instance came up, not the OS process's whole lifetime.
@@ -772,6 +1315,10 @@ def run_dashboard_supervised(port: int = 8080, host: str = "127.0.0.1", max_back
     gives up on its own.
     """
     global _SELF_HEALING_ACTIVE
+    if not _is_loopback_bind(host) and not os.environ.get(_CONTROL_TOKEN_ENV, ""):
+        raise RuntimeError(
+            f"Refusing non-loopback bind without {_CONTROL_TOKEN_ENV}. Set a strong token first."
+        )
     _SELF_HEALING_ACTIVE = True
     backoff_s = 1.0
     attempt = 0
@@ -796,4 +1343,3 @@ def run_dashboard_supervised(port: int = 8080, host: str = "127.0.0.1", max_back
                 print("\nSupervisor received interrupt during backoff -- stopping.")
                 return
             backoff_s = min(backoff_s * 2, max_backoff_s)
-
