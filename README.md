@@ -1,193 +1,243 @@
 # RoboWeaver
 
-**An LLVM-like compiler infrastructure for robotics that transforms human intent and
-robotics knowledge into verified, executable robot skills.**
+**A compiler infrastructure for turning human intent into inspectable, verified robot skills.**
 
+```text
+LLVM:       source code  -> LLVM IR -> machine code
+RoboWeaver: human intent -> RoboIR  -> robot skill
 ```
-LLVM:      Source Code  →  LLVM IR  →  Machine Code (x86 / ARM / RISC-V)
-RoboWeaver: Human Intent →  RoboIR   →  Robot Skill (Franka / UR / Pepper / … via a Robot Backend)
+
+RoboWeaver gives task understanding, motion planning, safety analysis, simulation,
+code generation, deployment, and recovery one shared intermediate representation:
+**RoboIR**. The compiler is deterministic by default. A local Ollama co-pilot can
+explain results, propose compositions and recovery options, and review generated code,
+but it cannot bypass diagnostics, verification, or deployment gates.
+
+> RoboWeaver is research and simulation software. It is not a certified robot safety
+> controller; read the [production and physical-robot gate](docs/PRODUCTION.md) before
+> connecting hardware.
+
+[Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) ·
+[Research positioning](docs/RESEARCH.md) · [Benchmarks](docs/BENCHMARKS.md) ·
+[Production](docs/PRODUCTION.md) · [Compiler change log](docs/COMPILER_ROADMAP.md)
+
+## See the system
+
+These are captures of the real Next.js dashboard running against the Python backend,
+not design mockups.
+
+[![RoboWeaver overview showing the compiler pipeline and live engine state](docs/media/overview.png)](docs/media/overview.png)
+
+| Compile and inspect | Compare robot targets |
+|---|---|
+| [![Compiler pass trace, diagnostics, and RoboIR output](docs/media/compiler.png)](docs/media/compiler.png) | [![Cross-robot cost and capability comparison](docs/media/compare.png)](docs/media/compare.png) |
+| **Simulate the embodiment** | **Explore the knowledge graph** |
+| [![Three.js digital twin of the Inspire Hand](docs/media/digital-twin.png)](docs/media/digital-twin.png) | [![Interactive robotics knowledge graph](docs/media/knowledge-graph.png)](docs/media/knowledge-graph.png) |
+| **Browse registered hardware** | **Watch the end-to-end flow** |
+| [![Fleet registry with robot capabilities and generated URDF downloads](docs/media/fleet-registry.png)](docs/media/fleet-registry.png) | [![RoboWeaver dashboard walkthrough](docs/media/demo.gif)](docs/media/demo.gif) |
+
+## Why a compiler?
+
+“Pick up the red cube” sounds simple. Executing it safely requires a target robot,
+capability checks, a task graph, kinematics, trajectories, safety constraints,
+simulation evidence, controller-specific output, and observable runtime behavior.
+Without a shared representation, each layer quietly makes its own assumptions.
+
+RoboWeaver makes those assumptions explicit. Every compiler stage consumes typed data
+and produces an inspectable result. Missing capabilities and unsafe plans become
+structured diagnostics instead of late runtime surprises.
+
+```text
+Error RW102: Cannot compile skill 'pick_and_place_v1' for backend 'ur5e_backend'.
+  Reason: RoboIR requires sensing.force_torque; the target does not declare it.
+  Fixes:  attach and register the sensor, or select a compatible controller.
 ```
 
-**Docs:** [Architecture](docs/ARCHITECTURE.md) · [Research Positioning](docs/RESEARCH.md) ·
-[Roadmap](docs/ROADMAP.md) · [Benchmarks](docs/BENCHMARKS.md) ·
-[Original Build Record](docs/REDESIGN.md) ·
-[File-Cited Change Log](docs/COMPILER_ROADMAP.md)
+The same RoboIR can be analyzed, diffed across robot embodiments, simulated, packaged
+for ROS 2 or URScript, and handed to a registered backend.
 
----
+## What works today
 
-## Demo
+| Area | Current implementation |
+|---|---|
+| Compiler | Typed RoboIR, an LLVM/MLIR-style pass manager, timed pass traces, static analysis, optimization, and RW1xx–RW6xx diagnostics |
+| Robots | Registry-backed robot specifications, N-DOF kinematics, URDF/STL export, discovery, and protocol-specific bridge selection |
+| Planning | Task routing for 17 natural-language skill categories, graph-derived robot candidates, trajectory planning, and cross-robot cost comparison |
+| Verification | Capability checks, workspace and floor constraints, bounded formal verification, simulation validation, and fail-closed deployment |
+| Code generation | Deterministic ROS 2 packages, BehaviorTree.CPP/Groot2 XML, URScript, deployment manifests, and `.rwsp` archives |
+| Runtime | Native simulation, optional MuJoCo, telemetry, execution memory, deterministic recovery, and opt-in AI recovery advice |
+| Knowledge | A registry-ingested robotics graph, path queries, package recommendations, interactive visualization, and Obsidian export |
+| Local AI | Ollama health and model discovery, parsing, explanations, diff summaries, composition, recovery advice, graph enrichment, chat, and code-review sidecars |
+| Interface | CLI plus a localhost-first dashboard with compiler, comparison, workcell, benchmark, fleet, digital-twin, graph, and AI co-pilot views |
+| Operations | Backend and frontend containers, liveness/readiness probes, bearer protection for remote binds, Origin validation, and dependency/build checks in CI |
 
-The dashboard below is the real Next.js frontend talking to the real Python backend
-(`roboweaver dashboard`) — every screenshot and the recording underneath it come from
-the app actually running, not mockups.
+The honest gaps still matter: perception is not a production sensor pipeline, RoboIR
+is not yet a general computational graph, motion planning needs deeper
+collision-aware algorithms, multi-robot scheduling is limited, and verification is
+not research- or certification-grade. The maintained list is in the
+[roadmap](docs/ROADMAP.md).
 
-![RoboWeaver dashboard walkthrough: compiling a skill, the Inspire Hand digital twin, and the knowledge graph](docs/media/demo.gif)
-
-| Compiler + Debugger | Digital Twin (real three.js) | Knowledge Graph |
-|---|---|---|
-| [![Compiler view](docs/media/compiler.png)](docs/media/compiler.png) | [![Digital twin view](docs/media/digital-twin.png)](docs/media/digital-twin.png) | [![Knowledge graph view](docs/media/knowledge-graph.png)](docs/media/knowledge-graph.png) |
-
-Run it yourself: [Installation](#installation) below, or jump to [Quick Start](#quick-start).
-
----
-
-## Introduction
-
-Turning "pick the red cube and place it in the box" into a robot doing that correctly
-requires task understanding, motion planning, safety checking, code generation for a
-specific middleware, and execution. Most robotics projects rebuild this chain by hand,
-per robot, per skill, with no shared representation a planner, a simulator, and a code
-generator can all agree on. RoboWeaver is that shared representation — **RoboIR** — and
-the compiler pipeline built around it: a real pass manager, real static analysis and
-optimization passes, a real plugin-based backend framework, and a real (bounded, scoped)
-knowledge, memory, and verification layer around the core pipeline.
-
-One pipeline, one intermediate representation, each stage a strict transformation of
-the previous stage's typed output. A skill compiled by RoboWeaver is inspectable at
-every stage: what was understood from the instruction, what RoboIR was generated, what
-motion was planned, what was verified in simulation, what gets packaged and deployed —
-and now, what real robots the knowledge graph considers candidates before any of that
-even runs. Nothing in the project exists unless it implements a pipeline stage, is data
-a stage reads, or is a way for a human to drive the pipeline.
-
-## Engineering Philosophy
-
-- **One core, not ten projects.** Every module names the stage it belongs to.
-- **State what's real. Never round up.** "This mechanism exists but has zero
-  accumulated data yet" is worth more to a robotics engineer's trust than "autonomous
-  memory engine continuously evolves skills" describing code that isn't there.
-- **No stage silently swallows a failure.** A failed simulation, a safety violation, or
-  a missing required capability stops the pipeline with a structured diagnostic — never
-  a logged warning that compilation proceeds past anyway.
-- **Determinism before intelligence.** Task Understanding is a deterministic parser
-  today, not an LLM. An LLM-backed backend (the connection advisor) is additive and
-  explicitly optional, never a silent replacement for the reproducible default.
-- **Every "done" claim is cited by file, and usually by test.** This isn't a slogan —
-  every phase in `docs/COMPILER_ROADMAP.md` names the exact module and test file, and
-  says what's still deferred and why, rather than letting a partial implementation read
-  as complete.
-
-## Architecture at a Glance
+## Architecture
 
 ```mermaid
 flowchart LR
-    K[Knowledge Graph] --> U[Understanding] --> IR[RoboIR] --> PM[Pass Manager]
-    PM --> V[Verification] --> P[Packaging] --> B[Robot Backend]
-    B --> R[Runtime] --> M[Monitoring] --> Mem[Execution Memory & Optimization]
-    Mem -.-> K
+    I[Human intent] --> U[Task understanding]
+    K[Knowledge graph] --> U
+    U --> IR[RoboIR]
+    IR --> PM[Pass manager]
+    PM --> V[Safety and simulation]
+    V --> C[Code generation and packaging]
+    C --> B[Robot backend]
+    B --> R[Runtime and telemetry]
+    R --> M[Execution memory]
+    M -. outcomes .-> K
+
+    O[Optional local Ollama] -. explain and advise .-> U
+    O -. review .-> C
+    O -. recovery options .-> R
+    O -. enrich .-> K
 ```
 
-RoboIR is the fixed point every later stage reads. Robot Backend is a real,
-registry-based interface (`Ros2Backend`, `UrScriptBackend`, register your own). The
-Knowledge Graph is a real input to compilation now, not just an export target — full
-detail, including what's honestly still a metadata pipeline rather than a computational
-graph, in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+RoboIR is the fixed point: later stages do not reinterpret the original sentence.
+Robot integrations sit behind a registry-based backend interface, so a new backend
+does not require a parallel compiler. The AI layer is deliberately a sidecar. If
+Ollama is stopped or a model fails, the deterministic pipeline still works.
 
-**RoboIR**, condensed:
+## Install
 
-```yaml
-skill:
-  id: skill_pick_red_cube_v1
-intent:
-  action: grasp
-  object: { type: cube, color: red, role: source }
-required_capabilities:
-  perception: [object_detection, pose_estimation]
-  manipulation: [grasp_planning, inverse_kinematics]
-capability_claims: # real confidence + provenance, grounded in the target RobotSpec
-  - { name: sensing.force_torque, confidence: 1.0, verified: true, source: robot_spec }
-```
-
-**Compiler Debugger**, condensed:
-
-```
-Error RW102: Cannot compile skill 'pick_and_place_v1' for backend 'ur5e_backend'.
-  Reason:   RoboIR requires sensing.force_torque; the target backend does not
-            declare a force/torque sensor.
-  Fixes:    1. Attach and register a force/torque sensor.
-            2. Change execution.controller.type to "position".
-```
-
-A skill that needs a capability the target robot doesn't declare fails at compile time
-with a structured, fixable error — not a silent bad plan. Try it:
-`roboweaver compile "Tighten the bolt" --robot temi` raises exactly this, because Temi
-is a mobile base with no force/torque sensor. Full schema, the RW1xx–RW6xx diagnostic
-taxonomy, and the real per-pass `--explain-passes` trace: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
-
-## What's Real Today
-
-A real Pass Manager (LLVM/MLIR-style, per-pass timed, full inspectable trace); real
-static analysis and optimization passes; a real plugin/backend framework; a real
-digital twin interface; real execution memory and case-based recovery; a real
-multi-objective cost model that the knowledge graph now feeds candidates into; a real
-safety kernel and bounded formal verification; RoboBench (a real compile-pipeline
-benchmark); a real, generalized motion planner reaching all 17 NL-routable skill
-categories; a real, registry-ingested knowledge graph with Obsidian export; a hardened,
-localhost-only dashboard API; a pipeline-first Compiler Studio frontend — real per-pass
-flow visualization, a real cross-robot RoboIR diff view, and a real three.js digital
-twin.
-
-Full list with file citations, plus what's genuinely still open and why (perception,
-RoboIR-as-computational-graph, motion planning as a real pass, more genuine
-optimization passes, multi-robot scheduling, research-grade verification):
-[`docs/ROADMAP.md`](docs/ROADMAP.md).
-
-## Installation
+RoboWeaver supports Python 3.10–3.12. The dashboard uses Node.js 22.
 
 ```bash
 git clone https://github.com/Siddharthpatni/Roboweaver.git
 cd Roboweaver
-pip install -e .              # add ".[sim]" for the MuJoCo-backed simulator
+python -m pip install -e .
+```
+
+Add `.[sim]` for MuJoCo support or `.[test]` for the development test tools.
+
+Start the API and dashboard in separate terminals:
+
+```bash
+roboweaver dashboard --port 8080
 ```
 
 ```bash
-cd frontend && npm install && npm run dev   # http://localhost:3000
+cd frontend
+npm ci
+npm run dev
 ```
 
-## Quick Start
+Open [http://localhost:3000](http://localhost:3000). The API binds to
+`127.0.0.1:8080` by default.
+
+## Try the compiler
 
 ```bash
+# Inspect available embodiments
 roboweaver robots
-roboweaver compile "Pick up the red cube" --robot franka_panda --explain-passes
-roboweaver compare "Tighten the M8 bolt"                      # knowledge-graph-derived candidates
-roboweaver compare "Pick up the red cube" --robots franka_panda,ur5e,kuka_iiwa
-roboweaver benchmark
+
+# Compile and show every pass
+roboweaver compile "Pick up the red cube" \
+  --robot franka_panda --explain-passes
+
+# Let the knowledge graph choose candidates, or name them explicitly
+roboweaver compare "Tighten the M8 bolt"
+roboweaver compare "Pick up the red cube" \
+  --robots franka_panda,ur5e,kuka_iiwa
+
+# Inspect and export the robotics graph
 roboweaver graph build --json
 roboweaver graph path skill_tighten_bolt package_nav2_bringup
 roboweaver graph export-obsidian ./my-obsidian-vault
-roboweaver dashboard --port 8080      # binds 127.0.0.1 by default -- see Security below
+
+# Exercise the measured compiler pipeline
+roboweaver benchmark
 ```
 
-## Testing
+Try a deliberate capability failure as well:
 
-268 tests across 36 files cover the compiler pipeline, the Pass Manager, static
-analysis and optimization passes, RoboIR/Compiler Debugger, multi-robot choreography,
-N-DOF kinematics, ROS 2/URScript code generation, the plugin/backend framework, the
-digital twin interface, execution memory and recovery planning, the cost model
-(including graph-derived candidate selection), the safety kernel, formal verification,
-RoboBench, the knowledge graph and Obsidian export, the dashboard's Origin/input-size
-hardening, and the Inspire Hand RS485 wire protocol (including a CRC-16/MODBUS
-implementation checked against a published test vector) — all passing on Python 3.10
-and 3.12 in CI (`.github/workflows/ci.yml`).
+```bash
+roboweaver compile "Tighten the bolt" --robot temi
+```
+
+Temi is a mobile base without the manipulation and force/torque capabilities the task
+requires, so compilation stops with a structured diagnostic.
+
+## Add the local Ollama co-pilot
+
+Ollama is optional and stays on infrastructure you control. Pull a model, start the
+server, and launch RoboWeaver normally:
+
+```bash
+ollama pull llama3.1:8b
+ollama serve
+```
+
+```bash
+export OLLAMA_HOST=http://localhost:11434
+export ROBOWEAVER_MODEL_DEFAULT=llama3.1:8b
+roboweaver dashboard --port 8080
+```
+
+The dashboard discovers installed models and lets you select one. Per-feature model
+overrides are available in [`.env.example`](.env.example), so a code-focused model can
+review generated output while a smaller model handles parsing or chat.
+
+AI output is treated as untrusted advice:
+
+- explanations summarize an already completed deterministic compile;
+- composed workcells must compile through the normal RoboIR pipeline;
+- recovery suggestions do not replace deterministic recovery policy;
+- graph suggestions are returned separately and are not silently committed; and
+- code review writes an annotated candidate and JSON report beside the untouched,
+  deterministic generated file.
+
+## Run with containers
+
+```bash
+cp .env.example .env
+# Replace the placeholder ROBOWEAVER_API_TOKEN in .env.
+docker compose up --build
+```
+
+Both services publish on loopback only. The containers run as non-root users with
+read-only filesystems, dropped Linux capabilities, `no-new-privileges`, and bounded
+temporary storage. Hardware devices and ROS/DDS host networking are intentionally not
+granted by the default Compose stack. See [production operations](docs/PRODUCTION.md)
+before changing that boundary.
+
+## Tests and release checks
+
+The repository currently collects **320 tests across 44 test files**. Coverage spans
+the compiler and pass manager, diagnostics, planning, code generators, knowledge graph,
+simulation, safety and formal verification, recovery, hardware protocols, dashboard
+hardening, and every optional Ollama integration with deterministic fakes.
 
 ```bash
 python -m pytest tests/ -q
+python -m build
+
+cd frontend
+npm run lint
+npx tsc --noEmit
+npm run build
 ```
 
-## Security & Local-Only by Design
+CI runs the Python suite on 3.10 and 3.12, verifies installed dependency consistency,
+builds distributable artifacts, and checks the frontend with Node.js 22.
 
-The dashboard binds to `127.0.0.1` only by default (`roboweaver dashboard --host
-0.0.0.0` is the explicit, warned-about opt-in for LAN access) and enforces an Origin
-allow-list — any `http(s)://localhost|127.0.0.1|[::1]` port is accepted, anything else
-gets a `403` before any handler runs. CORS headers alone don't stop a cross-origin
-`fetch()` from firing (they only gate whether JS can *read* the response), so without
-this check any webpage open in a user's browser could have silently triggered a real
-side effect like `/api/connect`. Instruction/prompt query params are capped at 2000
-characters and robot-list params at 20 entries. Verified in
-`tests/test_dashboard_hardening.py` against a real, live-started server, not mocked.
+## Security model
 
----
+Local development is tokenless because the API listens only on `127.0.0.1`. Binding to
+a non-loopback address requires `ROBOWEAVER_API_TOKEN`. Requests are checked against an
+exact Origin allow-list, control operations use bounded JSON `POST` bodies, bearer
+tokens use constant-time comparison, and query sizes are capped.
+
+Those controls protect the application boundary; they do not make physical motion
+safe. Independent emergency stops, watchdogs, collision models, measured joint-state
+feedback, controller acknowledgements, validated limits, hardware-in-the-loop tests,
+and a robot-specific risk assessment remain mandatory.
 
 ## License
 
-Apache License, Version 2.0. See `LICENSE`.
+Apache License 2.0. See [LICENSE](LICENSE).
