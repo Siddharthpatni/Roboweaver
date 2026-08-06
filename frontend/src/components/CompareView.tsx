@@ -92,7 +92,7 @@ export const CompareView: React.FC = () => {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="max-w-4xl mx-auto p-8 space-y-6">
+      <div className="mx-auto max-w-4xl space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
         <div>
           <span className="kicker">Compare</span>
           <h1 className="text-[19px] font-semibold text-white mt-1">One instruction, every real target</h1>

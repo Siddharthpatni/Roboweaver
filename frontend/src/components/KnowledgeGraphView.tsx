@@ -289,7 +289,7 @@ export const KnowledgeGraphView: React.FC = () => {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="max-w-6xl mx-auto p-8 space-y-5">
+      <div className="mx-auto max-w-6xl space-y-5 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <span className="kicker">Knowledge Graph</span>
