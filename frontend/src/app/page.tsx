@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { TopNav } from '../components/nav/TopNav';
+import { viewMetaFor } from '../components/nav/viewMeta';
 import { AICopilotPanel } from '../components/AICopilotPanel';
 import { RoboWeaverAPI } from '../lib/api';
 import { ViewType, RobotProfile, NexusPackage, DiscoveredRobot, VersionInfo } from '../types';
@@ -17,6 +18,7 @@ import {
   Gauge,
   ArrowUpRight,
   AlertTriangle,
+  Activity,
   Info,
 } from 'lucide-react';
 
@@ -79,6 +81,7 @@ export default function Home() {
   const [discovered, setDiscovered] = useState<DiscoveredRobot[]>([]);
   const [version, setVersion] = useState<VersionInfo | null>(null);
   const [graphNodeCount, setGraphNodeCount] = useState(0);
+  const activeMeta = viewMetaFor(activeView);
 
   useEffect(() => {
     RoboWeaverAPI.robots()
@@ -110,13 +113,38 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-app-surface text-slate-100 overflow-hidden">
+    <div className="flex h-dvh w-full flex-col overflow-hidden bg-app-surface text-slate-100 lg:flex-row">
       <TopNav active={activeView} onNavigate={setActiveView} apiOnline={apiOnline} />
 
-      {/* AI Co-Pilot — persistent floating panel across all views */}
-      <AICopilotPanel activeView={activeView} />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="workspace-header hidden h-20 shrink-0 items-center justify-between gap-5 px-6 lg:flex xl:px-8">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.035] text-cyan-300">
+              <activeMeta.icon className="h-4 w-4" />
+            </span>
+            <div className="min-w-0">
+              <h1 className="truncate text-[15px] font-semibold text-white">{activeMeta.label}</h1>
+              <p className="truncate text-[11.5px] text-slate-500">{activeMeta.description}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.025] px-3 py-1.5 text-[11px] text-slate-400">
+              <Activity className={`h-3.5 w-3.5 ${apiOnline ? 'text-cyan-300' : 'text-rose-400'}`} />
+              {apiOnline ? 'Runtime healthy' : 'Runtime unavailable'}
+            </div>
+            <button
+              onClick={() => setActiveView('compile')}
+              className="btn-neon flex items-center gap-2 px-3.5 py-2 text-[12px]"
+            >
+              <Code2 className="h-3.5 w-3.5" /> New compilation
+            </button>
+          </div>
+        </header>
 
-      <main className="flex-1 min-h-0 overflow-hidden relative">
+        {/* AI Co-Pilot — persistent floating panel across all views */}
+        <AICopilotPanel activeView={activeView} />
+
+        <main className="relative min-h-0 flex-1 overflow-hidden">
         <ErrorBoundary resetKey={activeView}>
           {activeView === 'compile' && <CompilerView />}
           {activeView === 'compare' && <CompareView />}
@@ -130,7 +158,7 @@ export default function Home() {
 
           {activeView === 'overview' && (
             <div className="h-full overflow-y-auto">
-              <div className="max-w-6xl mx-auto p-8 space-y-8">
+              <div className="mx-auto max-w-6xl space-y-8 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
                 {/* Hero */}
                 <div className="app-card hud-corners p-7 flex flex-col md:flex-row md:items-center justify-between gap-5 relative overflow-hidden animate-fade-in-up">
                   {/* Ambient particle-like glow field */}
@@ -377,7 +405,7 @@ export default function Home() {
 
           {activeView === 'settings' && (
             <div className="h-full overflow-y-auto">
-              <div className="max-w-2xl mx-auto p-8 space-y-6">
+              <div className="mx-auto max-w-2xl space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
                 <div>
                   <span className="kicker">Settings</span>
                   <h2 className="text-[19px] font-semibold text-white mt-1">Connection & scope</h2>
@@ -460,8 +488,9 @@ export default function Home() {
               </div>
             </div>
           )}
-        </ErrorBoundary>
-      </main>
+          </ErrorBoundary>
+        </main>
+      </div>
     </div>
   );
 }
