@@ -13,10 +13,11 @@ import {
   AlertTriangle,
   Layers,
   Code2,
+  Sparkles,
 } from 'lucide-react';
 import { RoboWeaverAPI } from '../lib/api';
 import { EXAMPLE_BUILD_PROMPTS } from '../data/examplePrompts';
-import { WorkcellBuildResult } from '../types';
+import { AIComposeResult, WorkcellBuildResult } from '../types';
 
 export const WorkcellBuilderView: React.FC = () => {
   const [prompt, setPrompt] = useState(EXAMPLE_BUILD_PROMPTS[0]);
@@ -24,6 +25,9 @@ export const WorkcellBuilderView: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<WorkcellBuildResult | null>(null);
   const [copied, setCopied] = useState(false);
+  const [composeLoading, setComposeLoading] = useState(false);
+  const [composeError, setComposeError] = useState<string | null>(null);
+  const [composition, setComposition] = useState<AIComposeResult | null>(null);
 
   const handleBuild = async () => {
     if (!prompt.trim()) return;
@@ -63,6 +67,20 @@ export const WorkcellBuilderView: React.FC = () => {
     a.download = `composite_workcell_${result.workcell_name.toLowerCase()}.xml`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleAICompose = async () => {
+    if (!prompt.trim()) return;
+    setComposeLoading(true);
+    setComposeError(null);
+    setComposition(null);
+    try {
+      setComposition(await RoboWeaverAPI.aiCompose(prompt));
+    } catch (e) {
+      setComposeError(e instanceof Error ? e.message : 'The local Ollama composer is unavailable.');
+    } finally {
+      setComposeLoading(false);
+    }
   };
 
   return (
@@ -105,14 +123,24 @@ export const WorkcellBuilderView: React.FC = () => {
             <span className="text-[11.5px] text-slate-500 truncate">
               Compiles via <code className="font-data text-slate-400">PromptToWorkcellBuilder</code>
             </span>
-            <button
-              onClick={handleBuild}
-              disabled={loading}
-              className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-[#0a0c11] text-[13px] font-semibold transition-colors"
-            >
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-              {loading ? 'Compiling…' : 'Compile workcell'}
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={handleAICompose}
+                disabled={composeLoading || loading}
+                className="flex items-center gap-2 px-3.5 py-2 rounded-lg border border-violet-400/25 bg-violet-500/[0.08] text-violet-300 disabled:opacity-50 text-[12.5px] transition-colors hover:bg-violet-500/[0.13]"
+              >
+                {composeLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                {composeLoading ? 'Decomposing…' : 'AI Compose'}
+              </button>
+              <button
+                onClick={handleBuild}
+                disabled={loading}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-[#0a0c11] text-[13px] font-semibold transition-colors"
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+                {loading ? 'Compiling…' : 'Compile workcell'}
+              </button>
+            </div>
           </div>
 
           {error && (
@@ -122,6 +150,52 @@ export const WorkcellBuilderView: React.FC = () => {
             </div>
           )}
         </div>
+
+        {(composition || composeError) && (
+          <div className="app-card p-5 space-y-4 border-violet-400/20 animate-fade-in">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-violet-300" />
+                <h3 className="text-[13px] font-semibold text-slate-200">AI Compose plan</h3>
+                {composition?.model && <span className="font-data text-[10px] text-slate-600">{composition.model}</span>}
+              </div>
+              {composition?.choreography_prompt && (
+                <button
+                  onClick={() => setPrompt(composition.choreography_prompt)}
+                  className="px-3 py-1.5 rounded-md border border-violet-400/20 bg-violet-500/[0.07] text-[11.5px] text-violet-300 hover:bg-violet-500/[0.12]"
+                >
+                  Use choreography prompt
+                </button>
+              )}
+            </div>
+            {composeError && (
+              <div className="flex items-start gap-2 text-[12px] text-amber-300">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{composeError}</span>
+              </div>
+            )}
+            {composition && (
+              <div className="space-y-2">
+                {composition.steps.map((step, i) => (
+                  <div key={step.step_id} className="app-well rounded-lg p-3 grid grid-cols-[24px_1fr] gap-2.5">
+                    <span className="font-data text-[10px] text-violet-400">{i + 1}</span>
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[12.5px] text-slate-200">{step.instruction}</span>
+                        <span className="font-data text-[9.5px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-300">{step.action}</span>
+                        {step.suggested_robot && <span className="font-data text-[9.5px] text-cyan-400">{step.suggested_robot}</span>}
+                      </div>
+                      {step.reasoning && <p className="mt-1 text-[11px] text-slate-500 leading-relaxed">{step.reasoning}</p>}
+                    </div>
+                  </div>
+                ))}
+                <div className="font-data text-[10px] text-slate-600">
+                  {(composition.latency_s * 1000).toFixed(0)}ms · suggestions require compiler verification
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Results */}
         {result && (
