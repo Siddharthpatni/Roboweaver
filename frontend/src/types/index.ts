@@ -99,6 +99,10 @@ export interface IRDiffResult {
   objects_added: RoboIRObject[];
   objects_removed: RoboIRObject[];
   objects_changed: { before: RoboIRObject; after: RoboIRObject }[];
+  explanation?: string | null;
+  explanation_model?: string;
+  explanation_latency_s?: number;
+  explanation_error?: string | null;
 }
 
 export interface CompilerDiagnostic {
@@ -117,6 +121,7 @@ export interface CompiledSkillResult {
     action: string;
     object_name: string;
     parameters: Record<string, unknown>;
+    confidence: number;
   };
   tasks: { type: string; description: string }[];
   behavior_tree_xml: string;
@@ -126,6 +131,11 @@ export interface CompiledSkillResult {
   pipeline?: PipelineTraceResult;
   /** Only present when compiled with `?explain_passes=1`. */
   skill_pipeline?: PipelineTraceResult;
+  /** Present only when compiled with `?explain=1`; null means Ollama was unavailable. */
+  explanation?: string | null;
+  explanation_model?: string;
+  explanation_latency_s?: number;
+  explanation_error?: string | null;
 }
 
 export class CompilationFailedError extends Error {
@@ -284,7 +294,7 @@ export interface ConnectionAdvice {
 }
 
 /**
- * Outcome of `GET /api/connect`. The backend answers 400 with
+ * Outcome of `POST /api/connect`. The backend answers 400 with
  * `{ error, is_connected: false }` when the bridge can't be established, so
  * `error` and `is_connected` are the two fields worth branching on.
  */
@@ -438,4 +448,126 @@ export interface GraphPathResult {
   from: string;
   to: string;
   path: string[] | null;
+}
+
+// ── AI / Ollama Types ──────────────────────────────────────────────
+
+export interface AIModelInfo {
+  name: string;
+  size_bytes: number;
+  parameter_size: string;
+  quantization: string;
+}
+
+/** Full Ollama status from `/api/ai/status`. */
+export interface AIStatusResult {
+  available: boolean;
+  host: string;
+  version: string | null;
+  default_model: string;
+  feature_models: Record<string, string>;
+  recommendations: Record<string, string>;
+  models: AIModelInfo[];
+  avg_latency_s: number | null;
+  total_calls: number;
+  estimated_input_tokens: number;
+  estimated_output_tokens: number;
+  error: string | null;
+}
+
+/** AI-generated explanation of a compiled skill. */
+export interface AIExplanationResult {
+  instruction: string;
+  robot: string;
+  explanation: string | null;
+  model: string;
+  latency_s: number;
+  error: string | null;
+}
+
+/** AI-enriched recovery advice for a runtime failure. */
+export interface AIDiagnoseResult {
+  failure_mode: string;
+  robot: string;
+  rule_based_action: string;
+  rule_based_reason: string;
+  ai_explanation: string | null;
+  ai_root_cause: string | null;
+  fix_description: string | null;
+  confidence: number | null;
+  suggested_parameter_changes: Record<string, unknown> | null;
+  model: string;
+  latency_s: number;
+  error: string | null;
+}
+
+export interface ComposedStepResult {
+  step_id: string;
+  instruction: string;
+  action: string;
+  target_object: string;
+  suggested_robot: string | null;
+  depends_on: string[];
+  reasoning: string;
+}
+
+/** AI-decomposed skill composition. */
+export interface AIComposeResult {
+  original_instruction: string;
+  steps: ComposedStepResult[];
+  suggested_robots: string[];
+  choreography_prompt: string;
+  model: string;
+  latency_s: number;
+  error: string | null;
+}
+
+/** AI chat response. */
+export interface AIChatResult {
+  message: string;
+  response: string | null;
+  model: string;
+  latency_s: number;
+  error: string | null;
+}
+
+export interface AIModelsResult {
+  available: boolean;
+  models: AIModelInfo[];
+}
+
+export interface AIEdgeSuggestion {
+  robot_id: string;
+  skill_category: string;
+  confidence: number;
+  reasoning: string;
+}
+
+export interface AIEnrichmentResult {
+  mode: 'edges' | 'describe' | 'pairings' | 'summary';
+  suggestions?: AIEdgeSuggestion[];
+  descriptions?: Array<{
+    robot_id: string;
+    summary: string;
+    strengths: string[];
+    limitations: string[];
+    ideal_tasks: string[];
+  }>;
+  pairings?: Array<{
+    robot_a: string;
+    robot_b: string;
+    reasoning: string;
+    suggested_tasks: string[];
+  }>;
+  summaries?: Array<{ node_id: string; summary: string }>;
+  model: string;
+  latency_s: number;
+  error: string | null;
+}
+
+export interface AIModelMutationResult {
+  success: boolean;
+  model: string;
+  feature?: string;
+  message?: string;
 }

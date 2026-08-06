@@ -21,6 +21,14 @@ import {
   KnowledgeGraphResult,
   GraphPathResult,
   IRDiffResult,
+  AIStatusResult,
+  AIExplanationResult,
+  AIDiagnoseResult,
+  AIComposeResult,
+  AIChatResult,
+  AIModelsResult,
+  AIEnrichmentResult,
+  AIModelMutationResult,
 } from '../types';
 
 const API_BASE = process.env.NEXT_PUBLIC_ROBOWEAVER_API ?? 'http://localhost:8080';
@@ -45,11 +53,15 @@ export class TimeoutError extends Error {
   }
 }
 
-async function fetchWithTimeout(path: string, timeoutMs: number): Promise<Response> {
+async function fetchWithTimeout(
+  path: string,
+  timeoutMs: number,
+  init: RequestInit = {}
+): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(`${API_BASE}${path}`, { signal: controller.signal });
+    return await fetch(`${API_BASE}${path}`, { ...init, signal: controller.signal });
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') {
       throw new TimeoutError(path, timeoutMs);
@@ -68,8 +80,8 @@ async function getJSON<T>(path: string, timeoutMs: number = TIMEOUT_FAST_MS): Pr
   return res.json() as Promise<T>;
 }
 
-async function compileJSON(path: string): Promise<CompiledSkillResult> {
-  const res = await fetchWithTimeout(path, TIMEOUT_FAST_MS);
+async function compileJSON(path: string, timeoutMs: number = TIMEOUT_FAST_MS): Promise<CompiledSkillResult> {
+  const res = await fetchWithTimeout(path, timeoutMs);
   const body = await res.json();
   if (!res.ok) {
     if (body && body.error === 'compilation_failed') {
@@ -80,6 +92,62 @@ async function compileJSON(path: string): Promise<CompiledSkillResult> {
   return body as CompiledSkillResult;
 }
 
+async function postJSON<T>(path: string, payload: Record<string, unknown>, timeoutMs = TIMEOUT_FAST_MS): Promise<T> {
+  const res = await fetchWithTimeout(path, timeoutMs, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error(body?.error ?? body?.message ?? `RoboWeaver API ${path} responded ${res.status}`);
+  }
+  return body as T;
+}
+
+async function streamAIChat(
+  message: string,
+  onToken: (token: string) => void,
+): Promise<AIChatResult> {
+  const path = `/api/ai/chat?stream=1&message=${encodeURIComponent(message)}`;
+  const res = await fetchWithTimeout(path, TIMEOUT_LLM_MS);
+  if (!res.ok || !res.body) {
+    throw new Error(`RoboWeaver API ${path} responded ${res.status}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let response = '';
+  let model = '';
+  let latency_s = 0;
+  let error: string | null = null;
+
+  const consume = (line: string) => {
+    if (!line.trim()) return;
+    const chunk = JSON.parse(line) as {
+      token?: string; done?: boolean; model?: string; latency_s?: number; error?: string | null;
+    };
+    if (chunk.token) {
+      response += chunk.token;
+      onToken(chunk.token);
+    }
+    if (chunk.model) model = chunk.model;
+    if (chunk.latency_s != null) latency_s = chunk.latency_s;
+    if (chunk.error) error = chunk.error;
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) consume(line);
+    if (done) break;
+  }
+  consume(buffer);
+  return { message, response: response || null, model, latency_s, error };
+}
+
 /**
  * `/api/connect` reports a failed bridge as HTTP 400 with a real explanation in
  * the body (`{ error, is_connected: false }`). Surfacing that message is the
@@ -87,14 +155,22 @@ async function compileJSON(path: string): Promise<CompiledSkillResult> {
  * rather than collapsed into a generic "responded 400" throw. Only a genuine
  * transport failure (backend down, or timeout) rejects.
  */
-async function connectJSON(path: string): Promise<ConnectionResult> {
-  const res = await fetchWithTimeout(path, TIMEOUT_CONNECT_MS);
+async function connectJSON(payload: {
+  robot: string;
+  protocol: string;
+  uri: string;
+}): Promise<ConnectionResult> {
+  const res = await fetchWithTimeout('/api/connect', TIMEOUT_CONNECT_MS, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
   const body = (await res.json()) as ConnectionResult;
   if (!res.ok && body && typeof body.is_connected === 'boolean') {
     return body;
   }
   if (!res.ok) {
-    throw new Error(`RoboWeaver API ${path} responded ${res.status}`);
+    throw new Error(`RoboWeaver API /api/connect responded ${res.status}`);
   }
   return body;
 }
@@ -107,10 +183,17 @@ export const RoboWeaverAPI = {
     getJSON<NexusRecommendation>(`/api/nexus/recommend?prompt=${encodeURIComponent(prompt)}`),
   build: (prompt: string) =>
     getJSON<WorkcellBuildResult>(`/api/build?prompt=${encodeURIComponent(prompt)}`),
-  compile: (instruction: string, robot: string = 'franka_panda', explainPasses: boolean = false) =>
+  compile: (
+    instruction: string,
+    robot: string = 'franka_panda',
+    explainPasses: boolean = false,
+    explainAI: boolean = false,
+  ) =>
     compileJSON(
       `/api/compile?instruction=${encodeURIComponent(instruction)}&robot=${encodeURIComponent(robot)}` +
-        (explainPasses ? '&explain_passes=1' : '')
+        (explainPasses ? '&explain_passes=1' : '') +
+        (explainAI ? '&explain=1' : ''),
+      explainAI ? TIMEOUT_LLM_MS : TIMEOUT_FAST_MS,
     ),
   /** Real cost figures for one instruction on one robot (optimize/cost_model.py). */
   cost: (instruction: string, robot: string = 'franka_panda') =>
@@ -154,9 +237,12 @@ export const RoboWeaverAPI = {
    * `roboweaver diff INSTRUCTION --robot X --robot2 Y` produces on the CLI. Throws
    * with the real diagnostics when either robot genuinely can't compile the
    * instruction, rather than returning a fabricated/empty diff. */
-  diff: async (instruction: string, robot: string, robot2: string): Promise<IRDiffResult> => {
-    const path = `/api/diff?instruction=${encodeURIComponent(instruction)}&robot=${encodeURIComponent(robot)}&robot2=${encodeURIComponent(robot2)}`;
-    const res = await fetchWithTimeout(path, TIMEOUT_FAST_MS);
+  diff: async (
+    instruction: string, robot: string, robot2: string, explainAI: boolean = false,
+  ): Promise<IRDiffResult> => {
+    const path = `/api/diff?instruction=${encodeURIComponent(instruction)}&robot=${encodeURIComponent(robot)}&robot2=${encodeURIComponent(robot2)}` +
+      (explainAI ? '&explain=1' : '');
+    const res = await fetchWithTimeout(path, explainAI ? TIMEOUT_LLM_MS : TIMEOUT_FAST_MS);
     const body = await res.json();
     if (!res.ok) {
       if (body && body.error === 'compilation_failed') {
@@ -191,11 +277,7 @@ export const RoboWeaverAPI = {
       TIMEOUT_LLM_MS
     ),
   connectRobot: (robot: string, protocol: string, uri: string) =>
-    connectJSON(
-      `/api/connect?robot=${encodeURIComponent(robot)}&protocol=${encodeURIComponent(
-        protocol
-      )}&uri=${encodeURIComponent(uri)}`
-    ),
+    connectJSON({ robot, protocol, uri }),
   robotModel: (id: string) => getJSON<RobotModel>(`/api/robots/${encodeURIComponent(id)}/model`),
   /** Downloads the URDF text derived from the robot's real kinematic spec — not
    * an LLM-generated mesh; see codegen/urdf_gen.py for why. */
@@ -208,4 +290,47 @@ export const RoboWeaverAPI = {
   },
   robotFK: (id: string, q: number[]) =>
     getJSON<RobotFKResult>(`/api/robots/${encodeURIComponent(id)}/fk?q=${q.join(',')}`),
+
+  // ── AI / Ollama Endpoints ──────────────────────────────────────
+  /** Full Ollama server status: availability, pulled models, per-feature config. */
+  aiStatus: () => getJSON<AIStatusResult>('/api/ai/status', TIMEOUT_FAST_MS),
+  /** List locally pulled Ollama models. */
+  aiModels: () => getJSON<AIModelsResult>('/api/ai/models', TIMEOUT_FAST_MS),
+  aiPullModel: (model: string) =>
+    postJSON<AIModelMutationResult>('/api/ai/pull', { model }, 5 * 60_000),
+  aiConfigureModel: (feature: string, model: string) =>
+    postJSON<AIModelMutationResult>('/api/ai/config', { feature, model }),
+  /** AI explanation of a compiled skill — additive, never replaces the real compile. */
+  aiExplain: (instruction: string, robot: string = 'franka_panda') =>
+    getJSON<AIExplanationResult>(
+      `/api/ai/explain?instruction=${encodeURIComponent(instruction)}&robot=${encodeURIComponent(robot)}`,
+      TIMEOUT_LLM_MS
+    ),
+  /** AI-enriched recovery advice for a failure mode. */
+  aiDiagnose: (failure: string, robot: string = 'franka_panda', action: string = 'PICK') =>
+    getJSON<AIDiagnoseResult>(
+      `/api/ai/diagnose?failure=${encodeURIComponent(failure)}&robot=${encodeURIComponent(robot)}&action=${encodeURIComponent(action)}`,
+      TIMEOUT_LLM_MS
+    ),
+  /** Decompose a complex instruction into atomic compilable steps. */
+  aiCompose: (instruction: string) =>
+    getJSON<AIComposeResult>(
+      `/api/ai/compose?instruction=${encodeURIComponent(instruction)}`,
+      TIMEOUT_LLM_MS
+    ),
+  /** Suggest graph edges or an annotation; suggestions are never auto-applied. */
+  aiEnrich: (mode: 'edges' | 'pairings' | 'describe' | 'summary' = 'edges', id?: string) =>
+    getJSON<AIEnrichmentResult>(
+      `/api/ai/enrich?mode=${encodeURIComponent(mode)}` +
+        (mode === 'describe' && id ? `&robot=${encodeURIComponent(id)}` : '') +
+        (mode === 'summary' && id ? `&node=${encodeURIComponent(id)}` : ''),
+      TIMEOUT_LLM_MS,
+    ),
+  /** General-purpose AI chat about the RoboWeaver platform. */
+  aiChat: (message: string) =>
+    getJSON<AIChatResult>(
+      `/api/ai/chat?message=${encodeURIComponent(message)}`,
+      TIMEOUT_LLM_MS
+    ),
+  aiChatStream: streamAIChat,
 };
