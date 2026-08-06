@@ -649,7 +649,7 @@ warned opt-in); an Origin allow-list (`_ALLOWED_ORIGIN_RE`, any
 `403` in `do_GET()` *before* any handler runs — real, because CORS response
 headers alone don't stop a cross-origin `fetch()` from firing, only from
 being *read*, so the old wildcard let any open webpage silently trigger a
-real side effect like `/api/connect`. `DashboardHTTPRequestHandler.timeout =
+real side effect like `POST /api/connect`. `DashboardHTTPRequestHandler.timeout =
 60` bounds a stalled socket; instruction/prompt params capped at 2000 chars,
 robot-list params at 20. `tests/test_dashboard_hardening.py` (8 tests) spins
 up the real server on an ephemeral port.

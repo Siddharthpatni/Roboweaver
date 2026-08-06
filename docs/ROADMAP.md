@@ -110,8 +110,9 @@ In the order it makes sense to tackle them:
 9. **An LLM-backed Task Understanding backend**, strictly additive to the deterministic
    default, never a silent replacement for it.
 
-Multi-tenant auth, a skill marketplace, and mobile clients remain explicitly out of
-scope — see [`REDESIGN.md` §9](REDESIGN.md#9-roadmap).
+Single-operator bearer authentication now protects the control endpoint for remote
+deployments. Multi-tenant identity/RBAC, a skill marketplace, and mobile clients remain
+out of scope — see [`REDESIGN.md` §9](REDESIGN.md#9-roadmap).
 
 **Explicitly not planned as "credibility fixes":** buying physical robot hardware or
 running a project comparison against MoveIt/BT.CPP/Task Constructor/OpenRAVE/Tesseract
