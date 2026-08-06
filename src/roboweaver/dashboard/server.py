@@ -955,6 +955,9 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             if too_long:
                 self._send_json({"error": "Connection advice field too long.", "fields": too_long}, status=400)
                 return
+            if provider != "ollama":
+                self._send_json({"error": "provider must be 'ollama'."}, status=400)
+                return
             advice = build_advisor(provider, model).advise(endpoint)
             self._send_json({
                 "robot_id": advice.robot_id,

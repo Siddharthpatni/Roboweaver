@@ -837,9 +837,8 @@ def main() -> int:
     p_adv.add_argument("--guess", type=str, default="", help="Port-convention guess")
     p_adv.add_argument("--latency", type=float, default=0.0, help="Measured latency in ms")
     p_adv.add_argument("--provider", type=str, default="ollama",
-                       choices=["ollama", "openrouter", "anthropic", "openai"],
-                       help="ollama is local and free; the others may bill per call")
-    p_adv.add_argument("--model", type=str, default=None, help="Override the provider's default model")
+                       choices=["ollama"], help="Local Ollama runtime")
+    p_adv.add_argument("--model", type=str, default=None, help="Override the local Ollama model")
 
     # dashboard
     p_dash = subparsers.add_parser("dashboard", help="Launch web dashboard control center")

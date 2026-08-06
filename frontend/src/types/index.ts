@@ -242,15 +242,7 @@ export interface AdvisorStatus {
   ollama_available: boolean;
   ollama_host: string;
   ollama_model: string;
-  openrouter_configured: boolean;
-  openrouter_model: string;
-  anthropic_configured: boolean;
-  anthropic_model: string;
-  openai_configured: boolean;
-  openai_model: string;
-  max_output_tokens: number;
-  /** Providers that cost nothing to call. */
-  free_providers: string[];
+  providers: string[];
   supported_protocols: string[];
 }
 

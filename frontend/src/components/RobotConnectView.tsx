@@ -18,7 +18,6 @@ import {
   CircuitBoard,
   Network,
   Sparkles,
-  DollarSign,
 } from 'lucide-react';
 import { RoboWeaverAPI, TimeoutError } from '../lib/api';
 import {
@@ -156,9 +155,9 @@ export const RobotConnectView: React.FC = () => {
   // LAN sweep + LLM advisor state
   const [network, setNetwork] = useState<NetworkInfo | null>(null);
   const [subnet, setSubnet] = useState('');
-  const [provider, setProvider] = useState('ollama');
   const [advising, setAdvising] = useState<Record<string, boolean>>({});
   const [advice, setAdvice] = useState<Record<string, ConnectionAdvice>>({});
+  const provider = 'ollama';
 
   const scan = useCallback(async (range?: string) => {
     setScanning(true);
@@ -221,7 +220,7 @@ export const RobotConnectView: React.FC = () => {
     } catch (e) {
       const message =
         e instanceof TimeoutError
-          ? `${e.message} Cloud providers and a cold-loading local model can both take a while — try again.`
+          ? `${e.message} A cold-loading local model can take a while — try again.`
           : 'Backend unreachable while requesting advice.';
       setAdvice((a) => ({
         ...a,
@@ -234,15 +233,6 @@ export const RobotConnectView: React.FC = () => {
       setAdvising((a) => ({ ...a, [key]: false }));
     }
   };
-
-  const providerOptions = network
-    ? [
-        { id: 'ollama', label: 'Ollama (local)', ready: network.advisor.ollama_available, free: true },
-        { id: 'openrouter', label: 'OpenRouter', ready: network.advisor.openrouter_configured, free: true },
-        { id: 'anthropic', label: 'Anthropic', ready: network.advisor.anthropic_configured, free: false },
-        { id: 'openai', label: 'OpenAI', ready: network.advisor.openai_configured, free: false },
-      ]
-    : [];
 
   const handleConnect = async (robot: DiscoveredRobot) => {
     const key = `${robot.host}:${robot.port}`;
@@ -502,20 +492,8 @@ export const RobotConnectView: React.FC = () => {
                   <div className="flex items-center justify-between gap-2 flex-wrap pt-1 border-t border-cyan-400/[0.07]">
                     <div className="flex items-center gap-2 pt-2 flex-wrap">
                       <Sparkles className="w-3.5 h-3.5 text-violet-400 shrink-0" />
-                      <span className="text-[11.5px] text-slate-500">Identify with</span>
-                      <select
-                        value={provider}
-                        onChange={(e) => setProvider(e.target.value)}
-                        className="app-well rounded-lg px-2 py-1 text-[11.5px] text-slate-200 focus:outline-none"
-                      >
-                        {providerOptions.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.label}
-                            {p.free ? '' : ' ($)'}
-                            {p.ready ? '' : ' — not configured'}
-                          </option>
-                        ))}
-                      </select>
+                      <span className="text-[11.5px] text-slate-500">Identify with local Ollama</span>
+                      <span className={`status-dot-${network?.advisor.ollama_available ? 'online' : 'offline'}`} />
                       <button
                         onClick={() => handleAdvise(robot)}
                         disabled={advising[key]}
@@ -528,12 +506,6 @@ export const RobotConnectView: React.FC = () => {
                         )}
                         {advising[key] ? 'Asking…' : 'Ask model'}
                       </button>
-                      {providerOptions.find((p) => p.id === provider && !p.free) && (
-                        <span className="flex items-center gap-1 text-[10.5px] text-amber-300/90">
-                          <DollarSign className="w-3 h-3" />
-                          billed per call
-                        </span>
-                      )}
                     </div>
                   </div>
 

@@ -173,8 +173,7 @@ answers — verified in `tests/test_universal_platform.py`. The Inspire Hand RS4
 implements a real CRC-16/MODBUS checksum and a real serial read/write round trip,
 proven against a virtual pty loopback (`tests/test_inspire_hand_real_serial_protocol.py`)
 — no physical hand required to verify the protocol. The connection advisor (`roboweaver
-advise`) is a real, optional LLM call (Ollama local/free by default, or
-OpenRouter/Anthropic/OpenAI) that only ever *suggests* a robot id/protocol — the backend
+advise`) is a real, optional local Ollama call that only ever *suggests* a robot id/protocol — the backend
 validates it against the real registry, so a hallucinated id never reaches the UI as a
 suggestion. No physical robot or live ROS 2 graph has run against this repository's
 test suite — deliberately: faking one to look more credible would be the first real

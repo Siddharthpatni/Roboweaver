@@ -147,6 +147,14 @@ def test_too_many_robots_in_compare_is_rejected(live_server):
     print("  -> real 400 for 25 robots, compare_robots() never invoked [PASSED]")
 
 
+def test_connection_advisor_rejects_non_local_model_provider(live_server):
+    status, _, body = _get(
+        f"{live_server}/api/connect/advise?provider=remote&host=127.0.0.1&port=30002"
+    )
+    assert status == 400
+    assert body["error"] == "provider must be 'ollama'."
+
+
 def test_normal_compile_still_works_end_to_end(live_server):
     print("\n[TEST 8] Testing a real, in-bounds compile still works after the hardening changes...")
     status, _, body = _get(f"{live_server}/api/compile?instruction=Pick+up+the+red+cube&robot=franka_panda")

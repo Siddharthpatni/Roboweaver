@@ -11,13 +11,12 @@ from __future__ import annotations
 
 from roboweaver.hardware.registry_robots import ROBOT_REGISTRY
 from roboweaver.nlu.connection_advisor import (
-    MAX_OUTPUT_TOKENS,
     SUPPORTED_PROTOCOLS,
     ConnectionAdvisor,
     _Backend,
     _coerce_json_text,
-    _extract_chat_content,
     advisor_status,
+    build_advisor,
 )
 
 ENDPOINT = {
@@ -109,8 +108,7 @@ def test_non_finite_confidence_is_rejected():
 
 
 def test_markdown_fenced_json_is_recovered():
-    """Anthropic has no JSON response mode and fences its replies. The payload is
-    still valid -- discarding a correct answer over formatting would be a bug."""
+    """Local models may fence replies; valid fenced JSON remains usable."""
     fenced = '```json\n{"robot_id": "ur5e", "protocol": "sim", "confidence": 0.92, "reasoning": "port 30002"}\n```'
     advice = _advise(fenced)
     assert advice.error is None
@@ -124,33 +122,14 @@ def test_coerce_json_text_handles_prose_and_fences():
     assert _coerce_json_text('Sure! {"a":1} hope that helps') == '{"a":1}'
 
 
-def test_null_content_reports_reasoning_only_response():
-    """Reasoning models return content=null with finish_reason=length once the
-    token cap is hit. That must be a clear message, not a None into json.loads."""
-    envelope = {"choices": [{"finish_reason": "length", "message": {"content": None}}]}
-    text, error = _extract_chat_content(envelope, "OpenRouter", "some-reasoning-model")
-    assert text == ""
-    assert error is not None
-    assert str(MAX_OUTPUT_TOKENS) in error
-
-
-def test_content_blocks_are_joined():
-    envelope = {
-        "choices": [
-            {"finish_reason": "stop", "message": {"content": [{"text": '{"a":'}, {"text": "1}"}]}}
-        ]
-    }
-    text, error = _extract_chat_content(envelope, "OpenRouter", "m")
-    assert error is None
-    assert text == '{"a":1}'
-
-
-def test_advisor_status_never_leaks_key_material():
-    """Status may report *whether* a key is configured, never the key itself."""
+def test_advisor_status_is_local_only():
     status = advisor_status()
-    flat = repr(status)
-    assert "sk-" not in flat
-    for flag in ("openrouter_configured", "anthropic_configured", "openai_configured"):
-        assert isinstance(status[flag], bool)
-    # Ollama is local and free and must stay in the free list.
-    assert "ollama" in status["free_providers"]
+    assert status["providers"] == ["ollama"]
+    assert status["ollama_host"].startswith(("http://", "https://"))
+
+
+def test_advisor_factory_rejects_non_local_provider():
+    import pytest
+
+    with pytest.raises(ValueError, match="ollama"):
+        build_advisor("remote")
