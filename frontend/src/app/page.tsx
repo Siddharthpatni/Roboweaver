@@ -9,13 +9,10 @@ import { AICopilotPanel } from '../components/AICopilotPanel';
 import { RoboWeaverAPI } from '../lib/api';
 import { ViewType, RobotProfile, NexusPackage, DiscoveredRobot, VersionInfo } from '../types';
 import {
-  Wand2,
   Code2,
   Database,
-  Share2,
   Boxes,
   Radar,
-  Gauge,
   ArrowUpRight,
   AlertTriangle,
   Activity,
@@ -159,43 +156,75 @@ export default function Home() {
           {activeView === 'overview' && (
             <div className="h-full overflow-y-auto">
               <div className="mx-auto max-w-6xl space-y-8 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
-                {/* Hero */}
-                <div className="app-card hud-corners p-7 flex flex-col md:flex-row md:items-center justify-between gap-5 relative overflow-hidden animate-fade-in-up">
-                  {/* Ambient particle-like glow field */}
-                  <div
-                    className="absolute inset-0 pointer-events-none opacity-60"
-                    style={{
-                      backgroundImage:
-                        'radial-gradient(circle at 18% 30%, rgba(34,211,238,0.10) 0%, transparent 45%), radial-gradient(circle at 82% 70%, rgba(139,92,246,0.10) 0%, transparent 45%)',
-                    }}
-                  />
-                  <div className="space-y-2 max-w-xl relative">
-                    <span className="kicker">Sid Labs / RoboWeaver</span>
-                    <h1 className="text-[22px] font-semibold leading-snug text-balance text-gradient animate-gradient-shift">
-                      Human intent → RoboIR → verified robot skill
-                    </h1>
-                    <p className="text-[13px] text-slate-400 leading-relaxed">
-                      An LLVM-like compiler for robotics. Describe a skill in plain English — RoboWeaver
-                      compiles it through RoboIR, checks it against the target robot&apos;s real capabilities,
-                      and synthesizes a ROS 2 BehaviorTree package, live from the engine.
-                    </p>
+                <section className="app-card grid overflow-hidden lg:grid-cols-[1.25fr_0.75fr]">
+                  <div className="relative flex flex-col justify-center border-b border-white/[0.07] p-6 sm:p-8 lg:border-b-0 lg:border-r">
+                    <div className="pointer-events-none absolute -left-28 -top-28 h-64 w-64 rounded-full bg-cyan-300/[0.055] blur-3xl" />
+                    <div className="relative max-w-2xl">
+                      <div className="mb-4 flex flex-wrap items-center gap-2">
+                        <span className="kicker">Compiler control center</span>
+                        <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${
+                          apiOnline
+                            ? 'border-cyan-300/20 bg-cyan-300/[0.07] text-cyan-200'
+                            : 'border-rose-300/20 bg-rose-300/[0.07] text-rose-200'
+                        }`}>
+                          {apiOnline ? 'Runtime ready' : 'Runtime offline'}
+                        </span>
+                      </div>
+                      <h2 className="max-w-xl text-balance text-2xl font-semibold leading-tight tracking-[-0.025em] text-white sm:text-[32px]">
+                        Build portable robot skills with evidence at every stage.
+                      </h2>
+                      <p className="mt-4 max-w-xl text-[13px] leading-6 text-slate-400">
+                        Turn plain-language intent into RoboIR, verify it against real fleet capabilities,
+                        inspect motion in simulation, and generate a ROS 2 BehaviorTree package.
+                      </p>
+                      <div className="mt-6 flex flex-col gap-2.5 sm:flex-row">
+                        <button
+                          onClick={() => setActiveView('compile')}
+                          className="btn-neon flex items-center justify-center gap-2 px-4 py-2.5 text-[13px]"
+                        >
+                          <Code2 className="h-4 w-4" /> Start a compilation
+                        </button>
+                        <button
+                          onClick={() => setActiveView('compare')}
+                          className="flex items-center justify-center gap-2 rounded-[0.625rem] border border-white/[0.1] bg-white/[0.035] px-4 py-2.5 text-[13px] font-semibold text-slate-200 hover:border-white/[0.18] hover:bg-white/[0.06]"
+                        >
+                          Compare fleet options <ArrowUpRight className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2.5 shrink-0 relative">
-                    <button
-                      onClick={() => setActiveView('compile')}
-                      className="flex items-center gap-2 px-4 py-2.5 btn-neon text-[13px]"
-                    >
-                      <Code2 className="w-4 h-4" />
-                      Compile a skill
-                    </button>
-                    <button
-                      onClick={() => setActiveView('compare')}
-                      className="px-4 py-2.5 rounded-lg border border-cyan-400/15 hover:border-cyan-400/35 hover:bg-cyan-500/[0.06] text-slate-300 hover:text-cyan-200 text-[13px] font-medium transition-all"
-                    >
-                      Compare robots
-                    </button>
+
+                  <div className="bg-[#0b121d]/70 p-5 sm:p-6">
+                    <div className="mb-4 flex items-center justify-between">
+                      <div>
+                        <p className="text-[12px] font-semibold text-slate-200">Verified build path</p>
+                        <p className="mt-0.5 text-[10.5px] text-slate-600">From request to deployable output</p>
+                      </div>
+                      <span className="font-data text-[10px] text-cyan-300">RoboIR v{version?.ir_version ?? '—'}</span>
+                    </div>
+                    <div className="space-y-2">
+                      {[
+                        { view: 'compile' as ViewType, step: '01', label: 'Parse intent', detail: 'Normalize task and constraints' },
+                        { view: 'compare' as ViewType, step: '02', label: 'Verify target', detail: 'Check capability compatibility' },
+                        { view: 'twin' as ViewType, step: '03', label: 'Inspect safely', detail: 'Review simulated motion' },
+                        { view: 'packages' as ViewType, step: '04', label: 'Generate package', detail: 'Export ROS 2 artifacts' },
+                      ].map((stage) => (
+                        <button
+                          key={stage.step}
+                          onClick={() => setActiveView(stage.view)}
+                          className="app-well group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:border-cyan-300/20"
+                        >
+                          <span className="font-data text-[10px] font-semibold text-cyan-300">{stage.step}</span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[12px] font-semibold text-slate-200">{stage.label}</span>
+                            <span className="block truncate text-[10.5px] text-slate-600">{stage.detail}</span>
+                          </span>
+                          <ArrowUpRight className="h-3.5 w-3.5 text-slate-700 group-hover:text-cyan-300" />
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                </section>
 
                 {!apiOnline && (
                   <div className="flex items-center gap-2.5 px-4 py-3 rounded-lg bg-amber-500/[0.07] border border-amber-500/20 text-amber-300 text-[13px]">
@@ -207,72 +236,57 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* KPI row */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4 stagger-children">
+                <section aria-label="System metrics" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 stagger-children">
                   {[
                     {
                       view: 'compile' as ViewType,
-                      label: 'RoboIR compiler',
+                      label: 'Compiler runtime',
                       value: apiOnline ? 'Ready' : 'Offline',
+                      detail: version ? `v${version.roboweaver_version} · ${Math.floor(version.uptime_seconds ?? 0)}s uptime` : 'Awaiting runtime metadata',
                       icon: Code2,
                       tint: apiOnline ? 'text-cyan-400' : 'text-rose-400',
                     },
                     {
-                      view: 'workcell' as ViewType,
-                      label: 'Workcell builder',
-                      value: apiOnline ? 'Ready' : 'Offline',
-                      icon: Wand2,
-                      tint: apiOnline ? 'text-cyan-400' : 'text-rose-400',
+                      view: 'robots' as ViewType,
+                      label: 'Fleet coverage',
+                      value: String(robots.length),
+                      detail: `${discovered.length} endpoint${discovered.length === 1 ? '' : 's'} currently reachable`,
+                      icon: Boxes,
+                      tint: 'text-cyan-400',
                     },
                     {
                       view: 'packages' as ViewType,
-                      label: 'Indexed ROS 2 packages',
+                      label: 'Knowledge assets',
                       value: String(packages.length),
+                      detail: `${graphNodeCount} evidence graph node${graphNodeCount === 1 ? '' : 's'}`,
                       icon: Database,
-                      tint: 'text-cyan-400',
-                    },
-                    {
-                      view: 'graph' as ViewType,
-                      label: 'Knowledge graph nodes',
-                      value: String(graphNodeCount),
-                      icon: Share2,
-                      tint: 'text-cyan-400',
-                    },
-                    {
-                      view: 'robots' as ViewType,
-                      label: 'Registered robots',
-                      value: String(robots.length),
-                      icon: Boxes,
-                      tint: 'text-rose-400',
-                    },
-                    {
-                      view: 'connect' as ViewType,
-                      label: 'Reachable endpoints',
-                      value: String(discovered.length),
-                      icon: Radar,
                       tint: 'text-violet-400',
                     },
                     {
-                      view: 'benchmark' as ViewType,
-                      label: 'Compile-time benchmark',
-                      value: apiOnline ? 'Ready' : 'Offline',
-                      icon: Gauge,
-                      tint: apiOnline ? 'text-violet-400' : 'text-rose-400',
+                      view: 'connect' as ViewType,
+                      label: 'Connection scan',
+                      value: discovered.length > 0 ? 'Active' : 'Clear',
+                      detail: discovered.length > 0 ? 'Review discovered controllers' : 'No standard control ports answered',
+                      icon: Radar,
+                      tint: discovered.length > 0 ? 'text-amber-400' : 'text-cyan-400',
                     },
                   ].map((kpi) => (
                     <button
                       key={kpi.label}
                       onClick={() => setActiveView(kpi.view)}
-                      className="app-card p-5 text-left group hover:-translate-y-0.5 transition-transform duration-200"
+                      className="app-card group p-5 text-left hover:-translate-y-0.5"
                     >
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-[11.5px] text-slate-500 font-medium">{kpi.label}</span>
-                        <kpi.icon className={`w-4 h-4 ${kpi.tint} opacity-80 group-hover:opacity-100 transition-opacity`} />
+                      <div className="mb-4 flex items-center justify-between">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{kpi.label}</span>
+                        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/[0.04]">
+                          <kpi.icon className={`h-4 w-4 ${kpi.tint}`} />
+                        </span>
                       </div>
-                      <div className="text-2xl font-semibold font-data text-white truncate">{kpi.value}</div>
+                      <div className="font-data text-2xl font-semibold text-white">{kpi.value}</div>
+                      <p className="mt-1 truncate text-[10.5px] text-slate-600">{kpi.detail}</p>
                     </button>
                   ))}
-                </div>
+                </section>
 
                 {/* Quick panels */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
