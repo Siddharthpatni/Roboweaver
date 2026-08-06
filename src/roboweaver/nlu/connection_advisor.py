@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from roboweaver.hardware.registry_robots import ROBOT_REGISTRY
+from roboweaver.nlu.ollama_manager import OllamaManager, get_manager
 
 # The only protocols UniversalRobotDriver actually implements a bridge for.
 # "sim" performs a genuine TCP reachability probe; "ros2" attempts a real
@@ -196,29 +197,27 @@ class OllamaBackend(_Backend):
 
     name = "ollama"
 
-    def __init__(self, model: str = OLLAMA_DEFAULT_MODEL, host: str = OLLAMA_DEFAULT_HOST, timeout: float = 30.0):
-        self.model = model
-        self.host = host.rstrip("/")
+    def __init__(
+        self, model: str | None = None, host: str | None = None,
+        timeout: float = 30.0, manager: OllamaManager | None = None,
+    ):
         self.timeout = timeout
+        self.manager = manager or (
+            OllamaManager(host=host, default_model=model) if host is not None else get_manager()
+        )
+        self.model = model or self.manager.model_for_feature("advisor")
+        self.host = self.manager.host
 
     def complete(self, prompt: str) -> tuple[str, str | None]:
-        payload = json.dumps(
-            {"model": self.model, "prompt": prompt, "stream": False, "format": "json"}
-        ).encode("utf-8")
-        req = urllib.request.Request(
-            f"{self.host}/api/generate",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
+        response = self.manager.generate(
+            prompt,
+            feature="advisor",
+            model=self.model,
+            json_mode=True,
+            timeout=self.timeout,
+            temperature=0.0,
         )
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                envelope = json.loads(resp.read().decode("utf-8"))
-        except (urllib.error.URLError, OSError, TimeoutError) as exc:
-            return "", f"Ollama unreachable at {self.host} (model={self.model}): {exc}"
-        except json.JSONDecodeError as exc:
-            return "", f"Ollama's response envelope wasn't valid JSON: {exc}"
-        return envelope.get("response", ""), None
+        return response.text or "", response.error
 
 
 class OpenRouterBackend(_Backend):
@@ -491,18 +490,13 @@ def build_advisor(provider: str, model: str | None = None) -> ConnectionAdvisor:
         return ConnectionAdvisor(AnthropicBackend(model=model or ANTHROPIC_DEFAULT_MODEL))
     if provider == "openai":
         return ConnectionAdvisor(OpenAIBackend(model=model or OPENAI_DEFAULT_MODEL))
-    return ConnectionAdvisor(OllamaBackend(model=model or OLLAMA_DEFAULT_MODEL))
+    return ConnectionAdvisor(OllamaBackend(model=model))
 
 
 def advisor_status() -> dict[str, Any]:
     """What is actually usable right now -- probed, not assumed."""
     ollama = OllamaBackend()
-    ollama_up = False
-    try:
-        with urllib.request.urlopen(f"{ollama.host}/api/tags", timeout=3.0) as resp:
-            ollama_up = resp.status == 200
-    except (urllib.error.URLError, OSError, TimeoutError):
-        ollama_up = False
+    ollama_up = ollama.manager.is_available(timeout=3.0)
 
     return {
         "ollama_available": ollama_up,
@@ -521,4 +515,3 @@ def advisor_status() -> dict[str, Any]:
         "free_providers": ["ollama", "openrouter"],
         "supported_protocols": list(SUPPORTED_PROTOCOLS),
     }
-

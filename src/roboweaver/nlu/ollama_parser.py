@@ -19,15 +19,17 @@ posture already used for optional integrations elsewhere in RoboWeaver.
 from __future__ import annotations
 
 import json
-import urllib.error
-import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
+from roboweaver.nlu.ollama_manager import (
+    DEFAULT_HOST,
+    DEFAULT_MODEL,
+    OllamaManager,
+    get_manager,
+)
 from roboweaver.types import Action, SkillIntent
 
-DEFAULT_HOST = "http://localhost:11434"
-DEFAULT_MODEL = "llama3.1:8b"
 _VALID_ACTIONS = {a.value for a in Action}
 
 _PROMPT_TEMPLATE = """You translate a single robot-task instruction into strict JSON.
@@ -58,60 +60,45 @@ class OllamaIntentParser:
     host other than the one explicitly configured (default: localhost) -- this
     is an offline-model integration, not a cloud LLM client."""
 
-    def __init__(self, model: str = DEFAULT_MODEL, host: str = DEFAULT_HOST, timeout: float = 30.0):
-        self.model = model
-        self.host = host.rstrip("/")
+    def __init__(
+        self, model: str | None = None, host: str | None = None,
+        timeout: float = 30.0, manager: OllamaManager | None = None,
+    ):
         self.timeout = timeout
+        self.manager = manager or (
+            OllamaManager(host=host, default_model=model) if host is not None else get_manager()
+        )
+        self.model = model or self.manager.model_for_feature("parser")
+        self.host = self.manager.host
 
     def is_available(self) -> bool:
         """Real reachability probe -- a genuine HTTP request to the local Ollama
         server, honestly reporting False on any failure rather than assuming
         availability. Mirrors the honest-hardware-bridge pattern used throughout
         RoboWeaver's real hardware drivers."""
-        try:
-            with urllib.request.urlopen(f"{self.host}/api/tags", timeout=3.0) as resp:
-                return resp.status == 200
-        except (urllib.error.URLError, OSError, TimeoutError):
-            return False
+        return self.manager.is_available(timeout=3.0)
 
     def list_models(self) -> list[str]:
         """Real models actually pulled on this Ollama instance -- never a
         hardcoded/assumed list."""
-        try:
-            with urllib.request.urlopen(f"{self.host}/api/tags", timeout=3.0) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-            return [m["name"] for m in body.get("models", [])]
-        except (urllib.error.URLError, OSError, TimeoutError, json.JSONDecodeError, KeyError):
-            return []
+        return [m.name for m in self.manager.list_models(timeout=3.0)]
 
     def parse(self, instruction: str) -> OllamaParseResult:
         prompt = _PROMPT_TEMPLATE.format(instruction=instruction)
-        payload = json.dumps(
-            {"model": self.model, "prompt": prompt, "stream": False, "format": "json"}
-        ).encode("utf-8")
-        req = urllib.request.Request(
-            f"{self.host}/api/generate",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
+        response = self.manager.generate(
+            prompt,
+            feature="parser",
+            model=self.model,
+            json_mode=True,
+            timeout=self.timeout,
+            temperature=0.0,
         )
-
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                envelope = json.loads(resp.read().decode("utf-8"))
-        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        if response.text is None:
             return OllamaParseResult(
                 intent=None, raw_response="", model=self.model,
-                error=f"Ollama unreachable at {self.host} (model={self.model}): {exc}",
+                error=response.error,
             )
-        except json.JSONDecodeError as exc:
-            return OllamaParseResult(
-                intent=None, raw_response="", model=self.model,
-                error=f"Ollama's own response envelope wasn't valid JSON: {exc}",
-            )
-
-        raw_text = envelope.get("response", "")
-        return self._parse_model_output(raw_text)
+        return self._parse_model_output(response.text)
 
     def _parse_model_output(self, raw_text: str) -> OllamaParseResult:
         try:

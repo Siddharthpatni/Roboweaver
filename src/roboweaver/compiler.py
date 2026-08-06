@@ -144,8 +144,8 @@ class SkillCompiler:
     def compile_with_llm_parser(
         self,
         instruction: str,
-        model: str = "llama3.1:8b",
-        host: str = "http://localhost:11434",
+        model: str | None = None,
+        host: str | None = None,
         verbose: bool = True,
     ) -> tuple[CompiledSkill, OllamaParseResult]:
         """Stage 1 via a local, offline Ollama model instead of the deterministic
@@ -163,7 +163,7 @@ class SkillCompiler:
         if result.intent is not None:
             intent = result.intent
             if verbose:
-                print(f"\n\033[1;36m━━━ STAGE 1/4: Parse Intent (Ollama: {model}) \033[0m")
+                print(f"\n\033[1;36m━━━ STAGE 1/4: Parse Intent (Ollama: {parser.model}) \033[0m")
                 print(f"  → Action:     {intent.action.value}")
                 print(f"  → Object:     {intent.object_name}")
         else:
