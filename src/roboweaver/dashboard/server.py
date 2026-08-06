@@ -8,13 +8,17 @@ import json
 import hmac
 import ipaddress
 import logging
+import math
 import os
 import platform as platform_module
 import re
 import socketserver
 import sys
+import threading
 import time
 import uuid
+from collections import defaultdict, deque
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -71,8 +75,86 @@ _SOCKET_TIMEOUT_S = 60
 _MAX_INSTRUCTION_LEN = 2000
 _MAX_ROBOTS_PARAM = 20
 _MAX_JSON_BODY_BYTES = 4096
+_MAX_REQUEST_TARGET_BYTES = 8192
+_MAX_QUERY_FIELDS = 32
+_MAX_REQUEST_ID_LEN = 64
+_MIN_CONTROL_TOKEN_LEN = 32
+_MAX_CONTROL_TOKEN_LEN = 512
+_DEFAULT_RATE_LIMIT_PER_MINUTE = 240
+_DEFAULT_EXPENSIVE_RATE_LIMIT_PER_MINUTE = 30
+_DEFAULT_MAX_CONCURRENT_REQUESTS = 32
 _CONTROL_TOKEN_ENV = "ROBOWEAVER_API_TOKEN"
 _ALLOWED_ORIGINS_ENV = "ROBOWEAVER_ALLOWED_ORIGINS"
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+_PUBLIC_PATHS = frozenset({"/", "/index.html", "/health/live", "/health/ready"})
+_EXPENSIVE_PATHS = frozenset({
+    "/api/benchmark",
+    "/api/build",
+    "/api/compare",
+    "/api/compile",
+    "/api/connect/advise",
+    "/api/discover",
+    "/api/diff",
+    "/api/graph/export-obsidian",
+})
+_EXPENSIVE_PREFIXES = ("/api/ai/",)
+
+
+def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer.") from exc
+    if not minimum <= value <= maximum:
+        raise RuntimeError(f"{name} must be between {minimum} and {maximum}.")
+    return value
+
+
+def _validate_control_token(token: str, required: bool) -> None:
+    if not token:
+        if required:
+            raise RuntimeError(
+                f"Refusing non-loopback bind without {_CONTROL_TOKEN_ENV}. Set a strong token first."
+            )
+        return
+    if token == "replace-with-a-random-token":
+        raise RuntimeError(f"{_CONTROL_TOKEN_ENV} is still the documented placeholder.")
+    if not _MIN_CONTROL_TOKEN_LEN <= len(token) <= _MAX_CONTROL_TOKEN_LEN:
+        raise RuntimeError(
+            f"{_CONTROL_TOKEN_ENV} must be {_MIN_CONTROL_TOKEN_LEN}-{_MAX_CONTROL_TOKEN_LEN} characters."
+        )
+    if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in token):
+        raise RuntimeError(f"{_CONTROL_TOKEN_ENV} must not contain whitespace or control characters.")
+
+
+class RequestRateLimiter:
+    """Small in-process sliding-window limiter keyed by the TCP peer address.
+
+    It is intentionally independent of proxy headers: trusting an unverified
+    X-Forwarded-For value would let a caller evade the limit by changing one
+    header. A production gateway should apply its own identity-aware limit too.
+    """
+
+    def __init__(self, limit: int, window_seconds: float = 60.0) -> None:
+        self.limit = limit
+        self.window_seconds = window_seconds
+        self._events: dict[str, deque[float]] = defaultdict(deque)
+        self._lock = threading.Lock()
+
+    def allow(self, key: str) -> bool:
+        now = time.monotonic()
+        cutoff = now - self.window_seconds
+        with self._lock:
+            events = self._events[key]
+            while events and events[0] <= cutoff:
+                events.popleft()
+            if len(events) >= self.limit:
+                return False
+            events.append(now)
+            return True
 
 
 def _is_allowed_origin(origin: str | None) -> bool:
@@ -97,6 +179,11 @@ def _is_loopback_bind(host: str) -> bool:
 
 class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
     timeout = _SOCKET_TIMEOUT_S
+    server_version = "RoboWeaver"
+    sys_version = ""
+
+    def version_string(self) -> str:
+        return self.server_version
 
     def do_GET(self):
         """Backstop around _route(): every branch in _route() is expected to
@@ -110,6 +197,8 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
         """
         if not self._prepare_request():
             return
+        if not self._authorize_api_request():
+            return
         self._run_handler(self._route)
 
     def do_POST(self):
@@ -120,7 +209,11 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
         if path not in ("/api/connect", "/api/ai/pull", "/api/ai/config"):
             self._send_json({"error": "method_not_allowed"}, status=405)
             return
-        if not self._authorize_control_request():
+        if not self._authorize_api_request():
+            return
+        content_type = self.headers.get("Content-Type", "").partition(";")[0].strip().lower()
+        if content_type != "application/json":
+            self._send_json({"error": "content_type_must_be_application_json"}, status=415)
             return
 
         payload = self._read_json_body()
@@ -140,19 +233,40 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
-        self.send_header("X-Request-ID", self._request_id)
-        if self._request_origin is not None:
-            self.send_header("Access-Control-Allow-Origin", self._request_origin)
-            self.send_header("Vary", "Origin")
+        self._send_common_headers()
         self.end_headers()
 
     def _prepare_request(self) -> bool:
-        self._request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
+        provided_request_id = self.headers.get("X-Request-ID", "")
+        self._request_id = (
+            provided_request_id
+            if _REQUEST_ID_RE.fullmatch(provided_request_id)
+            else uuid.uuid4().hex
+        )
+        self._request_origin = None
+        if len(self.path.encode("utf-8", errors="replace")) > _MAX_REQUEST_TARGET_BYTES:
+            self._send_json({"error": "request_target_too_long"}, status=414)
+            return False
+        parsed = urlparse(self.path)
+        if parsed.scheme or parsed.netloc or not parsed.path.startswith("/"):
+            self._send_json({"error": "invalid_request_target"}, status=400)
+            return False
         origin = self.headers.get("Origin")
         if origin is not None and not _is_allowed_origin(origin):
-            self.send_error(403, "Origin not allowed")
+            self._send_json({"error": "origin_not_allowed"}, status=403)
             return False
         self._request_origin = origin
+        if parsed.path not in ("/health/live", "/health/ready"):
+            peer = self.client_address[0]
+            limiter = getattr(self.server, "rate_limiter", None)
+            if limiter is not None and not limiter.allow(peer):
+                self._send_json({"error": "rate_limit_exceeded"}, status=429, extra_headers={"Retry-After": "60"})
+                return False
+            is_expensive = parsed.path in _EXPENSIVE_PATHS or parsed.path.startswith(_EXPENSIVE_PREFIXES)
+            expensive_limiter = getattr(self.server, "expensive_rate_limiter", None)
+            if is_expensive and expensive_limiter is not None and not expensive_limiter.allow(peer):
+                self._send_json({"error": "expensive_rate_limit_exceeded"}, status=429, extra_headers={"Retry-After": "60"})
+                return False
         return True
 
     def _run_handler(self, handler) -> None:
@@ -169,15 +283,23 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             except Exception:
                 pass  # socket is unusable; nothing more can be done
 
-    def _authorize_control_request(self) -> bool:
+    def _authorize_api_request(self) -> bool:
+        path = urlparse(self.path).path
+        if path in _PUBLIC_PATHS:
+            return True
         expected = getattr(self.server, "control_token", "")
         if not expected:
             return True
         supplied = self.headers.get("Authorization", "")
-        prefix = "Bearer "
-        candidate = supplied[len(prefix):] if supplied.startswith(prefix) else ""
+        scheme, separator, candidate = supplied.partition(" ")
+        if not separator or scheme.lower() != "bearer":
+            candidate = ""
         if not candidate or not hmac.compare_digest(candidate, expected):
-            self._send_json({"error": "unauthorized"}, status=401)
+            self._send_json(
+                {"error": "unauthorized"},
+                status=401,
+                extra_headers={"WWW-Authenticate": 'Bearer realm="RoboWeaver API"'},
+            )
             return False
         return True
 
@@ -206,7 +328,11 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
     def _route(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        query = parse_qs(parsed.query)
+        try:
+            query = parse_qs(parsed.query, max_num_fields=_MAX_QUERY_FIELDS)
+        except ValueError:
+            self._send_json({"error": f"query accepts at most {_MAX_QUERY_FIELDS} fields."}, status=400)
+            return
 
         if path == "/api/knowledge" or path == "/api/graph":
             # Real ingestion (knowledge/ingest_registry.py) -- robots/packages/
@@ -246,14 +372,13 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                         zf.write(md_file, arcname=md_file.name)
                 body = buf.getvalue()
 
-            self.send_response(200)
-            self.send_header("Content-Type", "application/zip")
-            self.send_header("Content-Disposition", 'attachment; filename="roboweaver-knowledge-graph-obsidian.zip"')
-            self.send_header("Content-Length", str(len(body)))
-            if self._request_origin is not None:
-                self.send_header("Access-Control-Allow-Origin", self._request_origin)
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_bytes(
+                body,
+                content_type="application/zip",
+                extra_headers={
+                    "Content-Disposition": 'attachment; filename="roboweaver-knowledge-graph-obsidian.zip"'
+                },
+            )
 
         elif path == "/api/nexus/packages":
             pkgs = RoboticsPackageNexus.get_all_packages()
@@ -356,14 +481,11 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             spec = ROBOT_REGISTRY[robot_id]
             urdf_xml = generate_urdf(spec)
             body = urdf_xml.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/xml")
-            self.send_header("Content-Disposition", f'attachment; filename="{spec.id}.urdf"')
-            self.send_header("Content-Length", str(len(body)))
-            if self._request_origin is not None:
-                self.send_header("Access-Control-Allow-Origin", self._request_origin)
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_bytes(
+                body,
+                content_type="application/xml; charset=utf-8",
+                extra_headers={"Content-Disposition": f'attachment; filename="{spec.id}.urdf"'},
+            )
 
         elif path.startswith("/api/robots/") and path.endswith("/fk"):
             robot_id = path[len("/api/robots/"):-len("/fk")]
@@ -376,10 +498,19 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                 try:
                     q = [float(v) for v in q_param.split(",")]
                 except ValueError:
-                    self.send_error(400, "q must be a comma-separated list of numbers")
+                    self._send_json(
+                        {"error": "q must be a comma-separated list of finite numbers."},
+                        status=400,
+                    )
                     return
             else:
                 q = [0.0] * spec.dof
+            if len(q) != spec.dof or not all(math.isfinite(value) for value in q):
+                self._send_json(
+                    {"error": f"q must contain exactly {spec.dof} finite joint values."},
+                    status=400,
+                )
+                return
             positions = forward_kinematics_chain_ndof(spec, q)
             self._send_json({
                 "id": spec.id,
@@ -454,10 +585,10 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             object_key = query.get("object", ["medical_vial"])[0]
 
             if gesture not in InspireHandRS485Driver.GESTURES:
-                self.send_error(400, f"Unknown gesture '{gesture}'")
+                self._send_json({"error": f"Unknown gesture '{gesture}'"}, status=400)
                 return
             if object_key not in InspireHandSimulator.OBJECT_CATALOG:
-                self.send_error(400, f"Unknown object '{object_key}'")
+                self._send_json({"error": f"Unknown object '{object_key}'"}, status=400)
                 return
 
             sim = InspireHandSimulator()
@@ -487,6 +618,8 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             instruction = query.get("instruction", ["Pick up the red cube"])[0]
             robot_id = query.get("robot", ["franka_panda"])[0]
             if self._reject_if_too_long(instruction, "instruction"):
+                return
+            if not self._require_robot_id(robot_id):
                 return
 
             compiler = SkillCompiler(target_robot=robot_id)
@@ -569,6 +702,8 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             if not robot2_id:
                 self._send_json({"error": "'robot2' query param is required"}, status=400)
                 return
+            if not self._require_robot_ids([robot_id, robot2_id]):
+                return
 
             compiler = SkillCompiler(target_robot=robot_id)
             try:
@@ -621,6 +756,8 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             robot_id = query.get("robot", ["franka_panda"])[0]
             if self._reject_if_too_long(instruction, "instruction"):
                 return
+            if not self._require_robot_id(robot_id):
+                return
             compiler = SkillCompiler(target_robot=robot_id)
             try:
                 result = compiler.compile_with_diagnostics(instruction, verbose=False)
@@ -657,6 +794,8 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                     {"error": f"'robots' accepts at most {_MAX_ROBOTS_PARAM} ids -- each one compiles a full skill."},
                     status=400,
                 )
+                return
+            if robot_ids is not None and not self._require_robot_ids(robot_ids):
                 return
             comparison = compare_robots(instruction, robot_ids)
             self._send_json({
@@ -696,12 +835,20 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                     status=400,
                 )
                 return
+            if not self._require_robot_ids(robot_ids):
+                return
             report = run_benchmark(robot_ids=robot_ids)
             self._send_json(report.to_dict())
 
         elif path == "/api/discover":
             host = query.get("host", [None])[0]
             subnet = query.get("subnet", [None])[0]
+            if host and subnet:
+                self._send_json({"error": "Use either 'host' or 'subnet', not both."}, status=400)
+                return
+            if (host and len(host) > 253) or (subnet and len(subnet) > 64):
+                self._send_json({"error": "Discovery target is too long."}, status=400)
+                return
             # A LAN sweep needs a shorter per-probe timeout than a localhost
             # scan: 254 hosts x 14 ports at 0.8s each would be unusable.
             scanner = RobotDiscoveryService(timeout=0.3 if subnet else 0.8)
@@ -771,6 +918,9 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             except ValueError:
                 self._send_json({"error": "port must be an integer."}, status=400)
                 return
+            if not 1 <= port <= 65535:
+                self._send_json({"error": "port must be between 1 and 65535."}, status=400)
+                return
             endpoint = {
                 "host": query.get("host", ["localhost"])[0],
                 "port": port,
@@ -779,6 +929,31 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                 "robot_type_guess": query.get("guess", [""])[0],
                 "latency_ms": query.get("latency", ["0"])[0],
             }
+            bounded_fields = {
+                "provider": provider,
+                "model": model or "",
+                "host": endpoint["host"],
+                "banner": endpoint["banner"],
+                "hostname": endpoint["hostname"],
+                "robot_type_guess": endpoint["robot_type_guess"],
+                "latency_ms": endpoint["latency_ms"],
+            }
+            if any(not isinstance(value, str) for value in bounded_fields.values()):
+                self._send_json({"error": "Connection advice fields must be strings."}, status=400)
+                return
+            limits = {
+                "provider": 32,
+                "model": 128,
+                "host": 253,
+                "banner": 512,
+                "hostname": 253,
+                "robot_type_guess": 128,
+                "latency_ms": 32,
+            }
+            too_long = [name for name, value in bounded_fields.items() if len(value) > limits[name]]
+            if too_long:
+                self._send_json({"error": "Connection advice field too long.", "fields": too_long}, status=400)
+                return
             advice = build_advisor(provider, model).advise(endpoint)
             self._send_json({
                 "robot_id": advice.robot_id,
@@ -828,6 +1003,8 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             instruction = query.get("instruction", ["Pick up the red cube"])[0]
             robot_id = query.get("robot", ["franka_panda"])[0]
             if self._reject_if_too_long(instruction, "instruction"):
+                return
+            if not self._require_robot_id(robot_id):
                 return
 
             compiler = SkillCompiler(target_robot=robot_id)
@@ -911,6 +1088,8 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             )[0]
             robot_id = query.get("robot", ["franka_panda"])[0]
             action = query.get("action", ["PICK"])[0]
+            if not self._require_robot_id(robot_id):
+                return
 
             from roboweaver.runtime.recovery import RecoveryEngine, FailureMode as FM
             try:
@@ -998,6 +1177,8 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                 robot_id = query.get("robot", [""])[0]
                 if not robot_id:
                     self._send_json({"error": "'robot' param required for describe mode"}, status=400)
+                    return
+                if not self._require_robot_id(robot_id):
                     return
                 result = enricher.describe_robot(robot_id)
                 self._send_json({
@@ -1122,23 +1303,63 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             )
 
         else:
-            self.send_error(404, "Not Found")
+            self._send_json({"error": "not_found"}, status=404)
 
-    def _send_json(self, data: Any, status: int = 200) -> None:
-        body = json.dumps(data).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
+    def send_error(
+        self,
+        code: int,
+        message: str | None = None,
+        explain: str | None = None,
+    ) -> None:
+        """Return bounded JSON errors without reflecting parser input or versions."""
+        try:
+            label = HTTPStatus(code).phrase.lower().replace(" ", "_")
+        except ValueError:
+            label = "http_error"
+        self._send_json({"error": label, "status": code}, status=code)
+
+    def _send_common_headers(self) -> None:
         self.send_header("X-Request-ID", getattr(self, "_request_id", "unknown"))
-        # Echoes the real, already-validated request Origin back (do_GET already
-        # rejected anything not matching _ALLOWED_ORIGIN_RE) instead of "*" --
-        # a non-browser client (no Origin header) needs no CORS header at all.
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Cache-Control", "no-store")
         origin = getattr(self, "_request_origin", None)
         if origin is not None:
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
+
+    def _send_bytes(
+        self,
+        body: bytes,
+        *,
+        content_type: str,
+        status: int = 200,
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self._send_common_headers()
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _send_json(
+        self,
+        data: Any,
+        status: int = 200,
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
+        body = json.dumps(data, allow_nan=False, separators=(",", ":")).encode("utf-8")
+        self._send_bytes(
+            body,
+            content_type="application/json; charset=utf-8",
+            status=status,
+            extra_headers=extra_headers,
+        )
 
     def _reject_if_too_long(self, value: str, field_name: str) -> bool:
         """Every instruction/prompt-shaped query param routes into a real
@@ -1152,12 +1373,34 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             return True
         return False
 
+    def _require_robot_id(self, robot_id: str) -> bool:
+        if robot_id in ROBOT_REGISTRY:
+            return True
+        self._send_json({"error": f"Unknown robot id '{robot_id}'."}, status=400)
+        return False
+
+    def _require_robot_ids(self, robot_ids: list[str]) -> bool:
+        unknown = sorted({robot_id for robot_id in robot_ids if robot_id not in ROBOT_REGISTRY})
+        if not unknown:
+            return True
+        self._send_json(
+            {"error": "Unknown robot ids.", "unknown_robot_ids": unknown},
+            status=400,
+        )
+        return False
+
     def _connect_robot(self, payload: dict[str, Any]) -> None:
         robot_id = payload.get("robot", "franka_panda")
         protocol = payload.get("protocol", "ros2")
         uri = payload.get("uri", "ros2://localhost")
         if not all(isinstance(value, str) for value in (robot_id, protocol, uri)):
             self._send_json({"error": "robot, protocol, and uri must be strings."}, status=400)
+            return
+        if not robot_id or len(robot_id) > 128 or not protocol or len(protocol) > 32:
+            self._send_json({"error": "Invalid robot or protocol identifier."}, status=400)
+            return
+        if not uri or len(uri) > 2048:
+            self._send_json({"error": "Connection URI must be 1-2048 characters."}, status=400)
             return
         if robot_id not in ROBOT_REGISTRY:
             self._send_json(
@@ -1229,12 +1472,8 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
         """Proxy Ollama's token stream as newline-delimited JSON."""
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
         self.send_header("X-Accel-Buffering", "no")
-        self.send_header("X-Request-ID", self._request_id)
-        if self._request_origin is not None:
-            self.send_header("Access-Control-Allow-Origin", self._request_origin)
-            self.send_header("Vary", "Origin")
+        self._send_common_headers()
         self.end_headers()
         system = (
             "You are RoboWeaver AI, a helpful assistant for the RoboWeaver robotics "
@@ -1254,8 +1493,28 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(payload).encode("utf-8") + b"\n")
             self.wfile.flush()
 
-    def log_message(self, format, *args):
-        logger.info("client=%s request_id=%s %s", self.client_address[0], getattr(self, "_request_id", "unknown"), format % args)
+    def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
+        """Log the path only; prompts and other query values may be sensitive."""
+        path = urlparse(self.path).path[:512]
+        logger.info(
+            "client=%s request_id=%s method=%s path=%s status=%s bytes=%s",
+            self.client_address[0],
+            getattr(self, "_request_id", "unknown"),
+            self.command,
+            path,
+            code,
+            size,
+        )
+
+    def log_message(self, format: str, *args: Any) -> None:
+        """Sanitize parser-level diagnostics that bypass log_request()."""
+        message = (format % args).replace("\r", "\\r").replace("\n", "\\n")[:1000]
+        logger.warning(
+            "client=%s request_id=%s protocol_message=%s",
+            self.client_address[0],
+            getattr(self, "_request_id", "unknown"),
+            message,
+        )
 
 
 class ReusableHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
@@ -1270,15 +1529,56 @@ class ReusableHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     """
     allow_reuse_address = True
     daemon_threads = True
+    request_queue_size = 64
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        max_requests = _bounded_env_int(
+            "ROBOWEAVER_MAX_CONCURRENT_REQUESTS",
+            _DEFAULT_MAX_CONCURRENT_REQUESTS,
+            1,
+            256,
+        )
+        general_limit = _bounded_env_int(
+            "ROBOWEAVER_RATE_LIMIT_PER_MINUTE",
+            _DEFAULT_RATE_LIMIT_PER_MINUTE,
+            1,
+            100_000,
+        )
+        expensive_limit = _bounded_env_int(
+            "ROBOWEAVER_EXPENSIVE_RATE_LIMIT_PER_MINUTE",
+            _DEFAULT_EXPENSIVE_RATE_LIMIT_PER_MINUTE,
+            1,
+            10_000,
+        )
+        self.control_token = ""
+        self.max_concurrent_requests = max_requests
+        self.rate_limiter = RequestRateLimiter(general_limit)
+        self.expensive_rate_limiter = RequestRateLimiter(expensive_limit)
+        self._request_slots = threading.BoundedSemaphore(max_requests)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        # Block the accept loop once all slots are occupied. The kernel backlog
+        # remains bounded too, preventing one slow client from creating an
+        # unbounded number of Python threads.
+        self._request_slots.acquire()
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
 
 
 def start_dashboard_server(port: int = 8080, host: str = "127.0.0.1") -> None:
     global _PROCESS_START_TIME
     control_token = os.environ.get(_CONTROL_TOKEN_ENV, "")
-    if not _is_loopback_bind(host) and not control_token:
-        raise RuntimeError(
-            f"Refusing non-loopback bind without {_CONTROL_TOKEN_ENV}. Set a strong token first."
-        )
+    _validate_control_token(control_token, required=not _is_loopback_bind(host))
     server_address = (host, port)
     httpd = ReusableHTTPServer(server_address, DashboardHTTPRequestHandler)
     httpd.control_token = control_token

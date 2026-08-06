@@ -7,6 +7,7 @@ ReusableHTTPServer on an ephemeral port and drives it with real HTTP requests
 """
 
 import json
+import logging
 import threading
 import urllib.error
 import urllib.request
@@ -18,6 +19,7 @@ from roboweaver.dashboard.server import (
     ReusableHTTPServer,
     _is_allowed_origin,
     _is_loopback_bind,
+    RequestRateLimiter,
     start_dashboard_server,
 )
 
@@ -36,23 +38,25 @@ def live_server():
         thread.join(timeout=2)
 
 
-def _get(url: str, origin: str | None = None):
+def _get(url: str, origin: str | None = None, token: str | None = None, request_id: str | None = None):
     req = urllib.request.Request(url)
     if origin is not None:
         req.add_header("Origin", origin)
+    if token is not None:
+        req.add_header("Authorization", f"Bearer {token}")
+    if request_id is not None:
+        req.add_header("X-Request-ID", request_id)
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
-            return resp.status, resp.headers.get("Access-Control-Allow-Origin"), json.loads(resp.read())
+            return resp.status, resp.headers, json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         # _send_json()'s error responses (400s) carry a real JSON body; the
-        # 403 rejection uses BaseHTTPRequestHandler's own HTML error page, so
-        # this returns None for that one case rather than failing to parse it.
         raw = exc.read()
         try:
             body = json.loads(raw)
         except json.JSONDecodeError:
             body = None
-        return exc.code, exc.headers.get("Access-Control-Allow-Origin"), body
+        return exc.code, exc.headers, body
 
 
 def _post(url: str, payload, token: str | None = None):
@@ -109,20 +113,20 @@ def test_non_loopback_start_requires_control_token(monkeypatch):
 
 def test_request_with_allowed_origin_gets_it_echoed_back(live_server):
     print("\n[TEST 4] Testing a request from the real frontend's origin is allowed and echoed...")
-    status, acao, body = _get(f"{live_server}/api/version", origin="http://localhost:3000")
+    status, headers, body = _get(f"{live_server}/api/version", origin="http://localhost:3000")
     assert status == 200
-    assert acao == "http://localhost:3000"
+    assert headers["Access-Control-Allow-Origin"] == "http://localhost:3000"
     assert body["roboweaver_version"]
     print("  -> real Access-Control-Allow-Origin echoes the exact real request origin, not '*' [PASSED]")
 
 
 def test_request_with_disallowed_origin_is_rejected_before_any_handler_runs(live_server):
     print("\n[TEST 5] Testing a request from a real external origin is rejected with 403...")
-    status, acao, body = _get(f"{live_server}/api/version", origin="https://evil.com")
+    status, headers, body = _get(f"{live_server}/api/version", origin="https://evil.com")
     assert status == 403
-    assert acao is None
-    assert body is None
-    print("  -> real 403, no CORS header, no JSON body -- the handler never ran [PASSED]")
+    assert headers.get("Access-Control-Allow-Origin") is None
+    assert body["error"] == "origin_not_allowed"
+    print("  -> real JSON 403 with no CORS header; the route never ran [PASSED]")
 
 
 def test_oversized_instruction_is_rejected(live_server):
@@ -209,6 +213,113 @@ def test_connect_post_requires_configured_bearer_token(live_server):
         httpd.shutdown()
         httpd.server_close()
         thread.join(timeout=2)
+
+
+def test_configured_token_protects_get_routes_but_not_health_checks():
+    httpd = ReusableHTTPServer(("127.0.0.1", 0), DashboardHTTPRequestHandler)
+    token = "a-secure-test-token-with-more-than-32-characters"
+    httpd.control_token = token
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+    try:
+        status, headers, body = _get(f"{base}/api/robots")
+        assert status == 401
+        assert body["error"] == "unauthorized"
+        assert headers["WWW-Authenticate"].startswith("Bearer")
+
+        status, _, body = _get(f"{base}/api/robots", token=token)
+        assert status == 200
+        assert body
+
+        status, _, body = _get(f"{base}/health/ready")
+        assert status == 200
+        assert body["status"] == "ok"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=2)
+
+
+def test_placeholder_and_weak_tokens_are_rejected_at_startup(monkeypatch):
+    for token in ("replace-with-a-random-token", "too-short"):
+        monkeypatch.setenv("ROBOWEAVER_API_TOKEN", token)
+        with pytest.raises(RuntimeError, match="ROBOWEAVER_API_TOKEN"):
+            start_dashboard_server(port=0, host="0.0.0.0")
+
+
+def test_security_headers_and_request_id_are_sanitized(live_server):
+    status, headers, _ = _get(
+        f"{live_server}/api/version",
+        request_id="attacker/request/id",
+    )
+    assert status == 200
+    assert len(headers["X-Request-ID"]) == 32
+    assert headers["X-Request-ID"].isalnum()
+    assert headers["X-Content-Type-Options"] == "nosniff"
+    assert headers["X-Frame-Options"] == "DENY"
+    assert headers["Cache-Control"] == "no-store"
+    assert "Python" not in headers["Server"]
+
+
+def test_query_field_limit_and_unknown_robot_fail_closed(live_server):
+    excessive_query = "&".join(f"field{i}=x" for i in range(33))
+    status, _, body = _get(f"{live_server}/api/version?{excessive_query}")
+    assert status == 400
+    assert "at most 32" in body["error"]
+
+    status, _, body = _get(
+        f"{live_server}/api/compile?instruction=pick+cube&robot=typo_robot"
+    )
+    assert status == 400
+    assert "Unknown robot" in body["error"]
+
+
+@pytest.mark.parametrize("q", ["0,0", "nan,nan,nan,nan,nan,nan,nan"])
+def test_forward_kinematics_requires_exact_finite_joint_vector(live_server, q):
+    status, _, body = _get(f"{live_server}/api/robots/franka_panda/fk?q={q}")
+    assert status == 400
+    assert "exactly 7 finite" in body["error"]
+
+
+def test_post_rejects_non_json_content_type(live_server):
+    req = urllib.request.Request(
+        f"{live_server}/api/connect",
+        data=b"{}",
+        method="POST",
+        headers={"Content-Type": "text/plain"},
+    )
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        urllib.request.urlopen(req, timeout=5)
+    assert caught.value.code == 415
+    assert json.loads(caught.value.read())["error"] == "content_type_must_be_application_json"
+
+
+def test_rate_limiter_bounds_requests_per_peer():
+    httpd = ReusableHTTPServer(("127.0.0.1", 0), DashboardHTTPRequestHandler)
+    httpd.rate_limiter = RequestRateLimiter(limit=1)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+    try:
+        assert _get(f"{base}/api/version")[0] == 200
+        status, headers, body = _get(f"{base}/api/robots")
+        assert status == 429
+        assert headers["Retry-After"] == "60"
+        assert body["error"] == "rate_limit_exceeded"
+        assert _get(f"{base}/health/live")[0] == 200
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=2)
+
+
+def test_logs_do_not_include_query_values(live_server, caplog):
+    caplog.set_level(logging.INFO, logger="roboweaver.dashboard")
+    secret_prompt = "customer-private-work-order"
+    status, _, _ = _get(f"{live_server}/api/compile?instruction={secret_prompt}")
+    assert status == 200
+    assert secret_prompt not in caplog.text
 
 
 if __name__ == "__main__":
