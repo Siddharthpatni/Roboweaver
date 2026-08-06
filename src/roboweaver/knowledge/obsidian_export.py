@@ -21,7 +21,11 @@ def _safe_filename(node_id: str) -> str:
     return f"{base}.md"
 
 
-def export_to_obsidian(graph: RoboticsKnowledgeGraph, output_dir: str | Path) -> Path:
+def export_to_obsidian(
+    graph: RoboticsKnowledgeGraph,
+    output_dir: str | Path,
+    ai_summaries: dict[str, str] | None = None,
+) -> Path:
     """Writes one real markdown note per real node into `output_dir`. Every
     [[wikilink]] resolves to a real other file in the same directory -- confirmed
     by tests/test_knowledge_graph.py, not just asserted here."""
@@ -31,7 +35,11 @@ def export_to_obsidian(graph: RoboticsKnowledgeGraph, output_dir: str | Path) ->
     filenames = {node_id: _safe_filename(node_id) for node_id in graph.nodes}
 
     for node_id, node in graph.nodes.items():
-        lines = [f"# {node.name}", "", f"**Type**: {node.type.value}", "", "## Properties", ""]
+        lines = [f"# {node.name}", "", f"**Type**: {node.type.value}"]
+        summary = (ai_summaries or {}).get(node_id)
+        if summary:
+            lines += ["", "## AI Summary", "", summary]
+        lines += ["", "## Properties", ""]
         if node.properties:
             lines.append("| Property | Value |")
             lines.append("|---|---|")
