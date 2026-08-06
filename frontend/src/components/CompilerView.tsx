@@ -13,6 +13,9 @@ import {
   Code2,
   Layers,
   Box,
+  Brain,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { RoboWeaverAPI } from '../lib/api';
 import { RobotProfile, CompiledSkillResult, CompilerDiagnostic } from '../types';
@@ -190,6 +193,8 @@ export const CompilerView: React.FC = () => {
   const [blockingDiagnostics, setBlockingDiagnostics] = useState<CompilerDiagnostic[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [includeAI, setIncludeAI] = useState(false);
+  const [aiInsightOpen, setAiInsightOpen] = useState(true);
 
   const handleCompile = async () => {
     if (!instruction.trim()) return;
@@ -198,7 +203,7 @@ export const CompilerView: React.FC = () => {
     setBlockingDiagnostics(null);
     setResult(null);
     try {
-      const data = await RoboWeaverAPI.compile(instruction, robotId, true);
+      const data = await RoboWeaverAPI.compile(instruction, robotId, true, includeAI);
       setResult(data);
     } catch (e) {
       if (e instanceof CompilationFailedError) {
@@ -303,14 +308,29 @@ export const CompilerView: React.FC = () => {
                 </option>
               ))}
             </select>
-            <button
-              onClick={handleCompile}
-              disabled={loading}
-              className="flex items-center gap-2 px-4 py-2 btn-neon disabled:opacity-50 text-[13px]"
-            >
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-              {loading ? 'Compiling…' : 'Compile'}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIncludeAI((v) => !v)}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[12px] transition-colors ${
+                  includeAI
+                    ? 'border-violet-400/30 bg-violet-500/10 text-violet-300'
+                    : 'border-white/[0.08] bg-white/[0.03] text-slate-500 hover:text-slate-300'
+                }`}
+                title="Ask the selected local Ollama model to annotate the real compilation result"
+              >
+                <Brain className="w-3.5 h-3.5" />
+                AI insight {includeAI ? 'on' : 'off'}
+              </button>
+              <button
+                onClick={handleCompile}
+                disabled={loading}
+                className="flex items-center gap-2 px-4 py-2 btn-neon disabled:opacity-50 text-[13px]"
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+                {loading ? (includeAI ? 'Compiling + explaining…' : 'Compiling…') : 'Compile'}
+              </button>
+            </div>
           </div>
 
           <div className="pt-1 border-t border-cyan-400/[0.07]">
@@ -356,6 +376,44 @@ export const CompilerView: React.FC = () => {
             </div>
 
             <PipelineTraceView pipeline={result.pipeline} skillPipeline={result.skill_pipeline} />
+
+            {(result.explanation !== undefined || result.explanation_error) && (
+              <div className="app-card overflow-hidden border-violet-400/20">
+                <button
+                  type="button"
+                  onClick={() => setAiInsightOpen((v) => !v)}
+                  className="w-full flex items-center justify-between gap-3 px-5 py-3.5 text-left bg-violet-500/[0.04]"
+                >
+                  <span className="flex items-center gap-2">
+                    <Brain className="w-4 h-4 text-violet-300" />
+                    <span className="text-[13px] font-semibold text-slate-200">AI Insight</span>
+                    {result.explanation_model && (
+                      <span className="font-data text-[10px] text-slate-600">{result.explanation_model}</span>
+                    )}
+                  </span>
+                  {aiInsightOpen ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+                </button>
+                {aiInsightOpen && (
+                  <div className="px-5 py-4 border-t border-violet-400/[0.08]">
+                    {result.explanation ? (
+                      <p className="text-[12.5px] leading-relaxed text-slate-300 whitespace-pre-wrap">
+                        {result.explanation}
+                      </p>
+                    ) : (
+                      <div className="flex items-start gap-2 text-[12px] text-amber-300">
+                        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                        <span>{result.explanation_error ?? 'The local model returned no explanation.'}</span>
+                      </div>
+                    )}
+                    {result.explanation_latency_s != null && (
+                      <div className="mt-3 font-data text-[10px] text-slate-600">
+                        {(result.explanation_latency_s * 1000).toFixed(0)}ms · local Ollama
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {result.diagnostics.length > 0 && (
               <div className="app-card p-5 space-y-3">
