@@ -22,6 +22,7 @@ import re
 import socket
 import stat
 import subprocess
+import tempfile
 import threading
 from dataclasses import dataclass, field
 from typing import Any
@@ -422,10 +423,10 @@ class RobotDiscoveryService:
 
     # Unix domain sockets commonly used by robot middleware and vendor SDKs.
     UNIX_SOCKET_PATTERNS: list[str] = [
-        "/tmp/*.sock",
+        f"{tempfile.gettempdir()}/*.sock",
         "/run/*.sock",
         "/var/run/*.sock",
-        "/tmp/ros*",
+        f"{tempfile.gettempdir()}/ros*",
     ]
 
     # Sockets belonging to ordinary system services. Unlike an ambiguous *port*

@@ -272,7 +272,7 @@ class OpenRouterBackend(_Backend):
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310
                 envelope = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             # Surface the status but never the request headers, which carry the key.
@@ -325,7 +325,7 @@ class AnthropicBackend(_Backend):
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310
                 envelope = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             return "", f"Anthropic API returned HTTP {exc.code} for model '{self.model}'."
@@ -381,7 +381,7 @@ class OpenAIBackend(_Backend):
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310
                 envelope = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             return "", f"OpenAI API returned HTTP {exc.code} for model '{self.model}'."
