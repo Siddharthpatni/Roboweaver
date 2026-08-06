@@ -66,7 +66,8 @@ def test_unknown_name_raises_with_helpful_message():
 def test_connect_robot_dispatch_unchanged(protocol, expected_cls):
     print(f"\n[TEST] Testing connect_robot({protocol!r}) still dispatches to {expected_cls.__name__}...")
     spec = get_robot_spec("ur5e")
-    bridge = UniversalRobotDriver.connect_robot(spec, protocol=protocol, uri="ros2://localhost")
+    uri = "ros2://localhost" if expected_cls is ROS2HardwareBridge else f"{protocol}://localhost:1"
+    bridge = UniversalRobotDriver.connect_robot(spec, protocol=protocol, uri=uri)
     assert isinstance(bridge, expected_cls)
     bridge.disconnect()
     print(f"  -> {protocol!r} -> {expected_cls.__name__} [PASSED]")
