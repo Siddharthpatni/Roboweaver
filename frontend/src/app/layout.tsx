@@ -2,8 +2,17 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "RoboWeaver — Sid Labs",
-  description: "An LLVM-like compiler infrastructure for robotics, from Sid Labs.",
+  title: {
+    default: "RoboWeaver Control Center",
+    template: "%s | RoboWeaver",
+  },
+  description: "Compile, verify, simulate, and operate portable robot skills with RoboIR.",
+  applicationName: "RoboWeaver",
+};
+
+export const viewport = {
+  themeColor: "#070b12",
+  colorScheme: "dark",
 };
 
 export default function RootLayout({
