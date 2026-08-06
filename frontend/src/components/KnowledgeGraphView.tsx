@@ -11,9 +11,9 @@ import {
   SimulationNodeDatum,
   SimulationLinkDatum,
 } from 'd3-force';
-import { Share2, Download, Search, X, Loader2, AlertTriangle, Route } from 'lucide-react';
+import { Share2, Download, Search, X, Loader2, AlertTriangle, Route, Sparkles } from 'lucide-react';
 import { RoboWeaverAPI } from '../lib/api';
-import { KnowledgeGraphNode } from '../types';
+import { AIEnrichmentResult, KnowledgeGraphNode } from '../types';
 
 interface SimNode extends KnowledgeGraphNode, SimulationNodeDatum {}
 interface SimLink extends SimulationLinkDatum<SimNode> {
@@ -67,6 +67,10 @@ export const KnowledgeGraphView: React.FC = () => {
   const [pathLoading, setPathLoading] = useState(false);
   const [pathError, setPathError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [enriching, setEnriching] = useState(false);
+  const [enrichment, setEnrichment] = useState<AIEnrichmentResult | null>(null);
+  const [enrichmentError, setEnrichmentError] = useState<string | null>(null);
+  const [nodeSummary, setNodeSummary] = useState<string | null>(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, k: 1 });
 
   const simRef = useRef<Simulation<SimNode, SimLink> | null>(null);
@@ -226,6 +230,34 @@ export const KnowledgeGraphView: React.FC = () => {
     }
   };
 
+  const handleAIEnrich = async () => {
+    setEnriching(true);
+    setEnrichmentError(null);
+    try {
+      const result = await RoboWeaverAPI.aiEnrich('edges');
+      setEnrichment(result);
+    } catch (e) {
+      setEnrichmentError(e instanceof Error ? e.message : 'The local Ollama enrichment model is unavailable.');
+    } finally {
+      setEnriching(false);
+    }
+  };
+
+  const handleAINote = async () => {
+    if (!selected) return;
+    setEnriching(true);
+    setEnrichmentError(null);
+    setNodeSummary(null);
+    try {
+      const result = await RoboWeaverAPI.aiEnrich('summary', selected.id);
+      setNodeSummary(result.summaries?.[0]?.summary ?? null);
+    } catch (e) {
+      setEnrichmentError(e instanceof Error ? e.message : 'The local Ollama enrichment model is unavailable.');
+    } finally {
+      setEnriching(false);
+    }
+  };
+
   const matchQuery = search.trim().toLowerCase();
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -269,15 +301,54 @@ export const KnowledgeGraphView: React.FC = () => {
               export-obsidian</code> writes as cross-linked Obsidian notes.
             </p>
           </div>
-          <button
-            onClick={handleDownloadObsidian}
-            disabled={downloading}
-            className="shrink-0 flex items-center gap-2 px-3.5 py-2 btn-neon text-[13px] disabled:opacity-50"
-          >
-            {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-            Download Obsidian vault
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={handleAIEnrich}
+              disabled={enriching}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-lg border border-violet-400/25 bg-violet-500/[0.08] text-violet-300 text-[13px] disabled:opacity-50 hover:bg-violet-500/[0.13]"
+            >
+              {enriching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              AI Enrich
+            </button>
+            <button
+              onClick={handleDownloadObsidian}
+              disabled={downloading}
+              className="flex items-center gap-2 px-3.5 py-2 btn-neon text-[13px] disabled:opacity-50"
+            >
+              {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+              Download Obsidian vault
+            </button>
+          </div>
         </div>
+
+        {(enrichment?.suggestions || enrichmentError) && (
+          <div className="app-card p-4 border-violet-400/20 space-y-3 animate-fade-in">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-violet-300" />
+              <h3 className="text-[12.5px] font-semibold text-slate-200">Suggested SUITABLE_FOR edges</h3>
+              {enrichment?.model && <span className="font-data text-[10px] text-slate-600">{enrichment.model}</span>}
+            </div>
+            {enrichmentError && <p className="text-[11.5px] text-amber-300">{enrichmentError}</p>}
+            {enrichment?.suggestions && enrichment.suggestions.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {enrichment.suggestions.map((suggestion) => (
+                  <div key={`${suggestion.robot_id}-${suggestion.skill_category}`} className="app-well rounded-lg p-3">
+                    <div className="flex items-center gap-2 font-data text-[10.5px]">
+                      <span className="text-cyan-300">{suggestion.robot_id}</span>
+                      <span className="text-slate-600">→</span>
+                      <span className="text-violet-300">{suggestion.skill_category}</span>
+                      <span className="ml-auto text-slate-500">{Math.round(suggestion.confidence * 100)}%</span>
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-slate-500 leading-relaxed">{suggestion.reasoning}</p>
+                  </div>
+                ))}
+              </div>
+            ) : enrichment && !enrichmentError ? (
+              <p className="text-[11.5px] text-slate-500">The model found no new validated edges to suggest.</p>
+            ) : null}
+            <p className="font-data text-[9.5px] text-slate-600">Review-only · suggestions are not applied to the authoritative graph.</p>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-3">
           {(['ROBOT', 'PACKAGE', 'SKILL'] as const).map((t) => (
@@ -347,6 +418,7 @@ export const KnowledgeGraphView: React.FC = () => {
                       onClick={(e) => {
                         e.stopPropagation();
                         setSelected(n);
+                        setNodeSummary(null);
                       }}
                       style={{ cursor: 'pointer', opacity: dimmed ? 0.15 : 1 }}
                     >
@@ -460,6 +532,19 @@ export const KnowledgeGraphView: React.FC = () => {
                       <span className="font-data text-slate-300 truncate text-right">{String(v)}</span>
                     </div>
                   ))}
+                  <button
+                    onClick={handleAINote}
+                    disabled={enriching}
+                    className="mt-2 w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md border border-violet-400/20 bg-violet-500/[0.06] text-violet-300 disabled:opacity-50"
+                  >
+                    {enriching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    Generate Obsidian summary
+                  </button>
+                  {nodeSummary && (
+                    <p className="mt-2 p-2.5 rounded-md bg-violet-500/[0.05] border border-violet-400/10 text-slate-400 leading-relaxed">
+                      {nodeSummary}
+                    </p>
+                  )}
                 </div>
               )}
             </div>
