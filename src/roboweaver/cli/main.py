@@ -542,10 +542,10 @@ def cmd_discover(args) -> int:
 
 
 def cmd_connect(args) -> int:
-    from roboweaver.hardware.universal_driver import UniversalRobotDriver
+    from roboweaver.hardware.universal_driver import resolve_bridge_class
 
     spec = get_robot_spec(args.robot)
-    bridge = UniversalRobotDriver.connect_robot(spec, protocol=args.protocol, uri=args.uri)
+    bridge = resolve_bridge_class(args.protocol)(spec, args.uri)
     status = bridge.connect()
 
     if getattr(args, "json", False):
@@ -847,7 +847,7 @@ def main() -> int:
     p_dash.add_argument(
         "--host", type=str, default="127.0.0.1",
         help="Bind address (default 127.0.0.1, localhost-only). Pass 0.0.0.0 to "
-             "expose on the LAN -- only do this on a trusted network.",
+             "expose on the LAN; ROBOWEAVER_API_TOKEN is then mandatory.",
     )
     p_dash.add_argument(
         "--no-self-heal", action="store_true",

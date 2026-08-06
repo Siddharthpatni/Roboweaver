@@ -61,7 +61,6 @@ def test_unknown_name_raises_with_helpful_message():
         ("sim", SimulationHardwareBridge),
         ("gazebo", SimulationHardwareBridge),
         ("isaac", SimulationHardwareBridge),
-        ("something_unrecognized", ROS2HardwareBridge),  # default fallback, unchanged
     ],
 )
 def test_connect_robot_dispatch_unchanged(protocol, expected_cls):
@@ -73,6 +72,14 @@ def test_connect_robot_dispatch_unchanged(protocol, expected_cls):
     print(f"  -> {protocol!r} -> {expected_cls.__name__} [PASSED]")
 
 
+def test_unknown_protocol_fails_closed():
+    spec = get_robot_spec("ur5e")
+    with pytest.raises(ValueError, match="Unknown robot protocol"):
+        UniversalRobotDriver.connect_robot(
+            spec, protocol="something_unrecognized", uri="ros2://localhost"
+        )
+
+
 if __name__ == "__main__":
     print("=== STARTING PLUGIN REGISTRY (PHASE 13) VERIFICATION ===")
     test_register_and_get()
@@ -82,7 +89,7 @@ if __name__ == "__main__":
         ("ros2", ROS2HardwareBridge), ("ros2_control", ROS2HardwareBridge),
         ("dds", ROS2HardwareBridge), ("sim", SimulationHardwareBridge),
         ("gazebo", SimulationHardwareBridge), ("isaac", SimulationHardwareBridge),
-        ("something_unrecognized", ROS2HardwareBridge),
     ]:
         test_connect_robot_dispatch_unchanged(protocol, expected_cls)
+    test_unknown_protocol_fails_closed()
     print("\n=== ALL PLUGIN REGISTRY TESTS PASSED SUCCESSFULLY ===")

@@ -158,7 +158,12 @@ class ROS2HardwareBridge(AbstractRobotBridge):
 
 
 class SimulationHardwareBridge(AbstractRobotBridge):
-    """Bridge for NVIDIA Isaac Sim, Gazebo, Ignition, and Webots via a live TCP reachability probe."""
+    """Reachability probe for NVIDIA Isaac Sim, Gazebo, Ignition, and Webots.
+
+    A successful TCP handshake proves only that a process is listening. Until an
+    application-level simulator protocol is implemented, trajectory delivery must
+    fail closed rather than report a command as accepted.
+    """
 
     DEFAULT_PORTS = {"isaac": 8211, "gazebo": 11345, "ignition": 11345, "webots": 1234}
 
@@ -202,7 +207,11 @@ class SimulationHardwareBridge(AbstractRobotBridge):
             )
 
     def send_trajectory(self, waypoints: list[list[float]], dt: float = 0.01) -> bool:
-        return self._connected
+        if self._connected:
+            logger.error(
+                "Refusing to report trajectory delivery: simulator application protocol is not implemented"
+            )
+        return False
 
     def read_joint_state(self) -> list[float]:
         return [0.0] * self.spec.dof
@@ -235,8 +244,10 @@ def resolve_bridge_class(protocol: str) -> type[AbstractRobotBridge]:
     for canonical, substrings in _PROTOCOL_ALIASES.items():
         if any(s in protocol_lower for s in substrings):
             return _BRIDGE_REGISTRY.get(canonical)
-    # Default to ROS 2 for universal compatibility -- unchanged from before.
-    return _BRIDGE_REGISTRY.get("ros2")
+    supported = sorted({alias for aliases in _PROTOCOL_ALIASES.values() for alias in aliases})
+    raise ValueError(
+        f"Unknown robot protocol '{protocol}'. Supported protocols: {', '.join(supported)}"
+    )
 
 
 class UniversalRobotDriver:
