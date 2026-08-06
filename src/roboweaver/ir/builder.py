@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import uuid
 
+from roboweaver.identifiers import safe_identifier
 from roboweaver.types import SkillIntent, Action, CompiledSkill, estimate_cycle_time
 from roboweaver.hardware.robot_spec import RobotSpec
 from roboweaver.ir.schema import (
@@ -198,7 +199,7 @@ def build_ir(
         task_summary, motion_summary = _build_summaries(skill)
 
     return RoboIR(
-        skill_id=f"skill_{intent.object_name}_{uuid.uuid4().hex[:8]}",
+        skill_id=f"skill_{safe_identifier(intent.object_name)}_{uuid.uuid4().hex[:8]}",
         skill_version="0.1.0",
         action=intent.action.value,
         raw_instruction=raw_instruction,

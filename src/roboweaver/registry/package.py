@@ -6,11 +6,13 @@ from __future__ import annotations
 
 import json
 import tarfile
+import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 from roboweaver.codegen.groot2 import export_groot2_xml
+from roboweaver.identifiers import require_safe_identifier
 from roboweaver.types import (
     Action,
     BTNode,
@@ -189,39 +191,37 @@ class SkillPackage:
         bundle robot id, backend, Safety Kernel verification, and capability claims
         into the archive alongside the compiled skill."""
         out = Path(output_path)
-        pkg_dir = out.parent / f"tmp_{self.metadata.id}"
-        pkg_dir.mkdir(parents=True, exist_ok=True)
+        require_safe_identifier(self.metadata.id, field_name="skill package id")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        archive_path = out if str(out).endswith(".rwsp") else out.with_suffix(".rwsp")
 
-        # Write metadata.json
-        (pkg_dir / "metadata.json").write_text(
-            json.dumps(asdict(self.metadata), indent=2),
-            encoding="utf-8",
-        )
+        with tempfile.TemporaryDirectory(prefix="roboweaver-package-", dir=out.parent) as tmpdir:
+            pkg_dir = Path(tmpdir)
 
-        # Write package_data.json
-        (pkg_dir / "package_data.json").write_text(
-            json.dumps(self.to_dict(), indent=2), encoding="utf-8"
-        )
-
-        if deployment_manifest is not None:
-            (pkg_dir / "deployment_manifest.json").write_text(
-                json.dumps(deployment_manifest, indent=2), encoding="utf-8"
+            # Write metadata.json
+            (pkg_dir / "metadata.json").write_text(
+                json.dumps(asdict(self.metadata), indent=2),
+                encoding="utf-8",
             )
 
-        # Write behavior_tree.xml
-        if self.skill is not None:
-            bt_xml = export_groot2_xml(self.skill)
-            (pkg_dir / "behavior_tree.xml").write_text(bt_xml, encoding="utf-8")
+            # Write package_data.json
+            (pkg_dir / "package_data.json").write_text(
+                json.dumps(self.to_dict(), indent=2), encoding="utf-8"
+            )
 
-        # Create tar.gz archive with extension .rwsp
-        archive_path = out if str(out).endswith(".rwsp") else out.with_suffix(".rwsp")
-        with tarfile.open(archive_path, "w:gz") as tar:
-            for item in pkg_dir.iterdir():
-                tar.add(item, arcname=item.name)
+            if deployment_manifest is not None:
+                (pkg_dir / "deployment_manifest.json").write_text(
+                    json.dumps(deployment_manifest, indent=2), encoding="utf-8"
+                )
 
-        # Clean up temp dir
-        for item in pkg_dir.iterdir():
-            item.unlink()
-        pkg_dir.rmdir()
+            # Write behavior_tree.xml
+            if self.skill is not None:
+                bt_xml = export_groot2_xml(self.skill)
+                (pkg_dir / "behavior_tree.xml").write_text(bt_xml, encoding="utf-8")
+
+            # Create tar.gz archive with extension .rwsp
+            with tarfile.open(archive_path, "w:gz") as tar:
+                for item in pkg_dir.iterdir():
+                    tar.add(item, arcname=item.name)
 
         return archive_path

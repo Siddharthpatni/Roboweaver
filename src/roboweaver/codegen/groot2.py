@@ -5,15 +5,18 @@ Groot2 / BehaviorTree.CPP v4 XML Generator — exports compiled skills to Groot2
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from xml.dom import minidom
 
+from roboweaver.identifiers import safe_identifier
 from roboweaver.types import BTNode, CompiledSkill
 
 
 def export_groot2_xml(skill: CompiledSkill) -> str:
     """Export a CompiledSkill to Groot2 / BehaviorTree.CPP v4 XML string."""
     root_elem = ET.Element("root", {"BTCPP_format": "4"})
-    tree_id = f"{skill.intent.action.value.lower()}_{skill.intent.object_name}_tree"
+    tree_id = safe_identifier(
+        f"{skill.intent.action.value}_{skill.intent.object_name}_tree",
+        default="skill_tree",
+    )
     bt_elem = ET.SubElement(root_elem, "BehaviorTree", {"ID": tree_id})
 
     def _convert_node(parent_xml: ET.Element, bt_node: BTNode) -> None:
@@ -29,7 +32,5 @@ def export_groot2_xml(skill: CompiledSkill) -> str:
 
     _convert_node(bt_elem, skill.behavior_tree)
 
-    # Format pretty XML
-    raw_str = ET.tostring(root_elem, encoding="utf-8")
-    parsed = minidom.parseString(raw_str)
-    return parsed.toprettyxml(indent="  ")
+    ET.indent(root_elem, space="  ")
+    return ET.tostring(root_elem, encoding="unicode", xml_declaration=True) + "\n"

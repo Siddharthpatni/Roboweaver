@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from roboweaver.identifiers import require_safe_identifier
 from roboweaver.registry.package import SkillPackage, SkillPackageMetadata
 
 
@@ -25,9 +26,13 @@ class SkillRepository:
 
     def register(self, skill_package: SkillPackage) -> None:
         """Register a new skill package in the repository."""
-        self.packages[skill_package.metadata.id] = skill_package
+        package_id = require_safe_identifier(
+            skill_package.metadata.id,
+            field_name="skill package id",
+        )
+        self.packages[package_id] = skill_package
         
-        pkg_file = self.registry_dir / f"{skill_package.metadata.id}.json"
+        pkg_file = self.registry_dir / f"{package_id}.json"
         pkg_file.write_text(json.dumps(skill_package.to_dict(), indent=2), encoding="utf-8")
 
     def list_packages(self) -> list[SkillPackageMetadata]:
@@ -66,6 +71,7 @@ class SkillRepository:
                 pkg = SkillPackage.from_dict(data)
                 if not pkg.metadata.id:
                     pkg.metadata.id = f.stem
+                require_safe_identifier(pkg.metadata.id, field_name="skill package id")
                 self.packages[pkg.metadata.id] = pkg
             except Exception:
                 pass

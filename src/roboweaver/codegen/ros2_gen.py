@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from roboweaver.types import CompiledSkill
 from roboweaver.codegen.groot2 import export_groot2_xml
+from roboweaver.identifiers import safe_identifier
 
 if TYPE_CHECKING:
     from roboweaver.codegen.ai_codegen import AICodeReviewer
@@ -28,7 +29,10 @@ def generate_ros2_package(
     sidecars.  An unavailable model therefore cannot break deployable output.
     """
     out = Path(output_dir)
-    skill_slug = f"{skill.intent.action.value.lower()}_{skill.intent.object_name}".replace(" ", "_")
+    skill_slug = safe_identifier(
+        f"{skill.intent.action.value}_{skill.intent.object_name}",
+        default="skill",
+    )
     pkg_dir = out / f"roboweaver_{skill_slug}"
     pkg_dir.mkdir(parents=True, exist_ok=True)
     launch_dir = pkg_dir / "launch"

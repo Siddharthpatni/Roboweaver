@@ -18,6 +18,7 @@ from typing import Any, TYPE_CHECKING
 
 from roboweaver.hardware.registry_robots import get_robot_spec
 from roboweaver.hardware.universal_driver import RobotConnectionStatus, resolve_bridge_class
+from roboweaver.identifiers import safe_identifier
 from roboweaver.ir.diagnostics import CompilerDiagnostic
 from roboweaver.plugins.registry import PluginRegistry
 
@@ -148,7 +149,7 @@ class UrScriptBackend(RobotBackend):
     def compile(self, result: "CompilationResult", output_dir: Path) -> Path:
         from roboweaver.codegen.urscript_gen import generate_urscript
         robot_spec = get_robot_spec(result.ir.execution.robot_id)
-        out_path = Path(output_dir) / f"{result.ir.skill_id}.script"
+        out_path = Path(output_dir) / f"{safe_identifier(result.ir.skill_id, default='skill')}.script"
         return generate_urscript(result.skill, robot_spec, out_path)
 
 
