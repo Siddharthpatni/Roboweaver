@@ -1,36 +1,61 @@
+x-runtime-hardening: &runtime-hardening
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  restart: unless-stopped
+  stop_grace_period: 20s
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+  ulimits:
+    nofile:
+      soft: 2048
+      hard: 4096
+
 services:
   api:
+    <<: *runtime-hardening
     build:
       context: .
     environment:
       ROBOWEAVER_API_TOKEN: ${ROBOWEAVER_API_TOKEN:?Set ROBOWEAVER_API_TOKEN in the environment}
-      ROBOWEAVER_ALLOWED_ORIGINS: http://localhost:3000
+      ROBOWEAVER_ALLOWED_ORIGINS: ${ROBOWEAVER_ALLOWED_ORIGINS:-http://localhost:3000}
+      ROBOWEAVER_MAX_CONCURRENT_REQUESTS: ${ROBOWEAVER_MAX_CONCURRENT_REQUESTS:-32}
+      ROBOWEAVER_RATE_LIMIT_PER_MINUTE: ${ROBOWEAVER_RATE_LIMIT_PER_MINUTE:-240}
+      ROBOWEAVER_EXPENSIVE_RATE_LIMIT_PER_MINUTE: ${ROBOWEAVER_EXPENSIVE_RATE_LIMIT_PER_MINUTE:-30}
+      OLLAMA_HOST: ${ROBOWEAVER_CONTAINER_OLLAMA_HOST:-http://host.docker.internal:11434}
+    extra_hosts:
+      - host.docker.internal:host-gateway
     ports:
       - "127.0.0.1:8080:8080"
     read_only: true
     tmpfs:
       - /tmp:size=64m,noexec,nosuid
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    restart: unless-stopped
+    pids_limit: 128
+    mem_limit: 1g
+    mem_reservation: 256m
+    cpus: 2.0
 
   frontend:
+    <<: *runtime-hardening
     build:
       context: frontend
     environment:
-      NEXT_PUBLIC_ROBOWEAVER_API: http://localhost:8080
+      ROBOWEAVER_INTERNAL_API: http://api:8080
+      ROBOWEAVER_API_TOKEN: ${ROBOWEAVER_API_TOKEN:?Set ROBOWEAVER_API_TOKEN in the environment}
     ports:
       - "127.0.0.1:3000:3000"
     read_only: true
     tmpfs:
       - /tmp:size=32m,noexec,nosuid
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
+    pids_limit: 128
+    mem_limit: 768m
+    mem_reservation: 128m
+    cpus: 1.0
     depends_on:
       api:
         condition: service_healthy
-    restart: unless-stopped
