@@ -98,7 +98,7 @@ def _check_workspace_and_floor(skill: CompiledSkill, guard: WorkspaceSafetyGuard
             out.append(
                 CompilerDiagnostic(
                     code="RW305",
-                    severity="warning",
+                    severity="error",
                     message=f"Target pose '{name}' is outside the declared safe workspace.",
                     reason="; ".join(result.violations),
                     required_capability=None,

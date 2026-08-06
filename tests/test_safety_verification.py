@@ -166,6 +166,8 @@ def test_workspace_violation_detected():
     diagnostics = check_safety(skill, ir, spec)
     codes = [d.code for d in diagnostics]
     assert "RW305" in codes, f"expected RW305 for a 5m target on a 0.6m-reach arm, got {codes}"
+    violation = next(d for d in diagnostics if d.code == "RW305")
+    assert violation.severity == "error", "workspace violations must block deployment"
     print("  -> Target beyond declared max_reach_m correctly flagged [PASSED]")
 
 
