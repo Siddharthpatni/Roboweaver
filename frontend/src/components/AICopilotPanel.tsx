@@ -142,16 +142,13 @@ export const AICopilotPanel: React.FC<{ defaultOpen?: boolean; activeView?: View
       <button
         onClick={() => setIsOpen(true)}
         id="ai-copilot-toggle"
-        className={`fixed bottom-6 ${dock === 'right' ? 'right-6' : 'left-6'} z-50 w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 hover:scale-105 group`}
+        className={`fixed bottom-4 ${dock === 'right' ? 'right-4 sm:right-6' : 'left-4 sm:left-6 lg:left-[17.5rem]'} z-50 flex h-12 w-12 items-center justify-center rounded-xl bg-[#162131] text-cyan-300 shadow-2xl ring-1 ring-inset ring-white/[0.1] transition-colors hover:bg-[#1b2a3d] sm:h-13 sm:w-13`}
         style={{
-          background: 'linear-gradient(135deg, rgba(34,211,238,0.15) 0%, rgba(139,92,246,0.15) 100%)',
-          border: '1px solid rgba(34,211,238,0.3)',
-          backdropFilter: 'blur(12px)',
-          boxShadow: '0 0 20px rgba(34,211,238,0.15), inset 0 1px 0 rgba(255,255,255,0.05)',
+          border: '1px solid rgba(103,232,249,0.16)',
         }}
         title="Open AI Co-Pilot"
       >
-        <Brain className="w-6 h-6 text-cyan-300 group-hover:text-cyan-200 transition-colors" />
+        <Brain className="h-5 w-5" />
         {ollamaAvailable && (
           <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-emerald-400" style={{ boxShadow: '0 0 6px rgba(52,211,153,0.6)' }} />
         )}
@@ -162,15 +159,15 @@ export const AICopilotPanel: React.FC<{ defaultOpen?: boolean; activeView?: View
   return (
     <div
       id="ai-copilot-panel"
-      className={`fixed bottom-6 ${dock === 'right' ? 'right-6' : 'left-6'} z-50 flex flex-col`}
+      className={`fixed bottom-4 ${dock === 'right' ? 'right-4 sm:right-6' : 'left-4 sm:left-6 lg:left-[17.5rem]'} z-50 flex flex-col`}
       style={{
-        width: 'min(420px, calc(100vw - 48px))',
-        height: 'min(560px, calc(100vh - 96px))',
-        background: 'linear-gradient(180deg, rgba(10,15,30,0.95) 0%, rgba(7,11,22,0.98) 100%)',
-        border: '1px solid rgba(34,211,238,0.15)',
-        borderRadius: 20,
-        backdropFilter: 'blur(24px)',
-        boxShadow: '0 0 40px rgba(34,211,238,0.08), 0 8px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)',
+        width: 'min(420px, calc(100vw - 32px))',
+        height: 'min(580px, calc(100dvh - 88px))',
+        background: 'linear-gradient(180deg, rgba(22,33,49,0.98), rgba(11,17,27,0.99))',
+        border: '1px solid rgba(148,163,184,0.16)',
+        borderRadius: 16,
+        backdropFilter: 'blur(18px)',
+        boxShadow: '0 24px 64px rgba(0,0,0,0.48)',
       }}
     >
       {/* Header */}
@@ -209,6 +206,7 @@ export const AICopilotPanel: React.FC<{ defaultOpen?: boolean; activeView?: View
           <button
             onClick={() => setIsOpen(false)}
             className="p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-white/[0.05] transition-colors"
+            aria-label="Close AI copilot"
           >
             <X className="w-4 h-4" />
           </button>
@@ -325,8 +323,8 @@ export const AICopilotPanel: React.FC<{ defaultOpen?: boolean; activeView?: View
             <Send className="w-3.5 h-3.5" />
           </button>
         </div>
-        <div className="text-[9px] text-slate-700 text-center mt-1.5">
-          Powered by local Ollama · Zero cloud cost · Fully offline
+        <div className="text-[9px] text-slate-600 text-center mt-1.5">
+          Local Ollama runtime · prompts stay on the configured host
         </div>
       </div>
     </div>
