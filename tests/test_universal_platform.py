@@ -12,6 +12,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+import pytest
 from roboweaver.skills.taxonomy import (
     IndustrialSkillCategory,
     SkillPluginRegistry,
@@ -19,7 +20,12 @@ from roboweaver.skills.taxonomy import (
 )
 from roboweaver.types import TaskDecomposition, TaskType, BTNode
 from roboweaver.hardware.registry_robots import get_robot_spec
-from roboweaver.hardware.universal_driver import UniversalRobotDriver
+from roboweaver.hardware.universal_driver import (
+    ROS2HardwareBridge,
+    SimulationHardwareBridge,
+    UniversalRobotDriver,
+    resolve_bridge_class,
+)
 from roboweaver.compiler import SkillCompiler
 from roboweaver.codegen.ros2_gen import generate_ros2_package
 
@@ -193,6 +199,35 @@ def test_simulation_bridge_honest_tcp_reachability():
         srv.close()
 
     print("  -> Verified honest TCP reachability: unreachable=False, reachable=True [PASSED]")
+
+
+def test_protocol_resolution_is_exact_and_supports_documented_simulators():
+    assert resolve_bridge_class("ros2") is ROS2HardwareBridge
+    assert resolve_bridge_class("ROS2-CONTROL") is ROS2HardwareBridge
+    for protocol in ("sim", "gazebo", "ignition", "isaac", "webots"):
+        assert resolve_bridge_class(protocol) is SimulationHardwareBridge
+
+    for ambiguous in ("not_ros2", "my_gazebo_sim", "dds-over-evil"):
+        with pytest.raises(ValueError, match="Unknown robot protocol"):
+            resolve_bridge_class(ambiguous)
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "",
+        "http://localhost:11345",
+        "sim://user:password@localhost:11345",
+        "sim://localhost:70000",
+        "sim:///missing-host",
+        "sim://localhost:11345?unexpected=true",
+    ],
+)
+def test_simulation_bridge_rejects_ambiguous_or_unsafe_target_uris(uri):
+    spec = get_robot_spec("franka_panda")
+    bridge = SimulationHardwareBridge(spec, uri)
+    with pytest.raises(ValueError):
+        bridge._parse_target()
 
 
 def test_robotics_package_nexus():

@@ -168,9 +168,22 @@ class SimulationHardwareBridge(AbstractRobotBridge):
     DEFAULT_PORTS = {"isaac": 8211, "gazebo": 11345, "ignition": 11345, "webots": 1234}
 
     def _parse_target(self) -> tuple[str, int]:
+        if not self.target_uri or len(self.target_uri) > 2048:
+            raise ValueError("Simulator URI must be 1-2048 characters.")
         parsed = urlparse(self.target_uri)
         scheme = (parsed.scheme or "").lower()
-        host = parsed.hostname or "localhost"
+        if scheme not in {"sim", *self.DEFAULT_PORTS}:
+            raise ValueError(
+                "Simulator URI scheme must be sim, isaac, gazebo, ignition, or webots."
+            )
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("Simulator URI must not contain credentials.")
+        if parsed.query or parsed.fragment:
+            raise ValueError("Simulator URI must not contain a query string or fragment.")
+        host = parsed.hostname
+        if not host or len(host) > 253:
+            raise ValueError("Simulator URI must contain a valid host.")
+        # Accessing parsed.port validates both syntax and the 1-65535 range.
         port = parsed.port or self.DEFAULT_PORTS.get(scheme, 11345)
         return host, port
 
@@ -220,19 +233,16 @@ class SimulationHardwareBridge(AbstractRobotBridge):
         self._connected = False
 
 
-# Bridge registry (docs/COMPILER_ROADMAP.md Phase 13) -- replaces what used to be an
-# if/elif chain in connect_robot() below. Canonical names map to real bridge classes;
-# _PROTOCOL_ALIASES preserves the exact substring-matching behavior connect_robot
-# always had (e.g. "ros2_control" or "my_gazebo_sim" both still resolve), so this is a
-# dispatch-mechanism change, not a behavior change. Adding a third bridge later means
-# registering it here, not editing an if/elif chain.
+# Bridge registry (docs/COMPILER_ROADMAP.md Phase 13). Protocol names are resolved
+# exactly, rather than by substring: accepting values such as "not_ros2" as ROS 2 is
+# dangerous at a hardware boundary because a typo can select the wrong transport.
 _BRIDGE_REGISTRY: PluginRegistry[type[AbstractRobotBridge]] = PluginRegistry(kind="robot bridge")
 _BRIDGE_REGISTRY.register("ros2")(ROS2HardwareBridge)
 _BRIDGE_REGISTRY.register("sim")(SimulationHardwareBridge)
 
 _PROTOCOL_ALIASES: dict[str, list[str]] = {
-    "ros2": ["ros2", "dds"],
-    "sim": ["sim", "gazebo", "isaac"],
+    "ros2": ["ros2", "ros2_control", "dds"],
+    "sim": ["sim", "gazebo", "ignition", "isaac", "webots"],
 }
 
 
@@ -240,9 +250,9 @@ def resolve_bridge_class(protocol: str) -> type[AbstractRobotBridge]:
     """Public so other modules (e.g. plugins/backend.py's RobotBackend.deploy())
     can resolve a bridge class without going through connect_robot()'s
     immediate-connect side effect."""
-    protocol_lower = protocol.lower()
-    for canonical, substrings in _PROTOCOL_ALIASES.items():
-        if any(s in protocol_lower for s in substrings):
+    protocol_normalized = protocol.strip().lower().replace("-", "_")
+    for canonical, aliases in _PROTOCOL_ALIASES.items():
+        if protocol_normalized in aliases:
             return _BRIDGE_REGISTRY.get(canonical)
     supported = sorted({alias for aliases in _PROTOCOL_ALIASES.values() for alias in aliases})
     raise ValueError(
