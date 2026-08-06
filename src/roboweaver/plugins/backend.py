@@ -100,10 +100,16 @@ class RobotBackend(ABC):
         status = bridge.connect()
 
         if status.is_connected:
-            for seg in result.skill.motion_plan.trajectories.values():
-                dt = seg.duration / max(len(seg.waypoints) - 1, 1)
-                bridge.send_trajectory(seg.waypoints, dt=dt)
-            bridge.disconnect()
+            try:
+                for segment_name, seg in result.skill.motion_plan.trajectories.items():
+                    dt = seg.duration / max(len(seg.waypoints) - 1, 1)
+                    if not bridge.send_trajectory(seg.waypoints, dt=dt):
+                        raise DeploymentRefused(
+                            f"Bridge rejected trajectory segment '{segment_name}' for "
+                            f"{robot_spec.id}; deployment stopped before subsequent segments."
+                        )
+            finally:
+                bridge.disconnect()
 
         return status
 

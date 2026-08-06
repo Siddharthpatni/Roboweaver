@@ -5,11 +5,18 @@ docs/COMPILER_ROADMAP.md's v2 vision.
 
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from roboweaver.compiler import SkillCompiler
-from roboweaver.plugins.backend import BACKEND_REGISTRY, Ros2Backend, UrScriptBackend
+from roboweaver.hardware.universal_driver import RobotConnectionStatus
+from roboweaver.plugins.backend import (
+    BACKEND_REGISTRY,
+    DeploymentRefused,
+    Ros2Backend,
+    UrScriptBackend,
+)
 
 
 def _real_result(robot_id: str = "ur5e"):
@@ -79,6 +86,47 @@ def test_deploy_sends_real_trajectories_over_sim_bridge():
     assert status.is_connected is False
     assert "sim" in status.protocol.lower() or "reachable" in status.message.lower() or "unreachable" in status.protocol.lower()
     print(f"  -> deploy() honestly reports not connected when nothing is listening: {status.message} [PASSED]")
+
+
+def test_deploy_stops_and_disconnects_when_bridge_rejects_a_trajectory():
+    result = _real_result()
+
+    class RejectingBridge:
+        disconnected = False
+        sends = 0
+
+        def __init__(self, spec, uri):
+            self.spec = spec
+
+        def connect(self):
+            return RobotConnectionStatus(
+                is_connected=True,
+                protocol="test",
+                robot_id=self.spec.id,
+                dof=self.spec.dof,
+                active_controllers=["test"],
+                latency_ms=0.0,
+                message="connected",
+            )
+
+        def send_trajectory(self, waypoints, dt=0.01):
+            type(self).sends += 1
+            return False
+
+        def disconnect(self):
+            type(self).disconnected = True
+
+    with patch("roboweaver.plugins.backend.resolve_bridge_class", return_value=RejectingBridge):
+        with pytest.raises(DeploymentRefused, match="rejected trajectory segment"):
+            BACKEND_REGISTRY.get("ros2").deploy(
+                result,
+                protocol="test",
+                uri="test://controller",
+                skip_simulation_check=True,
+            )
+
+    assert RejectingBridge.sends == 1
+    assert RejectingBridge.disconnected is True
 
 
 if __name__ == "__main__":
