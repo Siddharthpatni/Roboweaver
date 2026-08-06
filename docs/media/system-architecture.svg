@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">RoboWeaver production system architecture</title>
+  <desc id="desc">The operator dashboard calls a same-origin proxy, which authenticates to the bounded Python API. RoboIR passes through verification before code generation and hardware bridges. Ollama remains an optional local sidecar.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#070b12"/>
+      <stop offset="1" stop-color="#0c1420"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#67e8f9"/>
+      <stop offset="1" stop-color="#a78bfa"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity=".35"/>
+    </filter>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#52657c"/>
+    </marker>
+    <style>
+      .label{font-family:Inter,Segoe UI,sans-serif;fill:#f8fafc;font-size:17px;font-weight:650}
+      .small{font-family:Inter,Segoe UI,sans-serif;fill:#8fa1b6;font-size:12px}
+      .micro{font-family:Inter,Segoe UI,sans-serif;fill:#65778c;font-size:10px;font-weight:600;letter-spacing:1.4px}
+      .mono{font-family:SFMono-Regular,Consolas,monospace;fill:#67e8f9;font-size:11px}
+      .box{fill:#111a27;stroke:#27374a;stroke-width:1}
+      .flow{fill:none;stroke:#52657c;stroke-width:2;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1200" height="630" rx="22" fill="url(#bg)"/>
+  <path d="M0 155H1200M0 315H1200M0 475H1200" stroke="#94a3b8" stroke-opacity=".035"/>
+  <path d="M220 0V630M440 0V630M660 0V630M880 0V630M1100 0V630" stroke="#94a3b8" stroke-opacity=".025"/>
+
+  <g transform="translate(54 46)">
+    <rect width="42" height="42" rx="11" fill="#67e8f9"/>
+    <path d="M13 15h16v14H13zM17 11v4M25 11v4M17 22h1M24 22h1M17 27h8" fill="none" stroke="#071019" stroke-width="2" stroke-linecap="round"/>
+    <text x="58" y="18" class="micro" fill="#67e8f9">SID LABS</text>
+    <text x="58" y="40" class="label" font-size="22">RoboWeaver production path</text>
+  </g>
+  <text x="1146" y="66" text-anchor="end" class="micro">DETERMINISM BEFORE INTELLIGENCE</text>
+
+  <g filter="url(#shadow)">
+    <rect class="box" x="55" y="145" width="190" height="112" rx="15"/>
+    <text x="77" y="173" class="micro">OPERATOR PLANE</text>
+    <text x="77" y="202" class="label">Control center</text>
+    <text x="77" y="225" class="small">Responsive Next.js workspace</text>
+    <text x="77" y="244" class="small">No API credential in browser</text>
+
+    <rect class="box" x="290" y="145" width="190" height="112" rx="15"/>
+    <text x="312" y="173" class="micro">TRUST BOUNDARY</text>
+    <text x="312" y="202" class="label">Same-origin proxy</text>
+    <text x="312" y="225" class="small">Path, body and timeout limits</text>
+    <text x="312" y="244" class="mono">Bearer token · server only</text>
+
+    <rect class="box" x="525" y="145" width="210" height="112" rx="15"/>
+    <text x="547" y="173" class="micro">CONTROL API</text>
+    <text x="547" y="202" class="label">Bounded Python service</text>
+    <text x="547" y="225" class="small">Rate + concurrency controls</text>
+    <text x="547" y="244" class="small">Strict JSON · request IDs · no-store</text>
+
+    <rect class="box" x="780" y="145" width="170" height="112" rx="15"/>
+    <text x="802" y="173" class="micro">OPTIONAL SIDECAR</text>
+    <text x="802" y="202" class="label">Local Ollama</text>
+    <text x="802" y="225" class="small">Explain and advise only</text>
+    <text x="802" y="244" class="small">Cannot bypass gates</text>
+
+    <rect x="995" y="145" width="150" height="112" rx="15" fill="#191a20" stroke="#594a2b"/>
+    <text x="1017" y="173" class="micro" fill="#fbbf24">SAFETY LIMIT</text>
+    <text x="1017" y="202" class="label">Operator auth</text>
+    <text x="1017" y="225" class="small">TLS + session gateway</text>
+    <text x="1017" y="244" class="small">Required for remote use</text>
+  </g>
+
+  <path class="flow" d="M245 201H282"/>
+  <path class="flow" d="M480 201H517"/>
+  <path d="M735 190H772" fill="none" stroke="#a78bfa" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrow)"/>
+
+  <text x="55" y="316" class="micro">DETERMINISTIC COMPILER AND VERIFICATION PIPELINE</text>
+  <g transform="translate(55 340)">
+    <rect class="box" width="180" height="92" rx="14"/>
+    <text x="20" y="29" class="mono">01 · INTENT</text>
+    <text x="20" y="55" class="label">Task understanding</text>
+    <text x="20" y="75" class="small">Typed constraints</text>
+  </g>
+  <g transform="translate(280 340)">
+    <rect width="180" height="92" rx="14" fill="#10202b" stroke="#256173"/>
+    <text x="20" y="29" class="mono">02 · ROBOIR</text>
+    <text x="20" y="55" class="label">Shared representation</text>
+    <text x="20" y="75" class="small">Inspectable and portable</text>
+  </g>
+  <g transform="translate(505 340)">
+    <rect class="box" width="180" height="92" rx="14"/>
+    <text x="20" y="29" class="mono">03 · PASSES</text>
+    <text x="20" y="55" class="label">Analyze + optimize</text>
+    <text x="20" y="75" class="small">Structured diagnostics</text>
+  </g>
+  <g transform="translate(730 340)">
+    <rect width="180" height="92" rx="14" fill="#171a23" stroke="#51476a"/>
+    <text x="20" y="29" class="mono" fill="#c4b5fd">04 · VERIFY</text>
+    <text x="20" y="55" class="label">Safety + simulation</text>
+    <text x="20" y="75" class="small">Fail-closed deployment</text>
+  </g>
+  <g transform="translate(955 340)">
+    <rect class="box" width="190" height="92" rx="14"/>
+    <text x="20" y="29" class="mono">05 · PACKAGE</text>
+    <text x="20" y="55" class="label">ROS 2 / URScript</text>
+    <text x="20" y="75" class="small">Manifest + evidence</text>
+  </g>
+  <path class="flow" d="M235 386H272"/><path class="flow" d="M460 386H497"/>
+  <path class="flow" d="M685 386H722"/><path class="flow" d="M910 386H947"/>
+
+  <rect x="55" y="492" width="1090" height="86" rx="15" fill="#0b121d" stroke="#27374a"/>
+  <text x="78" y="522" class="micro">RUNTIME AND HARDWARE BOUNDARY</text>
+  <text x="78" y="552" class="label">Telemetry · durable execution memory · deterministic recovery · isolated bridge selection</text>
+  <rect x="903" y="512" width="218" height="44" rx="11" fill="#261f14" stroke="#6d5527"/>
+  <text x="1012" y="532" text-anchor="middle" class="micro" fill="#fbbf24">INDEPENDENT SAFETY REQUIRED</text>
+  <text x="1012" y="548" text-anchor="middle" class="small" fill="#d9b86b">E-stop · watchdog · risk assessment</text>
+  <rect x="55" y="599" width="1090" height="1" fill="url(#accent)" opacity=".55"/>
+</svg>

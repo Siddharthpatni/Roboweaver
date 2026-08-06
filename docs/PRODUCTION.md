@@ -22,9 +22,29 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
 Never put the token in a `NEXT_PUBLIC_*` variable. Those values are compiled into the
-browser bundle. Remote write access should sit behind a same-origin gateway that owns
-the token and establishes an authenticated operator session. The browser may call the
-loopback API directly during local development.
+browser bundle. The included Next.js same-origin proxy reads `ROBOWEAVER_API_TOKEN`
+only on the server, validates upstream paths, bounds request bodies, sets timeouts, and
+does not follow upstream redirects. Remote access must additionally sit behind a
+gateway that terminates TLS and establishes an authenticated, expiring operator
+session. The browser may call the loopback API directly during local development.
+
+The dashboard API is built on Python's standard-library HTTP server. It is suitable
+for local and internal service use, but it is not a hardened internet-facing edge
+server. Never publish port 8080 directly to the internet. Keep it on loopback or an
+internal container network behind the frontend and a production reverse proxy.
+
+Resource controls can be tuned within their validated ranges:
+
+```bash
+ROBOWEAVER_MAX_CONCURRENT_REQUESTS=32
+ROBOWEAVER_RATE_LIMIT_PER_MINUTE=240
+ROBOWEAVER_EXPENSIVE_RATE_LIMIT_PER_MINUTE=30
+```
+
+Requests and responses are bounded, non-standard JSON numbers are rejected, request
+IDs are sanitized, API logs omit query values, and generated identifiers cannot
+escape their output directories. These are application safeguards, not a substitute
+for network segmentation, monitoring, backups, or an incident-response process.
 
 ## Container Baseline
 
@@ -69,7 +89,8 @@ they do not replace the independent safety functions above.
 1. Run `python -m pytest tests/ -q` on a supported Python version.
 2. Run `python -m build` and install the wheel in a clean environment.
 3. Run `npm ci`, `npm run lint`, `npx tsc --noEmit`, and `npm run build` in `frontend/`.
-4. Build and scan both container images; record image digests and an SBOM.
-5. Verify secrets are supplied by the deployment platform, not image layers or Git.
-6. Exercise liveness/readiness, backup, rollback, and incident-stop procedures.
-7. For hardware, attach the completed physical-robot safety evidence to the release.
+4. Run `pip-audit`, Bandit, the full npm audit, and review CodeQL results.
+5. Build and scan both container images; record image digests and an SBOM.
+6. Verify secrets are supplied by the deployment platform, not image layers or Git.
+7. Exercise liveness/readiness, backup, rollback, and incident-stop procedures.
+8. For hardware, attach the completed physical-robot safety evidence to the release.

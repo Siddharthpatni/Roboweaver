@@ -21,7 +21,8 @@ but it cannot bypass diagnostics, verification, or deployment gates.
 
 [Architecture](docs/ARCHITECTURE.md) · [Roadmap](docs/ROADMAP.md) ·
 [Research positioning](docs/RESEARCH.md) · [Benchmarks](docs/BENCHMARKS.md) ·
-[Production](docs/PRODUCTION.md) · [Compiler change log](docs/COMPILER_ROADMAP.md)
+[Production](docs/PRODUCTION.md) · [Security](SECURITY.md) ·
+[Compiler change log](docs/COMPILER_ROADMAP.md)
 
 ## See the system
 
@@ -80,6 +81,8 @@ not research- or certification-grade. The maintained list is in the
 [roadmap](docs/ROADMAP.md).
 
 ## Architecture
+
+[![RoboWeaver production architecture: browser proxy, bounded API, deterministic compiler, local Ollama sidecar, and hardware safety boundary](docs/media/system-architecture.svg)](docs/media/system-architecture.svg)
 
 ```mermaid
 flowchart LR
@@ -210,7 +213,7 @@ before changing that boundary.
 
 ## Tests and release checks
 
-The repository currently collects **320 tests across 44 test files**. Coverage spans
+The repository currently collects **356 tests across 47 test files**. Coverage spans
 the compiler and pass manager, diagnostics, planning, code generators, knowledge graph,
 simulation, safety and formal verification, recovery, hardware protocols, dashboard
 hardening, and every optional Ollama integration with deterministic fakes.
@@ -225,8 +228,9 @@ npx tsc --noEmit
 npm run build
 ```
 
-CI runs the Python suite on 3.10 and 3.12, verifies installed dependency consistency,
-builds distributable artifacts, and checks the frontend with Node.js 22.
+CI runs the Python suite on 3.10 and 3.12, audits Python and npm dependencies, runs
+Bandit and scheduled CodeQL analysis, builds and installs distributable artifacts,
+checks the frontend with Node.js 22, and smoke-tests the authenticated container stack.
 
 ## Security model
 
@@ -235,10 +239,13 @@ a non-loopback address requires `ROBOWEAVER_API_TOKEN`. Requests are checked aga
 exact Origin allow-list, control operations use bounded JSON `POST` bodies, bearer
 tokens use constant-time comparison, and query sizes are capped.
 
-Those controls protect the application boundary; they do not make physical motion
-safe. Independent emergency stops, watchdogs, collision models, measured joint-state
-feedback, controller acknowledgements, validated limits, hardware-in-the-loop tests,
-and a robot-specific risk assessment remain mandatory.
+The Python dashboard uses the standard-library HTTP server and is not a direct
+internet-facing edge server. Keep it on loopback or an internal container network and
+put TLS, operator authentication, session expiry, and request filtering at a mature
+reverse proxy. Those controls protect the application boundary; they do not make
+physical motion safe. Independent emergency stops, watchdogs, collision models,
+measured joint-state feedback, controller acknowledgements, validated limits,
+hardware-in-the-loop tests, and a robot-specific risk assessment remain mandatory.
 
 ## License
 
