@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from roboweaver.hardware.registry_robots import ROBOT_REGISTRY, get_robot_spec
+from roboweaver.hardware.registry_robots import ROBOT_REGISTRY, distinct_robot_specs, get_robot_spec
 from roboweaver.hardware.robot_spec import JointSpec, LinkSpec, RobotSpec
 
 
@@ -53,6 +53,13 @@ def test_every_registered_robot_is_valid(robot_id):
     not discovered by chance while auditing FK output by hand."""
     problems = ROBOT_REGISTRY[robot_id].validate()
     assert problems == [], f"{robot_id}: {problems}"
+
+
+def test_distinct_profiles_do_not_expose_aliases_as_duplicate_robots():
+    profiles = distinct_robot_specs()
+    ids = [profile.id for profile in profiles]
+    assert len(ids) == len(set(ids))
+    assert len(profiles) < len(ROBOT_REGISTRY)
 
 
 def test_pepper_has_one_link_per_joint():

@@ -3,6 +3,7 @@
 from roboweaver.hardware.robot_spec import RobotSpec, JointSpec, LinkSpec
 from roboweaver.hardware.registry_robots import (
     ROBOT_REGISTRY,
+    distinct_robot_specs,
     get_robot_spec,
     get_franka_panda_spec,
     get_ur5e_spec,
@@ -19,6 +20,7 @@ __all__ = [
     "JointSpec",
     "LinkSpec",
     "ROBOT_REGISTRY",
+    "distinct_robot_specs",
     "get_robot_spec",
     "get_franka_panda_spec",
     "get_ur5e_spec",

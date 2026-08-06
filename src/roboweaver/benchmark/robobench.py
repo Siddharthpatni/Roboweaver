@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from roboweaver.compiler import SkillCompiler
-from roboweaver.hardware.registry_robots import ROBOT_REGISTRY
+from roboweaver.hardware.registry_robots import distinct_robot_specs
 from roboweaver.ir import SkillCompilationError
 
 # One real instruction per reachable Action -> IndustrialSkillCategory mapping
@@ -97,13 +97,7 @@ class BenchmarkReport:
 
 
 def _distinct_registered_robot_ids() -> list[str]:
-    seen: set[str] = set()
-    ids: list[str] = []
-    for spec in ROBOT_REGISTRY.values():
-        if spec.id not in seen:
-            seen.add(spec.id)
-            ids.append(spec.id)
-    return ids
+    return [spec.id for spec in distinct_robot_specs()]
 
 
 def run_benchmark(robot_ids: list[str] | None = None) -> BenchmarkReport:

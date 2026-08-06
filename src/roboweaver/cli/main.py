@@ -45,7 +45,7 @@ from pathlib import Path
 
 from roboweaver.compiler import SkillCompiler
 from roboweaver.ir import SkillCompilationError, OptimizationLevel, diff_ir, diff_trace
-from roboweaver.hardware import ROBOT_REGISTRY, get_robot_spec
+from roboweaver.hardware import ROBOT_REGISTRY, distinct_robot_specs, get_robot_spec
 from roboweaver.fleet import SkillRetargeter, FleetOrchestrator
 from roboweaver.runtime import SkillRuntime
 from roboweaver.registry.package import SkillPackage, SkillPackageMetadata
@@ -53,9 +53,10 @@ from roboweaver.registry.repository import SkillRepository
 
 
 def cmd_robots(args) -> int:
-    print(f"\n\033[1;35mRoboWeaver Universal Robot Hardware Profiles\033[0m ({len(ROBOT_REGISTRY)} registered):")
+    profiles = distinct_robot_specs()
+    print(f"\n\033[1;35mRoboWeaver Universal Robot Hardware Profiles\033[0m ({len(profiles)} registered):")
     print("─" * 75)
-    for r_id, spec in ROBOT_REGISTRY.items():
+    for spec in profiles:
         print(f"  • \033[1m{spec.name:<24}\033[0m | ID: \033[36m{spec.id:<14}\033[0m | {spec.dof}-DOF | Payload: {spec.payload_capacity_kg}kg | Reach: {spec.max_reach_m}m")
     print("─" * 75 + "\n")
     return 0

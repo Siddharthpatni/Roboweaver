@@ -30,7 +30,7 @@ from roboweaver.codegen.groot2 import export_groot2_xml
 from roboweaver.knowledge.ingest_registry import build_graph_from_registry
 from roboweaver.knowledge.package_nexus import RoboticsPackageNexus
 from roboweaver.registry.repository import SkillRepository
-from roboweaver.hardware.registry_robots import ROBOT_REGISTRY
+from roboweaver.hardware.registry_robots import ROBOT_REGISTRY, distinct_robot_specs
 from roboweaver.hardware.kinematics_ndof import forward_kinematics_chain_ndof
 from roboweaver.fleet.prompt_builder import SystemPromptParser, MultiRobotChoreographer
 from roboweaver.simulation.inspire_sim import InspireHandSimulator
@@ -421,12 +421,8 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             ])
 
         elif path == "/api/robots":
-            seen: set[str] = set()
             robots = []
-            for spec in ROBOT_REGISTRY.values():
-                if spec.id in seen:
-                    continue
-                seen.add(spec.id)
+            for spec in distinct_robot_specs():
                 robots.append({
                     "id": spec.id,
                     "name": spec.name,
@@ -885,7 +881,7 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                 "platform": platform_module.system(),
                 "self_healing_active": _SELF_HEALING_ACTIVE,
                 "uptime_seconds": uptime,
-                "registered_robots": len(ROBOT_REGISTRY),
+                "registered_robots": len(distinct_robot_specs()),
             })
 
         elif path == "/api/network":

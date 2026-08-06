@@ -424,9 +424,16 @@ def _validate_registry() -> None:
 _validate_registry()
 
 
+def distinct_robot_specs() -> tuple[RobotSpec, ...]:
+    """Canonical profiles without repeating registry aliases."""
+    by_id: dict[str, RobotSpec] = {}
+    for spec in ROBOT_REGISTRY.values():
+        by_id.setdefault(spec.id, spec)
+    return tuple(by_id.values())
+
+
 def get_robot_spec(robot_id: str) -> RobotSpec:
     """Retrieve RobotSpec by robot_id (defaults to Franka Panda)."""
     key = robot_id.lower().strip()
     return ROBOT_REGISTRY.get(key, get_franka_panda_spec())
-
 

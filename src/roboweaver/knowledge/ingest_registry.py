@@ -8,7 +8,7 @@ Every edge here is traceable to a real field on real data, not invented.
 
 from __future__ import annotations
 
-from roboweaver.hardware.registry_robots import ROBOT_REGISTRY
+from roboweaver.hardware.registry_robots import distinct_robot_specs
 from roboweaver.knowledge.graph import RoboticsKnowledgeGraph
 from roboweaver.knowledge.ontology import KnowledgeEdge, KnowledgeNode, NodeType, RelationType
 from roboweaver.knowledge.package_nexus import RoboticsPackageNexus
@@ -33,11 +33,8 @@ def build_graph_from_registry() -> RoboticsKnowledgeGraph:
     them)."""
     graph = RoboticsKnowledgeGraph()
 
-    robots_by_id = {}
-    for spec in ROBOT_REGISTRY.values():
-        if spec.id in robots_by_id:
-            continue
-        robots_by_id[spec.id] = spec
+    robots_by_id = {spec.id: spec for spec in distinct_robot_specs()}
+    for spec in robots_by_id.values():
         graph.add_node(
             KnowledgeNode(
                 id=f"robot_{spec.id}",
