@@ -126,7 +126,7 @@ jobs:
 
       - name: Upload responsive QA screenshots
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: responsive-visual-qa
           path: frontend/test-results/visual
@@ -161,23 +161,17 @@ jobs:
   ros2-artifact:
     name: Generated ROS 2 package / Humble colcon
     runs-on: ubuntu-22.04
+    container:
+      image: ros:humble-ros-base-jammy@sha256:7bea3d9aa2483d3ca34c8e30d921b79273b0913bd7dc64bebf51d082b5d107e4
     timeout-minutes: 25
 
     steps:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - name: Install pinned ROS 2 tooling and Humble
-        uses: ros-tooling/setup-ros@649ef6bcd696da05bc27ceb3fab69d810c0daeab # 0.7.19
-        with:
-          required-ros-distributions: humble
-
-      - name: Install RoboWeaver
-        run: |
-          python3 -m pip install pyserial==3.5
-          python3 -m pip install -e . --no-deps
-
       - name: Generate package from verified RoboIR
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
         run: |
           mkdir -p "${RUNNER_TEMP}/generated_ws/src"
           python3 scripts/generate_ros2_ci_package.py "${RUNNER_TEMP}/generated_ws/src"
@@ -242,7 +236,7 @@ jobs:
           python scripts/run_research_evaluation.py --output research-results/evaluation.json
 
       - name: Upload machine-readable evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: research-evaluation
           path: research-results/evaluation.json

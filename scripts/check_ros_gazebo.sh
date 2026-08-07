@@ -46,5 +46,7 @@ timeout 30 ros2 run ros_gz_sim create \
 timeout 20 gz model --list | tee "${run_dir}/models.txt"
 grep -q 'roboweaver_ci_robot' "${run_dir}/models.txt"
 timeout 20 gz model -m roboweaver_ci_robot | tee "${run_dir}/model.txt"
-grep -q 'franka_panda_joint1' "${run_dir}/model.txt"
+for joint_index in $(seq 1 7); do
+  grep -q "Name: panda_joint${joint_index}" "${run_dir}/model.txt"
+done
 echo "ROS 2 / Gazebo acceptance passed: URDF parsed, spawned, and exposed its joints."
