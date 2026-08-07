@@ -28,9 +28,8 @@ works. Record the test, build, hardware log, or other reproducible evidence.
 
 Measured on Python 3.12.13 and Node.js 22 tooling on 2026-08-07:
 
-- **459 tests passed, 0 skipped, and 5 subtests passed** (also re-run clean on Python
-  3.10.19 with the same lock file: 459 passed, 0 skipped).
-- **78.93% branch-aware Python coverage**, with a **75% CI floor**.
+- **464 tests passed, 0 skipped, and 5 subtests passed**.
+- **79.01% branch-aware Python coverage**, with a **75% CI floor**.
 - Ruff/Pyflakes, Python compilation, dependency consistency, and CI YAML checks pass.
 - Frontend ESLint, strict TypeScript checking, and the Next.js production build pass.
 - `pip-audit` and `npm audit` report no known dependency vulnerabilities.
@@ -125,7 +124,8 @@ npm audit --audit-level=high
 | Native simulation | **Verified, bounded** | Complete RoboIR is adapted into the legacy runtime view and executed through the native twin. PICK has a modeled process outcome; other processes report unsupported status rather than false success. |
 | External simulation | **Partial / blocked externally** | Remote twin connectivity is truthful, but Isaac, Gazebo, Webots, and similar physics engines are not integrated or exercised here. |
 | Research experiment sandbox | **Verified, bounded** | Open-ended prompts become a validated connected-tree morphology, deterministic URDF, and deterministic training-adapter scaffold. A hardened no-network/no-device Docker run executes a real headless MuJoCo rollout (gravity, contacts, bounded synthetic actuation) and reports numeric physics evidence. Model-authored code is never executed; no training outcome or learned policy is claimed, and Gazebo/ros2_control physics remain separate/open. |
-| Model cascade and observability | **Verified, bounded** | At most three explicit attempts route Ollama → configured Gemini → configured OpenRouter. Exact TTL cache hits re-run validation. Sentinel-inspired traces retain provider/model/latency/token/error metadata but no prompts, responses, keys, or target addresses. This is an original in-process implementation, not Sentinel's complete gateway. |
+| Model cascade and observability | **Verified, bounded** | At most three explicit attempts route Ollama → configured Gemini → configured OpenRouter, now under a shared 55s total wall-clock budget (not just a per-attempt cap) so a slow early candidate cannot silently push the whole cascade past every client-side HTTP timeout above it — the exact failure mode a real `/api/research/plan` request hit before this fix. Exact TTL cache hits re-run validation. Sentinel-inspired traces retain provider/model/latency/token/error metadata but no prompts, responses, keys, or target addresses. This is an original in-process implementation, not Sentinel's complete gateway. |
+| Compiler AI explanation (MLIR) | **Verified, optional** | `?explain_mlir=1` on `/api/compile` runs the same provider cascade to summarize the *real* recorded `mlir-opt` evidence and the exact deterministic emitted MLIR text — never invents pass results and states plainly when the native tool was unavailable. Strictly read-only: it cannot alter compilation and a compile succeeds identically with it on or off. Available cascade models now include a real, explicitly non-free OpenRouter Gemini 2.5 Flash Lite option (`google/gemini-2.5-flash-lite`, verified live against OpenRouter's own model list to confirm it carries no `:free` tag) alongside the existing free-tier-eligible direct Gemini API path. |
 | Research evaluation | **Verified locally; CI artifact configured** | Versioned harness measures expected compilation outcomes, diagnostic precision/recall, three-run IR determinism, target portability, modeled NativeTwin correctness, and an internal O0/O1 planning baseline. External MoveIt/baseline comparison and independent reproduction remain open. |
 | Gazebo acceptance | **Verified (public CI)** | Jazzy/Harmonic CI generates a compiler-derived URDF, validates it with `check_urdf`, starts headless Gazebo, spawns the model through `ros_gz_sim`, and inspects its joints with `gz model`. Public run [31215741851](https://github.com/Siddharthpatni/Roboweaver/actions/runs/31215741851) passed in 3m32s with all 7 joints inspected. Gazebo is still unavailable on this macOS workspace, so no local simulator result is claimed; the public Linux CI job is the evidence. |
 | ROS 2 backend | **Verified** | RoboIR-only generation of a complete `ament_python` package with exact joints, waypoints, controller client, launch/config files, BehaviorTree XML, and manifest. Generated packages are wheel-tested and CI is configured for Humble `colcon`. |
@@ -387,6 +387,50 @@ Evidence: `src/roboweaver/research/mujoco_adapter.py`, `tests/test_mujoco_adapte
 `src/roboweaver/codegen/abb_rapid_gen.py`, `tests/test_backend.py`,
 `.github/workflows/ci.yml`, `requirements-ci.lock`, the hardened Docker sandbox run
 recorded above, and GitHub Actions run 31215741851.
+
+### M13 — Fixed a Real Cascade Timeout Bug, and Cascade-Backed Compiler AI — Verified
+
+- A live user hit `RoboWeaver API /api/research/plan did not respond within 60s.`
+  Root cause: three independent, uncoordinated timeout budgets. The Next.js proxy
+  gave AI routes 75s, the browser's own `fetch` gave up at 60s, and the backend
+  provider cascade had no *total* time cap — only a 20s-per-attempt cap that, summed
+  across up to three sequential attempts, could exceed both client budgets. Reproduced
+  directly: a real `use_ai=true` request against the running stack hung until the
+  proxy's own 75.04s `AbortSignal` fired.
+- Fixed at the root: `CascadeManager.generate()` now takes a shared `max_total_seconds`
+  budget (default 55s) tracked across all attempts; once it's spent, remaining
+  candidates are skipped (recorded as a `budget`-category trace, no network call)
+  instead of each independently burning its own per-attempt timeout. Raised the
+  browser's `TIMEOUT_LLM_MS`/`TIMEOUT_CODEGEN_MS` to 80s so it now waits *longer* than
+  the 75s proxy budget instead of shorter, and added `/api/compile`/`/api/diff` to the
+  proxy's 75s bucket (they can invoke a real ~60s-capable Ollama explain call via
+  `?explain=1`/`?explain_mlir=1` but previously only got the 20s default). Re-ran the
+  exact request that hung before: real HTTP 200 in 24.47s.
+- Added `google/gemini-2.5-flash-lite` as an explicit, opt-in OpenRouter cascade model
+  for the `experiment` and new `mlir_explain` features. It is real (verified live
+  against OpenRouter's `/api/v1/models`) but **not** one of OpenRouter's `:free`-tagged
+  models — `.env.example` and the in-repo comments say so plainly rather than calling
+  it free; a genuinely free Gemini path already existed via the direct Gemini API
+  (Google's own free tier) and is unaffected.
+- Added `roboweaver.upstream.mlir_explainer.explain_mlir`: the first cascade-backed
+  (multi-provider, not just Ollama) AI feature attached to the compiler itself. It
+  regenerates the exact deterministic MLIR text `run_native_mlir` already hashed and
+  asks the cascade to summarize the *real* recorded evidence — grounded, read-only,
+  cannot alter compilation, states plainly when the native tool was unavailable
+  instead of describing an execution that didn't happen. Wired into `/api/compile` as
+  an independent opt-in `?explain_mlir=1` flag, and into Compiler Studio's native-MLIR
+  stage as an "Explain with AI" button.
+- Fresh verification: 464 tests passed, 0 skipped, 5 subtests, 79.01% branch coverage,
+  zero Ruff C901/F findings, frontend type/lint/build clean. Verified live through the
+  rebuilt Docker stack: the real `/api/research/plan` request that previously hung now
+  returns HTTP 200 in 24.47s, and `/api/compile?...&explain_mlir=1` returns a real
+  Ollama-generated explanation of the actual compiled RoboIR's MLIR module in 7.79s.
+
+Evidence: `src/roboweaver/nlu/cascade.py`, `tests/test_model_cascade.py`,
+`src/roboweaver/upstream/mlir_explainer.py`, `tests/test_mlir_explainer.py`,
+`tests/test_dashboard_ai.py`, `frontend/src/app/api/roboweaver/[...path]/route.ts`,
+`frontend/src/lib/api.ts`, `frontend/src/components/CompilerView.tsx`, and the live
+Docker verification runs recorded above.
 
 ## Latest Change Log
 

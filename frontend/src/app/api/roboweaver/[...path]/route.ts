@@ -46,7 +46,19 @@ function upstreamBase(): URL {
 
 function timeoutFor(path: string, method: string): number {
   if (method === 'POST' && path === '/api/ai/pull') return 5 * 60_000;
-  if (path.startsWith('/api/ai/') || path === '/api/research/plan' || path === '/api/connect/advise' || path === '/api/connect/codegen') return 75_000;
+  // Every path here can invoke a real provider call (the research cascade, or a
+  // single ~60s-capable Ollama explain/advise/codegen call) -- query params like
+  // ?explain=1 aren't visible to this path-only check, so /api/compile and
+  // /api/diff get the same AI-capable budget as their always-AI siblings even
+  // though a plain compile finishes in well under it.
+  if (
+    path.startsWith('/api/ai/') ||
+    path === '/api/research/plan' ||
+    path === '/api/connect/advise' ||
+    path === '/api/connect/codegen' ||
+    path === '/api/compile' ||
+    path === '/api/diff'
+  ) return 75_000;
   if (path === '/api/discover' || path === '/api/benchmark' || path === '/api/research/benchmark') return 35_000;
   return 20_000;
 }

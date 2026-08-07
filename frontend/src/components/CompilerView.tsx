@@ -246,6 +246,8 @@ export const CompilerView: React.FC = () => {
   const [artifactBackend, setArtifactBackend] = useState<'ros2' | 'urscript' | 'abb_rapid'>('ros2');
   const [artifactLoading, setArtifactLoading] = useState(false);
   const [artifactError, setArtifactError] = useState<string | null>(null);
+  const [mlirExplainLoading, setMlirExplainLoading] = useState(false);
+  const [mlirExplainError, setMlirExplainError] = useState<string | null>(null);
 
   const handleCompile = async () => {
     if (!instruction.trim()) return;
@@ -352,6 +354,21 @@ export const CompilerView: React.FC = () => {
       );
     } finally {
       setArtifactLoading(false);
+    }
+  };
+  const handleExplainMlir = async () => {
+    if (!result) return;
+    setMlirExplainLoading(true);
+    setMlirExplainError(null);
+    try {
+      const explained = await RoboWeaverAPI.compile(instruction, result.robot, true, includeAI, true);
+      setResult((current) => (current ? { ...current, ...explained } : explained));
+    } catch (explainFailure) {
+      setMlirExplainError(
+        explainFailure instanceof Error ? explainFailure.message : 'MLIR explanation failed.',
+      );
+    } finally {
+      setMlirExplainLoading(false);
     }
   };
   const capabilities = result
@@ -602,7 +619,7 @@ export const CompilerView: React.FC = () => {
                 )}
 
                 {showAdvanced && activeStage === 'passes' && (
-                  <div className="compiler-stage-content"><PanelTitle icon={Layers3} eyebrow="Stage 04 · compiler infrastructure" title="Inspect real pass-by-pass work" meta="measured at runtime" /><div className="compiler-pass-strip"><PassSummary trace={result.skill_pipeline} label="CompiledSkill optimization" /><PassSummary trace={result.pipeline} label="RoboIR verification" /></div><PipelineTraceView pipeline={result.pipeline} skillPipeline={result.skill_pipeline} /><div className="compiler-inline-note"><Code2 className="h-4 w-4 text-violet-300" /><span>{result.native_mlir?.status === 'succeeded' ? `Native ${result.native_mlir.version ?? 'mlir-opt'} executed ${result.native_mlir.pass_pipeline.join(' → ')}; output digest ${result.native_mlir.output_sha256?.slice(0, 12)}.` : result.native_mlir?.detail ?? 'Native MLIR evidence was not returned.'}</span></div>{result.diagnostics.length > 0 && <div className="compiler-diagnostics-grid">{result.diagnostics.map((diagnostic, index) => <DiagnosticCard key={`${diagnostic.code}-${index}`} diagnostic={diagnostic} />)}</div>}</div>
+                  <div className="compiler-stage-content"><PanelTitle icon={Layers3} eyebrow="Stage 04 · compiler infrastructure" title="Inspect real pass-by-pass work" meta="measured at runtime" /><div className="compiler-pass-strip"><PassSummary trace={result.skill_pipeline} label="CompiledSkill optimization" /><PassSummary trace={result.pipeline} label="RoboIR verification" /></div><PipelineTraceView pipeline={result.pipeline} skillPipeline={result.skill_pipeline} /><div className="compiler-inline-note"><Code2 className="h-4 w-4 text-violet-300" /><span>{result.native_mlir?.status === 'succeeded' ? `Native ${result.native_mlir.version ?? 'mlir-opt'} executed ${result.native_mlir.pass_pipeline.join(' → ')}; output digest ${result.native_mlir.output_sha256?.slice(0, 12)}.` : result.native_mlir?.detail ?? 'Native MLIR evidence was not returned.'}</span></div>{result.native_mlir && <div className="compiler-detail-card"><div className="flex flex-wrap items-center justify-between gap-3"><span className="compiler-eyebrow">AI explanation of the real MLIR evidence above</span><button type="button" onClick={handleExplainMlir} disabled={mlirExplainLoading} className="compiler-action-button">{mlirExplainLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}{mlirExplainLoading ? 'Explaining…' : result.mlir_explanation ? 'Re-explain' : 'Explain with AI'}</button></div>{mlirExplainError && <p className="mt-2 text-[10.5px] text-rose-300">{mlirExplainError}</p>}{result.mlir_explanation !== undefined && <div className="mt-3">{result.mlir_explanation ? <p className="text-[11.5px] leading-5 text-slate-300">{result.mlir_explanation}</p> : <p className="text-[10.5px] text-amber-200/70">{result.mlir_explanation_error ?? 'No provider was available to explain this MLIR module.'}</p>}{result.mlir_explanation && <p className="mt-2 font-data text-[9.5px] text-slate-600">{result.mlir_explanation_provider} · {result.mlir_explanation_model}{result.mlir_explanation_cache_hit ? ' · cached' : ''} — a read-only summary; it cannot alter compilation.</p>}</div>}</div>}{result.diagnostics.length > 0 && <div className="compiler-diagnostics-grid">{result.diagnostics.map((diagnostic, index) => <DiagnosticCard key={`${diagnostic.code}-${index}`} diagnostic={diagnostic} />)}</div>}</div>
                 )}
 
                 {showAdvanced && activeStage === 'backend' && (

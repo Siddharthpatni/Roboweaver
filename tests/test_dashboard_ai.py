@@ -65,6 +65,37 @@ def test_compile_explain_is_additive_and_keeps_real_result(live_server):
     assert body["explanation_model"] == "llama3.1:8b"
 
 
+def test_compile_explain_mlir_is_additive_and_read_only(live_server):
+    from roboweaver.upstream.mlir_explainer import MLIRExplanation
+
+    explanation = MLIRExplanation(
+        text="The module records a PICK task lowered for franka_panda.",
+        provider="ollama", model="llama3.1:8b", error=None, cache_hit=False,
+    )
+    with patch("roboweaver.upstream.mlir_explainer.explain_mlir", return_value=explanation):
+        status, _, raw = _get(
+            f"{live_server}/api/compile?instruction=Pick+up+the+red+cube"
+            "&robot=franka_panda&explain_mlir=1"
+        )
+    body = json.loads(raw)
+    assert status == 200
+    assert body["ir"]["skill"]["id"]  # the real compile result is unaffected
+    assert body["mlir_explanation"] == explanation.text
+    assert body["mlir_explanation_provider"] == "ollama"
+    assert body["mlir_explanation_model"] == "llama3.1:8b"
+    assert body["mlir_explanation_cache_hit"] is False
+    assert "explanation" not in body  # independent of the ?explain=1 flag
+
+
+def test_compile_without_explain_mlir_flag_omits_the_field(live_server):
+    status, _, raw = _get(
+        f"{live_server}/api/compile?instruction=Pick+up+the+red+cube&robot=franka_panda"
+    )
+    body = json.loads(raw)
+    assert status == 200
+    assert "mlir_explanation" not in body
+
+
 def test_diagnose_accepts_a_diagnostic_code_and_preserves_rule_advice(live_server):
     advice = AIRecoveryAdvice(
         rule_based_action="REPLAN_APPROACH",

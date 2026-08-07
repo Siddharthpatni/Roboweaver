@@ -50,8 +50,14 @@ const API_BASE = process.env.NEXT_PUBLIC_ROBOWEAVER_API ?? '/api/roboweaver';
 // if the backend ever hung, the UI spun forever with no way out.
 const TIMEOUT_FAST_MS = 8_000; // registry lookups, simple queries
 const TIMEOUT_SCAN_MS = 30_000; // LAN subnet sweep (backend caps at 1024 hosts)
-const TIMEOUT_LLM_MS = 60_000; // must exceed the backend's own 45s provider timeout
-const TIMEOUT_CODEGEN_MS = 70_000; // one bounded provider review plus adapter generation
+// The Next.js proxy (route.ts::timeoutFor) gives every AI-capable path its own
+// 75s upstream budget. This must stay comfortably above that so the proxy's
+// typed `upstream_unavailable` error always resolves before this AbortController
+// fires -- otherwise the browser gives up first with a generic timeout message
+// while the backend (e.g. the up-to-three-provider research cascade) is still
+// legitimately working within its own, larger budget.
+const TIMEOUT_LLM_MS = 80_000;
+const TIMEOUT_CODEGEN_MS = 80_000; // one bounded provider review plus adapter generation -- see TIMEOUT_LLM_MS
 const TIMEOUT_CONNECT_MS = 15_000; // TCP/ROS2 bridge probes
 
 /** Raised when the client gives up before the server responds. Distinguished
@@ -204,12 +210,14 @@ export const RoboWeaverAPI = {
     robot: string = 'franka_panda',
     explainPasses: boolean = false,
     explainAI: boolean = false,
+    explainMlir: boolean = false,
   ) =>
     compileJSON(
       `/api/compile?instruction=${encodeURIComponent(instruction)}&robot=${encodeURIComponent(robot)}` +
         (explainPasses ? '&explain_passes=1' : '') +
-        (explainAI ? '&explain=1' : ''),
-      explainAI ? TIMEOUT_LLM_MS : TIMEOUT_FAST_MS,
+        (explainAI ? '&explain=1' : '') +
+        (explainMlir ? '&explain_mlir=1' : ''),
+      explainAI || explainMlir ? TIMEOUT_LLM_MS : TIMEOUT_FAST_MS,
     ),
   compileMatrix: (instruction: string, robots?: string[]) =>
     getJSON<UniversalCompileMatrix>(

@@ -803,6 +803,16 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                 res["pipeline"] = pipeline
             if skill_pipeline is not None:
                 res["skill_pipeline"] = skill_pipeline
+        if query.get("explain_mlir", ["0"])[0] == "1" and result.native_mlir is not None:
+            from roboweaver.upstream.mlir_explainer import explain_mlir
+            mlir_explanation = explain_mlir(result.ir, result.native_mlir)
+            res.update({
+                "mlir_explanation": mlir_explanation.text,
+                "mlir_explanation_provider": mlir_explanation.provider,
+                "mlir_explanation_model": mlir_explanation.model,
+                "mlir_explanation_error": mlir_explanation.error,
+                "mlir_explanation_cache_hit": mlir_explanation.cache_hit,
+            })
         if query.get("explain", ["0"])[0] != "1":
             return
         from roboweaver.nlu.skill_explainer import SkillExplainer

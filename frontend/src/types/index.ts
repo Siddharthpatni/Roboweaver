@@ -192,6 +192,14 @@ export interface CompiledSkillResult {
   explanation_model?: string;
   explanation_latency_s?: number;
   explanation_error?: string | null;
+  /** Present only when compiled with `?explain_mlir=1` and native_mlir evidence
+   * exists; cascade-backed (Ollama -> Gemini -> OpenRouter), read-only summary
+   * of the real emitted MLIR text and recorded mlir-opt evidence. */
+  mlir_explanation?: string | null;
+  mlir_explanation_provider?: string;
+  mlir_explanation_model?: string;
+  mlir_explanation_error?: string | null;
+  mlir_explanation_cache_hit?: boolean;
 }
 
 export interface UniversalCompileMatrix {
