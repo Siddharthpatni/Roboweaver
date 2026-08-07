@@ -11,12 +11,9 @@ structured data, and there was no way to ask "what did the IR look like before/a
 stage N" (see ir/diff.py). This module adds that structure without changing what any
 existing pass computes.
 
-`OptimizationLevel` is plumbing only in this phase: no pass registered anywhere in
-RoboWeaver today reads `optimization_level` to change its behavior, because no real
-optimization pass exists yet (that's docs/COMPILER_ROADMAP.md Phase 4 -- waypoint
-merge, trajectory smoothing, etc.). The enum exists now so `CompilerPass.applies()`
-has something real to key off once those passes are written, instead of retrofitting
-this plumbing later.
+`OptimizationLevel` is shared with the CompiledSkill pass manager. O0 disables the
+registered waypoint-decimation and redundant-segment-elision passes; verification
+passes remain mandatory at every level.
 """
 
 from __future__ import annotations
@@ -25,7 +22,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
 from roboweaver.ir.diagnostics import CompilerDiagnostic
 from roboweaver.ir.schema import RoboIR
@@ -36,8 +33,7 @@ if TYPE_CHECKING:
 
 
 class OptimizationLevel(Enum):
-    """Mirrors GCC/LLVM-style optimization flags. See this module's docstring --
-    currently gates zero registered passes."""
+    """GCC/LLVM-style optimization modes shared by both pass managers."""
 
     O0 = "O0"
     O1 = "O1"
@@ -48,18 +44,107 @@ class OptimizationLevel(Enum):
     OSAFE = "Osafe"
 
 
+@dataclass(frozen=True)
+class PreservedAnalyses:
+    """LLVM-style declaration of analyses that survive an IR-changing pass."""
+
+    names: frozenset[str] = frozenset()
+    preserve_all: bool = False
+
+    @classmethod
+    def all(cls) -> "PreservedAnalyses":
+        return cls(preserve_all=True)
+
+    @classmethod
+    def none(cls) -> "PreservedAnalyses":
+        return cls()
+
+    @classmethod
+    def only(cls, *names: str) -> "PreservedAnalyses":
+        return cls(frozenset(names))
+
+    def preserves(self, name: str) -> bool:
+        return self.preserve_all or name in self.names
+
+
+AnalysisProvider = Callable[["PassContext"], Any]
+
+
+class AnalysisManager:
+    """Lazy per-IR analysis cache with explicit preservation/invalidation."""
+
+    def __init__(self):
+        self._providers: dict[str, AnalysisProvider] = {}
+        self._cache: dict[tuple[int, str], Any] = {}
+        self.hits = 0
+        self.misses = 0
+        self.invalidations = 0
+
+    def register(self, name: str, provider: AnalysisProvider) -> None:
+        if not name or name in self._providers:
+            raise ValueError(f"analysis {name!r} is empty or already registered")
+        self._providers[name] = provider
+
+    def get(self, name: str, ctx: "PassContext") -> Any:
+        try:
+            provider = self._providers[name]
+        except KeyError as exc:
+            raise LookupError(f"analysis {name!r} is not registered") from exc
+        key = (id(ctx.ir), name)
+        if key in self._cache:
+            self.hits += 1
+            return self._cache[key]
+        self.misses += 1
+        value = provider(ctx)
+        self._cache[key] = value
+        return value
+
+    def invalidate(self, ir: RoboIR, preserved: PreservedAnalyses) -> None:
+        doomed = [
+            key for key in self._cache
+            if key[0] == id(ir) and not preserved.preserves(key[1])
+        ]
+        for key in doomed:
+            del self._cache[key]
+        self.invalidations += len(doomed)
+
+    def snapshot(self) -> tuple[int, int, int]:
+        return self.hits, self.misses, self.invalidations
+
+
+def _ir_structure_analysis(ctx: "PassContext") -> dict[str, int]:
+    program = ctx.ir.program
+    lowering = ctx.ir.lowering
+    return {
+        "object_count": len(ctx.ir.objects),
+        "task_count": len(program.tasks) if program is not None else 0,
+        "move_task_count": (
+            sum(task.type == "MOVE_TO" for task in program.tasks) if program is not None else 0
+        ),
+        "trajectory_count": len(lowering.trajectories) if lowering is not None else 0,
+    }
+
+
+def _default_analysis_manager() -> AnalysisManager:
+    manager = AnalysisManager()
+    manager.register("roboir.structure", _ir_structure_analysis)
+    return manager
+
+
 @dataclass
 class PassContext:
-    """Everything a CompilerPass needs to run. `skill` (motion plan, IK results,
-    trajectories) is threaded through alongside `ir` because SafetyPass genuinely
-    needs data RoboIR doesn't carry yet -- RoboIR has no task/motion/behavior-tree
-    fields today (docs/COMPILER_ROADMAP.md Phase 2's deferred list). This is a known
-    seam, not an oversight: it closes once RoboIR absorbs that data."""
+    """Everything a CompilerPass needs to run.
+
+    ``skill`` remains for compatibility with third-party passes during the RoboIR
+    transition. Built-in verification passes use complete ``ir`` as their semantic
+    source of truth.
+    """
 
     ir: RoboIR
     skill: "CompiledSkill"
     robot_spec: "RobotSpec"
     optimization_level: OptimizationLevel = OptimizationLevel.O1
+    analyses: AnalysisManager = field(default_factory=_default_analysis_manager)
 
 
 @dataclass
@@ -70,6 +155,7 @@ class PassResult:
     diagnostics: list[CompilerDiagnostic] = field(default_factory=list)
     metrics: dict[str, float] = field(default_factory=dict)
     modified: bool = False
+    preserved_analyses: PreservedAnalyses | None = None
 
 
 class CompilerPass(ABC):
@@ -174,11 +260,13 @@ class PassManager:
     ) -> PipelineTrace:
         current_ir = initial_ir
         records: list[PassRecord] = []
+        analyses = _default_analysis_manager()
 
         for generation, compiler_pass in enumerate(self.passes, start=1):
             ctx = PassContext(
                 ir=current_ir, skill=skill, robot_spec=robot_spec,
                 optimization_level=optimization_level,
+                analyses=analyses,
             )
 
             if not compiler_pass.applies(ctx):
@@ -193,14 +281,27 @@ class PassManager:
                 continue
 
             start = time.perf_counter()
+            stats_before = analyses.snapshot()
             result = compiler_pass.run(ctx)
             elapsed = time.perf_counter() - start
+            preserved = result.preserved_analyses
+            if preserved is None:
+                preserved = PreservedAnalyses.none() if result.modified else PreservedAnalyses.all()
+            if result.modified:
+                analyses.invalidate(current_ir, preserved)
+            stats_after = analyses.snapshot()
+            metrics = dict(result.metrics)
+            metrics.update({
+                "analysis_cache_hits": float(stats_after[0] - stats_before[0]),
+                "analysis_cache_misses": float(stats_after[1] - stats_before[1]),
+                "analysis_invalidations": float(stats_after[2] - stats_before[2]),
+            })
 
             records.append(
                 PassRecord(
                     pass_name=compiler_pass.name, generation=generation,
                     ir_before=current_ir, ir_after=result.ir,
-                    diagnostics=result.diagnostics, metrics=result.metrics,
+                    diagnostics=result.diagnostics, metrics=metrics,
                     modified=result.modified, timing_s=elapsed,
                 )
             )

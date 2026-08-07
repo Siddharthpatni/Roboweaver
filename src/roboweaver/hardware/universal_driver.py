@@ -26,7 +26,6 @@ import logging
 import socket
 from urllib.parse import urlparse
 from abc import ABC, abstractmethod
-from typing import Any
 from dataclasses import dataclass
 from roboweaver.hardware.robot_spec import RobotSpec
 from roboweaver.plugins import PluginRegistry
@@ -72,6 +71,20 @@ class AbstractRobotBridge(ABC):
     def disconnect(self) -> None:
         """Cleanly terminate robot connection."""
         pass
+
+    def read_safety_state(self) -> dict[str, bool]:
+        """Read physical e-stop/watchdog state.
+
+        Built-in generic bridges do not know vendor safety I/O and therefore fail
+        closed. A physical bridge plugin must override this method before it can
+        produce HIL evidence.
+        """
+        return {
+            "available": False,
+            "estop_released": False,
+            "watchdog_ok": False,
+            "protective_stop_clear": False,
+        }
 
 
 class ROS2HardwareBridge(AbstractRobotBridge):

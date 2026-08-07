@@ -10,9 +10,10 @@ AI-powered modules (all fully offline, Ollama-backed, additive):
   * connection_advisor.py — LLM-backed connection advisor (existing)
 """
 
-from roboweaver.nlu.ollama_parser import OllamaIntentParser, OllamaParseResult, DEFAULT_HOST, DEFAULT_MODEL
+from roboweaver.nlu.ollama_parser import OllamaIntentParser, OllamaParseResult
 from roboweaver.nlu.ollama_manager import (
-    OllamaManager, OllamaResponse, OllamaStatus, OllamaStreamChunk, get_manager,
+    DEFAULT_HOST, DEFAULT_MODEL, OllamaManager, OllamaResponse, OllamaStatus,
+    OllamaStreamChunk, get_manager,
 )
 from roboweaver.nlu.skill_explainer import SkillExplainer, SkillExplanation
 from roboweaver.nlu.skill_composer import SkillComposer, SkillComposition
@@ -23,3 +24,7 @@ __all__ = [
     "SkillExplainer", "SkillExplanation",
     "SkillComposer", "SkillComposition",
 ]
+from roboweaver.nlu.cascade import CascadeManager
+from roboweaver.nlu.gemini_manager import GeminiManager
+
+__all__ = ["CascadeManager", "GeminiManager"]

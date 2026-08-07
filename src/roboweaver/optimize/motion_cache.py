@@ -5,21 +5,11 @@ actual MOVE_TO task in the compiled skill's template, instead of a fixed 3-pose 
 plan -- closing RW502 (dangling MOVE_TO, optimize/passes.py) for every skill category, not
 just pick-and-place.
 
-Every compile still plans against a FIXED, assumed Cartesian path (no perception system
-derives a real per-object target pose yet -- ir/diagnostics.py's RW201 warning says so on
-every compile that needs one): a two-phase path descending from an "approach" height to a
-"work" (contact/engage) height, then ascending from "work" to a "retract" height. Given N
-real MOVE_TO tasks, N real Cartesian targets are interpolated along this fixed path and
-each is independently IK-solved (warm-started from the previous solve) -- this generalizes
-the exact same 3-pose logic this module always had, it isn't a new kind of fabrication.
-Since the interpolation depends only on N (not on the skill's category), two categories
-with the same MOVE_TO count get identical target poses today -- consistent with the
-existing "assumed, not per-category-real" honesty (RW201), not a new inaccuracy.
-
-Memoized per (robot_spec.id, n_targets): still honestly a pure function of these two
-values today. This cache key must grow to include the real target pose once perception
-exists, or it will silently serve a stale plan for a different object's location -- a
-limitation already true (and already documented) before this generalization.
+The primary API accepts explicit Cartesian targets supplied by the semantic program.
+Targets may come from perception, user coordinates, or a clearly-labelled assumed scene.
+The cache key includes every coordinate, preventing a plan for one scene or action from
+being silently reused for another. ``compute_motion_primitives(robot, n)`` remains only
+as a compatibility wrapper around the legacy reference path.
 """
 
 from __future__ import annotations
@@ -103,7 +93,7 @@ class MotionPrimitives:
     trajectory_durations: list[float]
 
 
-_cache: dict[tuple[str, int], MotionPrimitives] = {}
+_cache: dict[tuple[str, tuple[tuple[float, float, float], ...]], MotionPrimitives] = {}
 _hits = 0
 _misses = 0
 
@@ -122,14 +112,23 @@ def clear_cache() -> None:
 
 
 def compute_motion_primitives(robot_spec: RobotSpec, n_targets: int) -> tuple[MotionPrimitives, bool]:
-    """Get-or-compute, memoized by (robot_spec.id, n_targets) -- n_targets is the
-    real number of MOVE_TO tasks in the compiled skill's template. Returns
-    (primitives, was_cache_hit)."""
+    """Compatibility wrapper using the legacy reference descend/retract path."""
     if n_targets < 1:
         raise ValueError("compute_motion_primitives requires n_targets >= 1")
+    return compute_motion_primitives_for_targets(robot_spec, _interpolate_targets(n_targets))
+
+
+def compute_motion_primitives_for_targets(
+    robot_spec: RobotSpec,
+    targets: Sequence[Vec3],
+) -> tuple[MotionPrimitives, bool]:
+    """Solve and cache one trajectory chain for these exact Cartesian targets."""
+    if not targets:
+        raise ValueError("compute_motion_primitives_for_targets requires at least one target")
 
     global _hits, _misses
-    key = (robot_spec.id, n_targets)
+    target_key = tuple((float(target.x), float(target.y), float(target.z)) for target in targets)
+    key = (robot_spec.id, target_key)
     cached = _cache.get(key)
     if cached is not None:
         _hits += 1
@@ -144,7 +143,6 @@ def compute_motion_primitives(robot_spec: RobotSpec, n_targets: int) -> tuple[Mo
         max(j.lower_limit, min(j.upper_limit, 0.0)) for j in robot_spec.joints[: robot_spec.dof]
     ]
 
-    targets = _interpolate_targets(n_targets)
     configs: list[list[float]] = [home_q]
     ik_solutions: list[IKSolution] = []
     for target in targets:
@@ -163,7 +161,7 @@ def compute_motion_primitives(robot_spec: RobotSpec, n_targets: int) -> tuple[Mo
     start_configs = configs[:-1]
     trajectory_waypoints: list[list[list[float]]] = []
     trajectory_durations: list[float] = []
-    for i in range(n_targets):
+    for i in range(len(targets)):
         start_q, end_q = start_configs[i], ik_solutions[i].joint_angles
         duration = min_safe_duration(robot_spec, start_q, end_q, default=_DEFAULT_SEGMENT_DURATION)
         trajectory_waypoints.append(generate_min_jerk_traj(list(start_q), list(end_q), steps=_DEFAULT_TRAJ_STEPS))

@@ -8,7 +8,7 @@ Tests: explain_compilation(), explain_diagnostic(), explain_safety(), explain_di
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 from roboweaver.nlu.ollama_manager import OllamaManager, OllamaResponse
 from roboweaver.nlu.skill_explainer import SkillExplainer, SkillExplanation

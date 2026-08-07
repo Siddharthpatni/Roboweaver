@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 from roboweaver.knowledge.graph import RoboticsKnowledgeGraph
-from roboweaver.knowledge.ontology import KnowledgeEdge, KnowledgeNode, NodeType, RelationType
+from roboweaver.knowledge.ontology import KnowledgeNode, NodeType
 
 
 class KnowledgeIngestor:

@@ -17,14 +17,16 @@ the same way NDOFIKSolver computes its Jacobian internally).
 
 What is NOT checked here, and why -- see docs/COMPILER_ARCHITECTURE.md Section 1 for the
 full accounting:
-  - Collision / self-collision: no collision geometry exists. The Franka CAD meshes
-    added for the 3D viewer are visual-only (Collada scenes), not collision primitives.
+  - Self-collision and continuous swept-volume proof remain out of scope. When a
+    typed Scene is supplied, the final collision pass checks sampled link capsules or
+    an inflated mobile-base footprint against sphere/AABB environment obstacles.
   - Torque limits: JointSpec.max_effort is real, declared data, but nothing in RoboWeaver
     computes required torque (that needs a dynamics/mass model RoboWeaver doesn't have) --
     checking a real limit against a fabricated "required torque" would be exactly the kind
     of fake result this project explicitly refuses to produce.
   - Acceleration limits: JointSpec has no declared max_acceleration field at all.
-  - Forbidden/human-safety zones, e-stop, hardware watchdogs: no scene or I/O model exists.
+  - Human-safety zones are not inferred from generic obstacles. E-stop/watchdog state
+    is required by the guarded HIL runner, not proven by compile-time motion checks.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from typing import Sequence
 
 from roboweaver.hardware.robot_spec import RobotSpec
 from roboweaver.hardware.safety_guard import WorkspaceSafetyGuard
+from roboweaver.ir.adapters import compiled_skill_from_ir
 from roboweaver.ir.diagnostics import CompilerDiagnostic
 from roboweaver.ir.schema import RoboIR
 from roboweaver.math3d import Vec3
@@ -47,10 +50,14 @@ _MANIPULABILITY_WARN_THRESHOLD = 0.02
 _JACOBIAN_EPS = 1e-5
 
 
-def check_safety(skill: CompiledSkill, ir: RoboIR, robot_spec: RobotSpec) -> list[CompilerDiagnostic]:
-    """Real Safety Verification pass. Every check below reads data the compiler
-    already produced (IK results, trajectories) against real declared RobotSpec
-    limits -- nothing here is a placeholder."""
+def check_safety(ir: RoboIR, robot_spec: RobotSpec) -> list[CompilerDiagnostic]:
+    """Verify complete RoboIR against the selected robot's declared limits.
+
+    The temporary ``CompiledSkill`` view is reconstructed exclusively from RoboIR
+    so diagnostics, simulation, deployment, and code generation all inspect the
+    same immutable compiler output. Nothing here can observe stale front-end state.
+    """
+    skill = compiled_skill_from_ir(ir)
     diagnostics: list[CompilerDiagnostic] = []
     guard = WorkspaceSafetyGuard(robot_spec)
 

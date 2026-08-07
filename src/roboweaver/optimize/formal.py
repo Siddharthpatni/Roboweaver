@@ -12,13 +12,50 @@ that were never sampled.
 
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping, Sequence
+
 from roboweaver.ir.diagnostics import CompilerDiagnostic
 from roboweaver.types import CompiledSkill
 
 
+def _compiled_waypoint_dof(skill: CompiledSkill) -> int:
+    return max(
+        (
+            len(waypoint)
+            for segment in skill.motion_plan.trajectories.values()
+            for waypoint in segment.waypoints
+        ),
+        default=0,
+    )
+
+
+def _invalid_range_reason(
+    joint_idx: object,
+    bounds: object,
+    waypoint_dof: int,
+) -> str | None:
+    if isinstance(joint_idx, bool) or not isinstance(joint_idx, int) or joint_idx < 0:
+        return f"joint index {joint_idx!r} is not a non-negative integer"
+    if not isinstance(bounds, (tuple, list)) or len(bounds) != 2:
+        return f"joint {joint_idx} does not declare exactly two bounds"
+
+    lo, hi = bounds
+    numeric = (int, float)
+    if isinstance(lo, bool) or isinstance(hi, bool) or not isinstance(lo, numeric) or not isinstance(hi, numeric):
+        return f"joint {joint_idx} bounds are not numeric"
+    if not math.isfinite(float(lo)) or not math.isfinite(float(hi)):
+        return f"joint {joint_idx} bounds are not finite"
+    if lo > hi:
+        return f"joint {joint_idx} lower bound {lo} exceeds upper bound {hi}"
+    if waypoint_dof and joint_idx >= waypoint_dof:
+        return f"joint index {joint_idx} is outside the compiled waypoint dimension {waypoint_dof}"
+    return None
+
+
 def check_forbidden_zone_violations(
     skill: CompiledSkill,
-    forbidden_joint_ranges: dict[int, tuple[float, float]] | None,
+    forbidden_joint_ranges: Mapping[int, Sequence[float]] | None,
 ) -> list[CompilerDiagnostic]:
     """Real, bounded check: for every compiled waypoint, does the declared joint
     fall inside a declared forbidden range? Returns [] honestly if no zone is
@@ -29,8 +66,31 @@ def check_forbidden_zone_violations(
         return []
 
     diagnostics: list[CompilerDiagnostic] = []
+    waypoint_dof = _compiled_waypoint_dof(skill)
+    valid_ranges: list[tuple[int, float, float]] = []
+    for joint_idx, bounds in forbidden_joint_ranges.items():
+        reason = _invalid_range_reason(joint_idx, bounds, waypoint_dof)
+        if reason is not None:
+            diagnostics.append(
+                CompilerDiagnostic(
+                    code="RW508",
+                    severity="error",
+                    message="Forbidden-zone declaration is invalid.",
+                    reason=reason,
+                    required_capability=None,
+                    fixes=[
+                        "Declare finite ordered bounds for a real zero-based joint index.",
+                        "Validate the target RobotSpec before compilation.",
+                    ],
+                )
+            )
+            continue
+        assert isinstance(joint_idx, int)
+        assert isinstance(bounds, (tuple, list))
+        valid_ranges.append((joint_idx, float(bounds[0]), float(bounds[1])))
+
     for seg_name, seg in skill.motion_plan.trajectories.items():
-        for joint_idx, (lo, hi) in forbidden_joint_ranges.items():
+        for joint_idx, lo, hi in valid_ranges:
             violating_indices = [
                 i for i, wp in enumerate(seg.waypoints)
                 if joint_idx < len(wp) and lo <= wp[joint_idx] <= hi

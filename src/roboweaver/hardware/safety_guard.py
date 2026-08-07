@@ -31,10 +31,8 @@ class WorkspaceSafetyGuard:
             p = Vec3(pos[0], pos[1], pos[2])
 
         violations = []
-        # Calculate radial reach in XY plane and vertical height Z
+        # Calculate operational radial reach in the XY plane.
         radial_xy = (p.x**2 + p.y**2)**0.5
-        rel_z = max(0.0, p.z - self.spec.base_height_m)
-        reach = (radial_xy**2 + rel_z**2)**0.5
 
         # Operational reach check (radial distance from base axis)
         if radial_xy > self.spec.max_reach_m:

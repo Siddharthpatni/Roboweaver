@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
 
 from roboweaver.json_utils import loads_strict
 from roboweaver.nlu.ollama_manager import OllamaManager, get_manager
+from roboweaver.nlu.openrouter_manager import OpenRouterManager
 
 
 @dataclass
@@ -91,8 +91,47 @@ be parameters, velocity/force limits, and timeout protection."""
 class AICodeReviewer:
     """Adds inline comments and safety reviews to generated robot code."""
 
-    def __init__(self, manager: OllamaManager | None = None):
+    def __init__(self, manager: OllamaManager | OpenRouterManager | None = None):
         self.manager = manager or get_manager()
+
+    def review_connection_python(
+        self, code: str, robot_id: str, protocol: str, dof: int
+    ) -> CodeReviewResult:
+        """Annotate a deterministic connection probe in one bounded model call.
+
+        General artifact review uses a second structured issue pass. Connection
+        generation is interactive and must stay inside the dashboard proxy timeout,
+        so issue markers remain inline and the authoritative source stays separate.
+        """
+        prompt = _REVIEW_TEMPLATE.format(
+            language="Python robot connection adapter",
+            language_tag="python",
+            robot_id=robot_id,
+            dof=dof,
+            action=f"CONNECT_{protocol.upper()}",
+            object_name="validated endpoint environment variable",
+            code=code,
+        )
+        response = self.manager.generate(
+            prompt=prompt,
+            feature="codegen",
+            system=_REVIEW_SYSTEM,
+            temperature=0.1,
+            timeout=55.0,
+        )
+        if response.text is None:
+            return CodeReviewResult(
+                original_code=code,
+                error=response.error,
+                model=response.model,
+                latency_s=response.latency_s,
+            )
+        return CodeReviewResult(
+            original_code=code,
+            annotated_code=_extract_code_block(response.text) or response.text,
+            model=response.model,
+            latency_s=response.latency_s,
+        )
 
     def review_ros2(
         self, code: str, robot_id: str = "unknown", action: str = "PICK",

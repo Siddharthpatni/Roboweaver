@@ -13,17 +13,10 @@ import io
 import os
 import urllib.error
 import unittest
-from unittest.mock import patch, MagicMock
-from http.client import HTTPResponse
-from io import BytesIO
-from urllib.error import URLError
+from unittest.mock import patch
 
 from roboweaver.nlu.ollama_manager import (
     OllamaManager,
-    OllamaResponse,
-    OllamaStatus,
-    OllamaModel,
-    DEFAULT_HOST,
     DEFAULT_MODEL,
 )
 

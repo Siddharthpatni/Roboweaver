@@ -8,16 +8,19 @@ touching real hardware.
 from __future__ import annotations
 
 from roboweaver.hardware.robot_spec import RobotSpec
+from roboweaver.ir.adapters import compiled_skill_from_ir
+from roboweaver.ir.schema import RoboIR
 from roboweaver.simulation_backends.twin import DigitalTwin, NativeTwin
 from roboweaver.types import CompiledSkill, ExecutionResult
 
 
 def validate_in_simulation(
-    skill: CompiledSkill, robot_spec: RobotSpec, twin: DigitalTwin | None = None,
+    skill: CompiledSkill | RoboIR, robot_spec: RobotSpec, twin: DigitalTwin | None = None,
 ) -> ExecutionResult:
     """Defaults to NativeTwin -- the only twin that genuinely executes today (see
     simulation_backends/twin.py's module docstring for why RemoteTwin can't)."""
     if twin is None:
         twin = NativeTwin()
     twin.load_robot(robot_spec)
-    return twin.execute(skill)
+    runtime_skill = compiled_skill_from_ir(skill) if isinstance(skill, RoboIR) else skill
+    return twin.execute(runtime_skill)

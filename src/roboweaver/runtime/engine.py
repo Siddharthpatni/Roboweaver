@@ -7,11 +7,10 @@ handles grasping & contact dynamics, records visual frame telemetry, and verifie
 
 from __future__ import annotations
 
-import math
 from typing import Sequence, TYPE_CHECKING
 
 from roboweaver.types import CompiledSkill, ExecutionResult, TaskType
-from roboweaver.hardware import forward_kinematics_ndof, get_robot_spec, get_franka_panda_spec
+from roboweaver.hardware import forward_kinematics_ndof, get_franka_panda_spec
 from roboweaver.math3d import Vec3
 from roboweaver.runtime.telemetry import TelemetryRecorder
 from roboweaver.runtime.recovery import RecoveryEngine, FailureMode, RecoveryAction
@@ -96,11 +95,11 @@ class SkillRuntime:
         )
 
         if verbose:
-            print(f"\n\033[1;36m━━━ STAGE 5/6: Execute in Simulation \033[0m")
+            print("\n\033[1;36m━━━ STAGE 5/6: Execute in Simulation \033[0m")
             engine_name = "MuJoCo" if self.model is not None else "RoboWeaver Native 3D Engine"
             print(f"  \033[0;37m→\033[0m Simulator:  {engine_name}")
             print(f"  \033[0;37m→\033[0m Robot:      {self.robot_spec.name} ({self.robot_spec.dof}-DOF)")
-            print(f"  \033[0;37m→\033[0m Scene:      Tabletop with Red Cube")
+            print("  \033[0;37m→\033[0m Scene:      Tabletop with Red Cube")
             print()
 
         total_tasks = len(skill.task_graph.tasks)
@@ -113,37 +112,7 @@ class SkillRuntime:
                 desc = task.description[:30].ljust(30)
                 print(f"\r  [{bar}] {desc}", end="", flush=True)
 
-            if task.type == TaskType.PERCEIVE:
-                self._idle(steps=20)
-
-            elif task.type == TaskType.OPEN_GRIPPER:
-                self.gripper_pos = task.params.get("target", 0.04)
-                self.is_grasped = False
-                self._idle(steps=30)
-
-            elif task.type == TaskType.CLOSE_GRIPPER:
-                self.gripper_pos = task.params.get("target", 0.0)
-                self._attempt_grasp_with_recovery(verbose)
-                self._idle(steps=40)
-
-            elif task.type == TaskType.MOVE_TO:
-                traj_seg = skill.motion_plan.trajectories.get(task.description)
-                if traj_seg is not None:
-                    self._execute_trajectory(traj_seg.waypoints)
-                else:
-                    ik = skill.motion_plan.ik_results.get(task.description)
-                    if ik is not None:
-                        self.qpos = list(ik.joint_angles)
-                        self._idle(steps=50)
-
-            elif task.type == TaskType.WAIT:
-                duration = task.params.get("duration", 0.5)
-                steps = int(duration / self.dt)
-                self._idle(steps=steps)
-
-            elif task.type == TaskType.VERIFY_GRASP:
-                if verbose and not self.is_grasped:
-                    print(f"\n  \033[33m⚠ Cube may not be grasped\033[0m")
+            self._execute_task(task, skill, verbose)
 
         if verbose:
             print()
@@ -156,6 +125,18 @@ class SkillRuntime:
         # Action-specific success criteria
         action = self._current_action
         success = self._evaluate_success(action, height_gained, limits_ok)
+        process_modeled = action == "PICK"
+        validated_claims = ["trajectory_execution", "joint_limits"]
+        unsupported_claims: list[str] = []
+        failure_reason = None
+        if process_modeled:
+            validated_claims.extend(["parallel_jaw_grasp", "object_lift"])
+        else:
+            unsupported_claims.append(f"{action.lower()}_process_outcome")
+            failure_reason = (
+                f"NativeTwin has no action-specific {action} process model; "
+                "kinematic execution alone cannot establish task success."
+            )
 
         if not limits_ok:
             plan = self.recovery.diagnose(
@@ -184,6 +165,10 @@ class SkillRuntime:
                 f"AI {a.ai_root_cause or a.ai_explanation}"
                 for a in self.ai_recovery_log if a.ai_explanation
             ],
+            validation_level="process_model" if process_modeled else "kinematic_only",
+            validated_claims=validated_claims,
+            unsupported_claims=unsupported_claims,
+            failure_reason=failure_reason,
         )
 
         if self.memory_store is not None:
@@ -211,6 +196,43 @@ class SkillRuntime:
             })
 
         return result
+
+    def _execute_task(self, task, skill: CompiledSkill, verbose: bool) -> None:
+        handlers = {
+            TaskType.PERCEIVE: lambda: self._idle(steps=20),
+            TaskType.OPEN_GRIPPER: lambda: self._open_gripper(task),
+            TaskType.CLOSE_GRIPPER: lambda: self._close_gripper(task, verbose),
+            TaskType.MOVE_TO: lambda: self._move_to(task, skill),
+            TaskType.WAIT: lambda: self._idle(steps=int(task.params.get("duration", 0.5) / self.dt)),
+            TaskType.VERIFY_GRASP: lambda: self._verify_grasp(verbose),
+        }
+        handler = handlers.get(task.type)
+        if handler is not None:
+            handler()
+
+    def _open_gripper(self, task) -> None:
+        self.gripper_pos = task.params.get("target", 0.04)
+        self.is_grasped = False
+        self._idle(steps=30)
+
+    def _close_gripper(self, task, verbose: bool) -> None:
+        self.gripper_pos = task.params.get("target", 0.0)
+        self._attempt_grasp_with_recovery(verbose)
+        self._idle(steps=40)
+
+    def _move_to(self, task, skill: CompiledSkill) -> None:
+        trajectory = skill.motion_plan.trajectories.get(task.description)
+        if trajectory is not None:
+            self._execute_trajectory(trajectory.waypoints)
+            return
+        solution = skill.motion_plan.ik_results.get(task.description)
+        if solution is not None:
+            self.qpos = list(solution.joint_angles)
+            self._idle(steps=50)
+
+    def _verify_grasp(self, verbose: bool) -> None:
+        if verbose and not self.is_grasped:
+            print("\n  \033[33m⚠ Cube may not be grasped\033[0m")
 
     def save_video(self, path: str, fps: int = 30) -> None:
         """Save recorded simulation visualization frame log."""
@@ -368,25 +390,15 @@ class SkillRuntime:
         return True
 
     def _evaluate_success(self, action: str, height_gained: float, limits_ok: bool) -> bool:
-        """Action-specific success criteria instead of a single hardcoded threshold.
+        """Return success only for outcomes this native simulator actually models.
 
-        PICK/PLACE: object must be lifted (height_gained > 0.02m) — relaxed from 0.03
-        TIGHTEN/WELD/PEG_INSERT/CNC_LOAD: cycle must complete with joints OK
-        INSPECT/CLEAN: task graph must complete (step_count > 0) with joints OK
-        SORT/PACKAGE: same as pick — object displacement matters
-        Others: cycle completion + joint safety
+        Joint-safe motion is useful evidence for every action, but it is not a weld,
+        torque, inspection, navigation, pouring or surgical process result. Those
+        actions remain unsuccessful until a dedicated validator supplies measurable
+        completion criteria.
         """
         if not limits_ok:
             return False
-
-        if action in ('PICK', 'PLACE', 'SORT', 'PACKAGE', 'POUR'):
+        if action == "PICK":
             return height_gained > 0.02
-        elif action in ('TIGHTEN', 'WELD', 'PEG_INSERT', 'CNC_LOAD', 'SURGERY_ASSIST'):
-            # These are force/process tasks — success = completed the task graph
-            return self.step_count > 0 and len(self.recovery_log) == 0
-        elif action in ('INSPECT', 'CLEAN', 'OPEN_DOOR', 'TOOL_EXCHANGE'):
-            # Success = completed without errors
-            return self.step_count > 0
-        else:
-            # Fallback: object displacement or cycle completion
-            return height_gained > 0.02 or self.step_count > 50
+        return False

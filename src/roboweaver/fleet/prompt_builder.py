@@ -1,8 +1,9 @@
 """
 Prompt-to-System Multi-Robot Workcell Builder (PromptToWorkcellBuilder).
 
-Converts natural language prompts directly into complete, multi-robot choreographed systems
-and production-ready ROS 2 packages.
+Converts bounded natural-language workcell prompts into multi-robot schedules and ROS 2
+orchestration packages. Only clauses that map to a compiler-supported action become
+executable steps; unsupported prose is reported instead of silently becoming PICK.
 
 Examples:
 - "Build ShopMate-R retail assistant with Temi for navigation, Pepper for customer interaction, and Franka arm for restocking"
@@ -17,8 +18,8 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any
 
-from roboweaver.hardware import get_robot_spec, ROBOT_REGISTRY
-from roboweaver.fleet.choreographer import MultiRobotChoreographer, WorkcellSchedule
+from roboweaver.fleet.choreographer import MultiRobotChoreographer
+from roboweaver.ir import CompilerDiagnostic, SkillCompilationError
 
 
 @dataclass
@@ -28,6 +29,7 @@ class ParsedSystemPrompt:
     robots: list[str]
     tasks: list[dict[str, Any]]
     raw_prompt: str
+    warnings: list[str] = field(default_factory=list)
 
 
 class SystemPromptParser:
@@ -60,9 +62,9 @@ class SystemPromptParser:
 
     TASK_PATTERNS = [
         # Card Scanning / RFID / Security / Visitor Badge / Mobile Card Scanner
-        (r"(?:card|scan|rfid|badge|barcode|visitor|id\s*card|security|card_scannner|card_scanner)[^,\.;]*", "turtlebot4", "MOBILE_NAV"),
+        (r"(?:card|scan|rfid|badge|barcode|visitor|id\s*card|security|card_scannner|card_scanner)[^,\.;]*", "turtlebot4", "INSPECT_SURFACE"),
         # Navigation / Guide / Mobile
-        (r"(?:guide|navigat|mov|transport|driv|lead)\w*\s+(?:to|customer|item|shelf|aisle|patient|vial|station|storage)[^,\.;]*", "temi", "MOBILE_NAV"),
+        (r"(?:guide|navigat|transport|driv|lead)\w*[^,\.;]*", "temi", "MOBILE_NAV"),
         # Interaction / Handover / Greet / Answer / Assist
         (r"(?:answer|greet|hand\s*over|assist|interact|receiv|customer|staff|doctor|product\s*question)[^,\.;]*", "pepper", "HANDOVER_INTERACT"),
         # Dexterous grasping / manipulation with hand
@@ -75,33 +77,32 @@ class SystemPromptParser:
         (r"(?:weld|seam|arc)[^,\.;]*", "abb_irb120", "WELD_SEAM"),
     ]
 
+    _CANONICAL_ACTION_PREFIX = {
+        "PICK_AND_PLACE": "Pick up workpiece for",
+        "MOBILE_NAV": "Navigate to destination described by",
+        "INSPECT_SURFACE": "Inspect target described by",
+        "TIGHTEN_BOLT": "Tighten M8 bolt described by",
+        "WELD_SEAM": "Weld seam described by",
+    }
+
+    @classmethod
+    def _canonical_instruction(cls, action_type: str, clause: str) -> str | None:
+        prefix = cls._CANONICAL_ACTION_PREFIX.get(action_type)
+        return f"{prefix}: {clause}" if prefix else None
+
     @classmethod
     def parse(cls, prompt: str) -> ParsedSystemPrompt:
         """Parse natural language system prompt into a structured multi-robot workcell schedule."""
         lower_prompt = prompt.lower()
-
-        # 1. Deduce Workcell Name
-        name_match = re.search(r"(?:build|create|system|project)\s+([a-zA-Z0-9_\-]+)", prompt, re.IGNORECASE)
-        if "shopmate" in lower_prompt:
-            workcell_name = "ShopMate_R"
-        elif "hospital" in lower_prompt or "medical" in lower_prompt:
-            workcell_name = "Hospital_Logistics"
-        elif name_match and len(name_match.group(1)) > 2:
-            workcell_name = name_match.group(1).replace("-", "_").capitalize()
-        else:
-            workcell_name = "Universal_Workcell"
-
-        # 2. Extract Mentioned Robots
-        found_robots = []
-        for kw, robot_id in cls.ROBOT_KEYWORDS.items():
-            if re.search(r"\b" + kw + r"\b", lower_prompt):
-                if robot_id not in found_robots:
-                    found_robots.append(robot_id)
+        workcell_name = cls._workcell_name(prompt, lower_prompt)
+        found_robots = cls._mentioned_robots(lower_prompt)
 
         # 3. Extract Tasks & Assign to Optimal Robots
         tasks = []
+        warnings: list[str] = []
         step_idx = 1
         previous_step_id = None
+        last_assigned_robot = None
 
         # Try splitting by clauses (and, then, comma, semicolon)
         clauses = re.split(r"(?:,|\bwhere\b|\band\b|\bthen\b|\bfor\b|\bwhile\b|\bwith\b|;|\.)", prompt, flags=re.IGNORECASE)
@@ -109,65 +110,23 @@ class SystemPromptParser:
             clean = clause.strip()
             if len(clean) < 6:
                 continue
+            if re.match(r"^(?:build|create)\b", clean, re.IGNORECASE):
+                continue
 
-            # Identify which robot is in this clause
-            assigned_robot = None
-            for kw, r_id in cls.ROBOT_KEYWORDS.items():
-                if re.search(r"\b" + kw + r"\b", clean.lower()):
-                    assigned_robot = r_id
-                    break
-
-            # Deduce action type and fallback robot from TASK_PATTERNS
-            action_type = "PICK_AND_PLACE"
-            for pat, def_robot, a_type in cls.TASK_PATTERNS:
-                if re.search(pat, clean, re.IGNORECASE):
-                    action_type = a_type
-                    if not assigned_robot:
-                        assigned_robot = def_robot
-                        if assigned_robot not in found_robots:
-                            found_robots.append(assigned_robot)
-                    break
-
-            if not assigned_robot:
-                # Default fallback to first found robot or generic 6dof
-                assigned_robot = found_robots[0] if found_robots else "franka_panda"
-
-            step_id = f"step_{step_idx}_{assigned_robot}"
-            depends_on = [previous_step_id] if previous_step_id else []
-            handover_target = None
-            if "hand" in clean.lower() or "transfer" in clean.lower() or "receiv" in clean.lower():
-                # Check if handing over to another robot
-                for r_id in found_robots:
-                    if r_id != assigned_robot:
-                        handover_target = r_id
-                        break
-
-            tasks.append({
-                "step_id": step_id,
-                "robot_id": assigned_robot,
-                "instruction": clean.capitalize(),
-                "depends_on": depends_on,
-                "handover_target": handover_target,
-                "action": action_type,
-            })
-            previous_step_id = step_id
+            task, warning, last_assigned_robot = cls._parse_clause(
+                clean, found_robots, last_assigned_robot, previous_step_id, step_idx,
+            )
+            if warning:
+                warnings.append(warning)
+            if task is None:
+                continue
+            tasks.append(task)
+            previous_step_id = task["step_id"]
             step_idx += 1
 
-        # Fallback if prompt was too brief to split into clauses
+        # Never invent executable tasks when parsing found none.
         if not tasks:
-            for r_id in (found_robots or ["temi", "pepper", "franka_panda"]):
-                step_id = f"step_{step_idx}_{r_id}"
-                depends_on = [previous_step_id] if previous_step_id else []
-                tasks.append({
-                    "step_id": step_id,
-                    "robot_id": r_id,
-                    "instruction": f"Execute automated task for {r_id}",
-                    "depends_on": depends_on,
-                    "handover_target": None,
-                    "action": "MOBILE_NAV" if "turtlebot" in r_id or "temi" in r_id else "PICK_AND_PLACE",
-                })
-                previous_step_id = step_id
-                step_idx += 1
+            warnings.append("No compiler-supported workcell action was found.")
 
         if not found_robots:
             found_robots = list(dict.fromkeys(t["robot_id"] for t in tasks))
@@ -177,11 +136,77 @@ class SystemPromptParser:
             robots=found_robots,
             tasks=tasks,
             raw_prompt=prompt,
+            warnings=warnings,
         )
+
+    @staticmethod
+    def _workcell_name(prompt: str, lower_prompt: str) -> str:
+        name_match = re.search(
+            r"(?:build|create|system|project)\s+([a-zA-Z0-9_\-]+)", prompt, re.IGNORECASE,
+        )
+        if "shopmate" in lower_prompt:
+            return "ShopMate_R"
+        if "hospital" in lower_prompt or "medical" in lower_prompt:
+            return "Hospital_Logistics"
+        if name_match and len(name_match.group(1)) > 2:
+            return name_match.group(1).replace("-", "_").capitalize()
+        return "Universal_Workcell"
+
+    @classmethod
+    def _mentioned_robots(cls, lower_prompt: str) -> list[str]:
+        return list(dict.fromkeys(
+            robot_id
+            for keyword, robot_id in cls.ROBOT_KEYWORDS.items()
+            if re.search(r"\b" + keyword + r"\b", lower_prompt)
+        ))
+
+    @classmethod
+    def _parse_clause(
+        cls,
+        clean: str,
+        found_robots: list[str],
+        last_assigned_robot: str | None,
+        previous_step_id: str | None,
+        step_index: int,
+    ) -> tuple[dict[str, Any] | None, str | None, str | None]:
+        assigned_robot = next((
+            robot_id for keyword, robot_id in cls.ROBOT_KEYWORDS.items()
+            if re.search(r"\b" + keyword + r"\b", clean.lower())
+        ), None)
+        last_assigned_robot = assigned_robot or last_assigned_robot
+        match = next((
+            (default_robot, action_type)
+            for pattern, default_robot, action_type in cls.TASK_PATTERNS
+            if re.search(pattern, clean, re.IGNORECASE)
+        ), None)
+        if match is None:
+            return None, f"Skipped clause with no supported action: {clean}", last_assigned_robot
+        default_robot, action_type = match
+        assigned_robot = assigned_robot or last_assigned_robot or default_robot
+        if assigned_robot not in found_robots:
+            found_robots.append(assigned_robot)
+        instruction = cls._canonical_instruction(action_type, clean)
+        if instruction is None:
+            return None, f"Skipped unsupported workcell action {action_type}: {clean}", last_assigned_robot
+        step_id = f"step_{step_index}_{assigned_robot}"
+        handover_target = None
+        if re.search(r"\bhand\s*over\b|\btransfer\b|\breceiv\w*\b", clean, re.IGNORECASE):
+            handover_target = next(
+                (robot_id for robot_id in found_robots if robot_id != assigned_robot), None,
+            )
+        return {
+            "step_id": step_id,
+            "robot_id": assigned_robot,
+            "instruction": instruction,
+            "source_clause": clean,
+            "depends_on": [previous_step_id] if previous_step_id else [],
+            "handover_target": handover_target,
+            "action": action_type,
+        }, None, last_assigned_robot
 
 
 class PromptToWorkcellBuilder:
-    """Builds a complete multi-robot system and ROS 2 package from a natural language prompt."""
+    """Build a checked schedule and orchestration package from a bounded prompt."""
 
     @classmethod
     def build_from_prompt(
@@ -190,11 +215,27 @@ class PromptToWorkcellBuilder:
         output_dir: str | Path | None = None,
         verbose: bool = True,
     ) -> tuple[MultiRobotChoreographer, Path | None]:
-        """Parse prompt, build choreographer schedule, compile all skills, and generate ROS 2 package."""
+        """Parse supported clauses, compile every retained skill, and package the schedule."""
         parsed = SystemPromptParser.parse(prompt)
 
+        if not parsed.tasks:
+            raise SkillCompilationError([
+                CompilerDiagnostic(
+                    code="RW101",
+                    severity="error",
+                    message="The workcell prompt contains no supported executable task.",
+                    reason="; ".join(parsed.warnings),
+                    required_capability=None,
+                    fixes=[
+                        "Assign each robot an explicit supported action and target.",
+                        "Treat conversation, speech, and social interaction as planned "
+                        "capabilities until a typed backend is implemented.",
+                    ],
+                )
+            ])
+
         if verbose:
-            print(f"\n\033[1;35m━━━ RoboWeaver Prompt-to-System Builder ━━━\033[0m")
+            print("\n\033[1;35m━━━ RoboWeaver Prompt-to-System Builder ━━━\033[0m")
             print(f"  Input Prompt  : \033[1m\"{prompt}\"\033[0m")
             print(f"  System Name   : \033[36m{parsed.workcell_name}\033[0m")
             print(f"  Robot Fleet   : \033[32m{', '.join(parsed.robots)}\033[0m ({len(parsed.robots)} connected robots)")
@@ -219,7 +260,7 @@ class PromptToWorkcellBuilder:
         if output_dir:
             pkg_path = choreographer.export_workcell_ros2_package(output_dir)
             if verbose:
-                print(f"\n  \033[1;32m✓ SYSTEM BUILT SUCCESSFULLY\033[0m")
+                print("\n  \033[1;32m✓ SYSTEM BUILT SUCCESSFULLY\033[0m")
                 print(f"  ROS 2 Orchestration Package : \033[36m{pkg_path}\033[0m")
                 print(f"  BehaviorTree XML            : {pkg_path / 'composite_workcell_bt.xml'}")
                 print(f"  Launch Script               : {pkg_path / 'launch/workcell_orchestration.launch.py'}\n")

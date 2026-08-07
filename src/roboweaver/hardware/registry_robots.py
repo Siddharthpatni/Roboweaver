@@ -186,6 +186,8 @@ def get_temi_robot_spec() -> RobotSpec:
         ],
         description="Autonomous mobile service robot with LiDAR SLAM, voice interface, and payload tray",
         has_force_torque_sensor=False,
+        motion_model="holonomic_base",
+        collision_radius_m=0.30,
     )
 
 
@@ -231,19 +233,12 @@ def get_pepper_robot_spec() -> RobotSpec:
         # confirmed by walking the actual FK chain. RobotSpec.validate() now
         # catches this shape of bug for every registry entry at import time.
         #
-        # Known limitation this does NOT fix: RoboWeaver's kinematics model
-        # is a single serial chain (see kinematics_ndof.py), but Pepper is
-        # physically a branching tree -- a wheeled base, then a torso that
-        # forks into two independent arms plus a head. Chaining both arms and
-        # the head one after another head-to-tail (as below) means the FK
-        # extends much taller than Pepper's real ~1.2m when joints are near
-        # zero, because it's summing segments that are actually parallel
-        # branches, not stacking straight up. Lengths and masses below are
-        # each individually reasoned from Pepper's published dimensions
-        # (upper arm ~0.18m, forearm ~0.15m, hand ~0.07m, torso rise ~0.75m,
-        # neck-to-head ~0.13m, ~28kg total) rather than fabricated -- but a
-        # topologically correct model would need branching-chain FK/IK, which
-        # is a real, separate piece of work, not something papered over here.
+        # The flat joint/link arrays remain the portable storage form, while
+        # kinematic_chains below declares Pepper's actual branch membership.
+        # BranchedHumanoidLowerer solves one selected arm and embeds it into the
+        # full body state; the collision planner checks each declared arm chain
+        # independently. Base/torso coupling and whole-body dynamics remain out
+        # of scope and are not inferred from this flat ordering.
         links=[
             LinkSpec("wheel_fl_link", 0.05, 3.0),
             LinkSpec("wheel_fr_link", 0.05, 3.0),
@@ -264,6 +259,14 @@ def get_pepper_robot_spec() -> RobotSpec:
             LinkSpec("head_link", 0.13, 1.5),
         ],
         description="Humanoid mobile service robot with dual arms, social interaction display, and tactile sensors",
+        motion_model="branched_humanoid",
+        kinematic_chains={
+            "right_arm": (4, 5, 6, 7, 8),
+            "left_arm": (10, 11, 12, 13, 14),
+            "head": (16,),
+        },
+        motion_parameters={"branch_base_height_m": 0.72},
+        collision_radius_m=0.055,
     )
 
 
@@ -286,6 +289,15 @@ def get_shadow_hand_spec() -> RobotSpec:
             for i in range(20)
         ],
         description="20-DOF anthropomorphic dexterous robotic hand with tactile fingertips",
+        motion_model="multi_finger_hand",
+        kinematic_chains={
+            "thumb": (0, 1, 2, 3),
+            "index": (4, 5, 6, 7),
+            "middle": (8, 9, 10, 11),
+            "ring": (12, 13, 14, 15),
+            "little": (16, 17, 18, 19),
+        },
+        collision_radius_m=0.012,
     )
 
 
@@ -312,6 +324,9 @@ def get_robotiq_hand_spec() -> RobotSpec:
             LinkSpec("f3_link", 0.07, 0.2),
         ],
         description="4-DOF adaptive dexterous robot hand for versatile grasping of complex geometries",
+        motion_model="multi_finger_hand",
+        kinematic_chains={"finger_1": (0,), "finger_2": (1,), "finger_3": (2,)},
+        collision_radius_m=0.015,
     )
 
 
@@ -342,6 +357,12 @@ def get_inspire_hand_spec() -> RobotSpec:
             LinkSpec("pinky_link", 0.06, 0.3),
         ],
         description="6-DOF / 6-Actuator commercial anthropomorphic dexterous hand over RS485 (115200 baud)",
+        motion_model="multi_finger_hand",
+        kinematic_chains={
+            "thumb": (0, 1), "index": (2,), "middle": (3,),
+            "ring": (4,), "little": (5,),
+        },
+        collision_radius_m=0.012,
     )
 
 
@@ -356,8 +377,8 @@ def get_turtlebot4_spec() -> RobotSpec:
         max_reach_m=25.0,  # Mobile navigation radius
         base_height_m=0.19,
         joints=[
-            JointSpec("left_wheel_joint", "continuous", (0, 1, 0), -math.pi, math.pi, 10.0, 5.0),
-            JointSpec("right_wheel_joint", "continuous", (0, 1, 0), -math.pi, math.pi, 10.0, 5.0),
+            JointSpec("left_wheel_joint", "continuous", (0, 1, 0), -1_000_000.0, 1_000_000.0, 10.0, 5.0),
+            JointSpec("right_wheel_joint", "continuous", (0, 1, 0), -1_000_000.0, 1_000_000.0, 10.0, 5.0),
             JointSpec("card_scanner_camera_joint", "fixed", (0, 0, 1), 0.0, 0.0, 0.0, 0.0),
         ],
         links=[
@@ -368,15 +389,56 @@ def get_turtlebot4_spec() -> RobotSpec:
         ],
         description="TurtleBot 4 mobile base equipped with vision/RFID card scanner payload for office/hospital logistics",
         has_force_torque_sensor=False,
+        motion_model="differential_drive",
+        motion_parameters={"wheel_radius_m": 0.036, "track_width_m": 0.235},
+        collision_radius_m=0.22,
     )
 
 
 def get_generic_6dof_spec() -> RobotSpec:
-    """Generic 6-DOF Robot Arm Profile."""
-    return get_ur5e_spec()
+    """Conservative, vendor-neutral 6-DOF reference embodiment.
+
+    This profile exercises parsing, task decomposition, IK and safety without
+    pretending a branded robot was selected. It is not a deployment target:
+    physical code generation must select a real RobotSpec and re-run lowering
+    and verification for that embodiment.
+    """
+    return RobotSpec(
+        id="generic_6dof",
+        name="Generic 6-DOF Reference Arm",
+        manufacturer="RoboWeaver Reference Contract",
+        dof=6,
+        payload_capacity_kg=3.0,
+        max_reach_m=0.75,
+        base_height_m=0.15,
+        joints=[
+            JointSpec("axis_1", "revolute", (0, 0, 1), -math.pi, math.pi, 1.0, 20.0),
+            JointSpec("axis_2", "revolute", (0, 1, 0), -math.pi, math.pi, 1.0, 20.0),
+            JointSpec("axis_3", "revolute", (0, 1, 0), -math.pi, math.pi, 1.0, 20.0),
+            JointSpec("axis_4", "revolute", (1, 0, 0), -math.pi, math.pi, 1.0, 10.0),
+            JointSpec("axis_5", "revolute", (0, 1, 0), -math.pi, math.pi, 1.0, 10.0),
+            JointSpec("axis_6", "revolute", (1, 0, 0), -math.pi, math.pi, 1.0, 10.0),
+        ],
+        links=[
+            LinkSpec("reference_link_1", 0.15, 2.0),
+            LinkSpec("reference_link_2", 0.20, 2.0),
+            LinkSpec("reference_link_3", 0.18, 1.5),
+            LinkSpec("reference_link_4", 0.10, 1.0),
+            LinkSpec("reference_link_5", 0.07, 0.7),
+            LinkSpec("reference_link_6", 0.05, 0.5),
+        ],
+        description=(
+            "Vendor-neutral reference geometry for portable-source compilation. "
+            "Not valid for physical deployment; select and verify a concrete robot first."
+        ),
+    )
 
 
 ROBOT_REGISTRY: dict[str, RobotSpec] = {
+    # Portable-source preview mode. It lowers against an explicit reference
+    # embodiment so every computed motion value has declared geometry. Physical
+    # deployment still requires selecting and verifying a concrete target.
+    "universal": get_generic_6dof_spec(),
     "franka_panda": get_franka_panda_spec(),
     "panda": get_franka_panda_spec(),
     "ur5e": get_ur5e_spec(),
@@ -436,4 +498,3 @@ def get_robot_spec(robot_id: str) -> RobotSpec:
     """Retrieve RobotSpec by robot_id (defaults to Franka Panda)."""
     key = robot_id.lower().strip()
     return ROBOT_REGISTRY.get(key, get_franka_panda_spec())
-

@@ -28,6 +28,13 @@ services:
       ROBOWEAVER_RATE_LIMIT_PER_MINUTE: ${ROBOWEAVER_RATE_LIMIT_PER_MINUTE:-240}
       ROBOWEAVER_EXPENSIVE_RATE_LIMIT_PER_MINUTE: ${ROBOWEAVER_EXPENSIVE_RATE_LIMIT_PER_MINUTE:-30}
       OLLAMA_HOST: ${ROBOWEAVER_CONTAINER_OLLAMA_HOST:-http://host.docker.internal:11434}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      ROBOWEAVER_OPENROUTER_MODEL: ${ROBOWEAVER_OPENROUTER_MODEL:-openrouter/free}
+      ROBOWEAVER_OPENROUTER_MODEL_CODEGEN: ${ROBOWEAVER_OPENROUTER_MODEL_CODEGEN:-cohere/north-mini-code:free}
+      ROBOWEAVER_OPENROUTER_MODEL_ADVISOR: ${ROBOWEAVER_OPENROUTER_MODEL_ADVISOR:-openrouter/free}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ROBOWEAVER_GEMINI_MODEL: ${ROBOWEAVER_GEMINI_MODEL:-gemini-3.5-flash-lite}
+      ROBOWEAVER_GEMINI_MODEL_EXPERIMENT: ${ROBOWEAVER_GEMINI_MODEL_EXPERIMENT:-gemini-3.5-flash-lite}
     extra_hosts:
       - host.docker.internal:host-gateway
     ports:
@@ -47,8 +54,12 @@ services:
     environment:
       ROBOWEAVER_INTERNAL_API: http://api:8080
       ROBOWEAVER_API_TOKEN: ${ROBOWEAVER_API_TOKEN:?Set ROBOWEAVER_API_TOKEN in the environment}
+      ROBOWEAVER_LAN_MODE: ${ROBOWEAVER_LAN_MODE:-0}
+      ROBOWEAVER_FRONTEND_BIND: ${ROBOWEAVER_FRONTEND_BIND:-127.0.0.1}
+      ROBOWEAVER_LAN_ALLOW_CONTROL: ${ROBOWEAVER_LAN_ALLOW_CONTROL:-0}
+      ROBOWEAVER_LAN_ALLOWED_HOSTS: ${ROBOWEAVER_LAN_ALLOWED_HOSTS:-}
     ports:
-      - "127.0.0.1:3000:3000"
+      - "${ROBOWEAVER_FRONTEND_BIND:-127.0.0.1}:3000:3000"
     read_only: true
     tmpfs:
       - /tmp:size=32m,noexec,nosuid
@@ -59,3 +70,24 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+  experiment-sandbox:
+    profiles: ["research"]
+    build:
+      context: .
+      dockerfile: sandbox/Dockerfile
+    environment:
+      ROBOWEAVER_RESEARCH_SANDBOX: "1"
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+      - /output:size=64m,noexec,nosuid,uid=10001,gid=10001
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 64
+    mem_limit: 1g
+    cpus: 2.0
+    restart: "no"

@@ -289,16 +289,14 @@ export const KnowledgeGraphView: React.FC = () => {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-6xl space-y-5 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
+      <div className="w-full space-y-5 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <span className="kicker">Knowledge Graph</span>
-            <h1 className="text-[19px] font-semibold text-white mt-1">Robots, packages, and skills — one real graph</h1>
+            <span className="kicker">Capability evidence</span>
+            <h1 className="text-[19px] font-semibold text-white mt-1">See how robots, skills, and software connect</h1>
             <p className="text-[13px] text-slate-400 mt-1.5 leading-relaxed max-w-2xl">
-              Every node and edge below is <code className="font-data text-slate-300">/api/graph</code>&apos;s real
-              response (knowledge/ingest_registry.py) — laid out live with a real d3-force simulation, drag any
-              node, scroll to zoom. The same graph <code className="font-data text-slate-300">roboweaver graph
-              export-obsidian</code> writes as cross-linked Obsidian notes.
+              Use the graph to understand why a robot or package matches a skill. Drag nodes to
+              explore, scroll to zoom, or find a path between two items.
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -308,7 +306,7 @@ export const KnowledgeGraphView: React.FC = () => {
               className="flex items-center gap-2 px-3.5 py-2 rounded-lg border border-violet-400/25 bg-violet-500/[0.08] text-violet-300 text-[13px] disabled:opacity-50 hover:bg-violet-500/[0.13]"
             >
               {enriching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              AI Enrich
+              Suggest missing links
             </button>
             <button
               onClick={handleDownloadObsidian}
@@ -371,7 +369,7 @@ export const KnowledgeGraphView: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.28fr)]">
           <div className="app-card p-2 overflow-hidden">
             <svg
               ref={svgRef}

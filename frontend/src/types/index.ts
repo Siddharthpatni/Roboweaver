@@ -11,6 +11,7 @@ export type ViewType =
   | 'packages'
   | 'connect'
   | 'benchmark'
+  | 'research'
   | 'settings';
 
 export interface RobotProfile {
@@ -21,6 +22,7 @@ export interface RobotProfile {
   payload_capacity_kg: number;
   max_reach_m: number;
   gripper_type: string;
+  motion_model: 'serial_arm' | 'holonomic_base' | 'differential_drive' | 'branched_humanoid' | 'multi_finger_hand';
   description: string;
 }
 
@@ -37,6 +39,7 @@ export interface WorkcellBuildResult {
   prompt: string;
   workcell_name: string;
   robots: string[];
+  warnings: string[];
   tiers: WorkcellStep[][];
   behavior_tree_xml: string;
 }
@@ -71,6 +74,13 @@ export interface RoboIRObject {
   pose_source: 'assumed_default' | 'perception' | 'user_specified';
 }
 
+export interface CapabilityClaim {
+  name: string;
+  confidence: number;
+  verified: boolean;
+  source: 'declared' | 'unimplemented';
+}
+
 export interface RoboIR {
   ir_version: string;
   skill: { id: string; version: string };
@@ -78,9 +88,54 @@ export interface RoboIR {
   intent: { action: string };
   objects: RoboIRObject[];
   constraints: { payload_kg: number | null; precision_mm: number | null };
-  required_capabilities: { perception: string[]; manipulation: string[]; sensing: string[] };
+  required_capabilities: {
+    perception: string[];
+    manipulation: string[];
+    sensing: string[];
+    claims: CapabilityClaim[];
+  };
   execution: { robot_id: string; dof: number; planner: string; controller: string };
   verification: { collision_check: boolean; simulation_required: boolean; safety_checks: string[] };
+  program: {
+    object_name: string;
+    parameters: Record<string, unknown>;
+    confidence: number;
+    parse_warnings: string[];
+    tasks: { type: string; description: string; parameters: Record<string, unknown> }[];
+    behavior_tree: { type: string; name: string; children: unknown[] };
+  } | null;
+  lowering: {
+    robot_id: string;
+    joint_names: string[];
+    ik_solutions: {
+      task_description: string;
+      joint_angles: number[];
+      target_position: number[];
+      residual_m: number;
+      iterations: number;
+      success: boolean;
+    }[];
+    trajectories: {
+      task_description: string;
+      start_pose: number[];
+      end_pose: number[];
+      waypoints: number[][];
+      duration_s: number;
+    }[];
+    motion_model: string;
+    scene_digest: string | null;
+    legalization_trace: string[];
+  } | null;
+}
+
+export interface NativeMLIREvidence {
+  status: 'succeeded' | 'unavailable' | 'disabled';
+  executable: string | null;
+  version: string | null;
+  pass_pipeline: string[];
+  input_sha256: string;
+  output_sha256: string | null;
+  detail: string | null;
 }
 
 /**
@@ -127,6 +182,7 @@ export interface CompiledSkillResult {
   behavior_tree_xml: string;
   ir: RoboIR;
   diagnostics: CompilerDiagnostic[];
+  native_mlir: NativeMLIREvidence | null;
   /** Only present when compiled with `?explain_passes=1`. */
   pipeline?: PipelineTraceResult;
   /** Only present when compiled with `?explain_passes=1`. */
@@ -136,6 +192,21 @@ export interface CompiledSkillResult {
   explanation_model?: string;
   explanation_latency_s?: number;
   explanation_error?: string | null;
+}
+
+export interface UniversalCompileMatrix {
+  instruction: string;
+  source_digest: string;
+  portable: {
+    action: string;
+    object_name: string;
+    parameters: Record<string, unknown>;
+    confidence: number;
+    warnings: string[];
+    tasks: { type: string; description: string; parameters: Record<string, unknown> }[];
+  };
+  targets: Record<string, CompiledSkillResult>;
+  failures: Record<string, CompilerDiagnostic[]>;
 }
 
 export class CompilationFailedError extends Error {
@@ -166,6 +237,9 @@ export interface RobotModel {
   dof: number;
   base_height_m: number;
   max_reach_m: number;
+  motion_model: RobotProfile['motion_model'];
+  kinematic_chains: Record<string, number[]>;
+  collision_radius_m: number;
   joints: RobotJointSpec[];
   links: RobotLinkSpec[];
 }
@@ -242,8 +316,12 @@ export interface AdvisorStatus {
   ollama_available: boolean;
   ollama_host: string;
   ollama_model: string;
+  openrouter_configured: boolean;
+  openrouter_model: string;
+  openrouter_codegen_model: string;
   providers: string[];
   supported_protocols: string[];
+  remote_privacy_notice: string;
 }
 
 /**
@@ -261,6 +339,20 @@ export interface VersionInfo {
   self_healing_active: boolean;
   uptime_seconds: number | null;
   registered_robots: number;
+  native_mlir: {
+    mode: string;
+    available: boolean;
+    executable: string | null;
+    version: string | null;
+  };
+}
+
+export interface AccessInfo {
+  mode: 'local' | 'lan';
+  compiler_access: boolean;
+  hardware_control: boolean;
+  backend_token_exposed: false;
+  host_validated: boolean;
 }
 
 export interface NetworkInfo {
@@ -299,6 +391,24 @@ export interface ConnectionResult {
   latency_ms?: number;
   message?: string;
   error?: string;
+}
+
+export interface ConnectionCodeResult {
+  robot_id: string;
+  protocol: string;
+  filename: string;
+  /** Deterministic adapter. This is always the authoritative generated source. */
+  code: string;
+  environment: Record<string, string>;
+  safety_notes: string[];
+  /** Optional model annotation; never replaces `code`. */
+  annotated_code: string | null;
+  issues: string[];
+  suggestions: string[];
+  provider: 'none' | 'ollama' | 'openrouter';
+  model: string;
+  latency_s: number;
+  ai_error: string | null;
 }
 
 export interface SimObjectProfile {
@@ -562,4 +672,158 @@ export interface AIModelMutationResult {
   model: string;
   feature?: string;
   message?: string;
+}
+
+export interface ResearchProviderStatus {
+  configured: boolean;
+  available?: boolean;
+  model: string;
+  experiment_model?: string;
+  remote: boolean;
+}
+
+export interface ResearchStatusResult {
+  providers: Record<'ollama' | 'gemini' | 'openrouter', ResearchProviderStatus>;
+  cascade: string[];
+  max_attempts: number;
+  sandbox: {
+    profile: string;
+    network: string;
+    root_filesystem: string;
+    devices: string;
+    command: string;
+    physics_adapter: string;
+  };
+  boundaries: {
+    model_code_execution: boolean;
+    physical_hardware: boolean;
+    cache_safety_revalidation: boolean;
+    prompt_storage: boolean;
+  };
+}
+
+export interface ExperimentLink {
+  name: string;
+  shape: 'box' | 'cylinder' | 'sphere' | 'capsule';
+  size_m: [number, number, number];
+  mass_kg: number;
+}
+
+export interface ExperimentJoint {
+  name: string;
+  parent: string;
+  child: string;
+  joint_type: 'fixed' | 'revolute' | 'continuous' | 'prismatic';
+  axis: [number, number, number];
+  lower: number;
+  upper: number;
+  effort: number;
+  velocity: number;
+}
+
+export interface ExperimentPlanResult {
+  spec: {
+    name: string;
+    objective: string;
+    embodiment_class: string;
+    links: ExperimentLink[];
+    joints: ExperimentJoint[];
+    sensors: string[];
+    training: {
+      algorithm: string;
+      observation_terms: string[];
+      reward_terms: string[];
+      termination_terms: string[];
+      max_steps: number;
+    };
+  };
+  provider: string;
+  model: string;
+  attempts: number;
+  cache_hit: boolean;
+  ai_error: string | null;
+  artifacts: Record<string, string>;
+  artifact_sha256: Record<string, string>;
+  safety: {
+    schema_validated: boolean;
+    python_ast_validated: boolean;
+    model_authored_code_executed: boolean;
+    physical_hardware_allowed: boolean;
+    external_network_allowed: boolean;
+    limitations: string[];
+  };
+  sandbox: {
+    runner: string;
+    network: string;
+    root_filesystem: string;
+    capabilities: string;
+    devices: string;
+    pids_limit: number;
+    memory_limit: string;
+    cpu_limit: number;
+    command: string;
+    status: string;
+  };
+}
+
+export interface ModelCallTrace {
+  trace_id: string;
+  parent_id: string;
+  timestamp: number;
+  feature: string;
+  provider: string;
+  requested_model: string;
+  actual_model: string;
+  attempt: number;
+  status: 'succeeded' | 'failed' | 'cache_hit' | 'blocked';
+  latency_s: number;
+  input_chars: number;
+  output_chars: number;
+  token_count: number | null;
+  error_category: string | null;
+  error_message: string | null;
+  cache_key: string | null;
+}
+
+export interface ObservabilityResult {
+  traces: {
+    privacy: string;
+    totals: {
+      traces: number;
+      requests: number;
+      succeeded: number;
+      failed: number;
+      blocked: number;
+      cache_hits: number;
+      tokens: number;
+    };
+    success_rate: number | null;
+    cache_hit_rate: number;
+    p95_latency_s: number | null;
+    providers: Record<string, number>;
+    recent: ModelCallTrace[];
+  };
+  cache: {
+    entries: number;
+    max_entries: number;
+    ttl_seconds: number;
+    hits: number;
+    misses: number;
+    evictions: number;
+  };
+  implementation: string;
+}
+
+export interface ResearchEvaluationResult {
+  benchmark_version: string;
+  passed: number;
+  total: number;
+  elapsed_s: number;
+  metrics: Array<{
+    name: 'compilation_success' | 'diagnostic_precision' | 'determinism' | 'target_portability' | 'runtime_correctness' | 'planning_performance';
+    passed: boolean;
+    value: number | string | boolean;
+    evidence: Record<string, unknown>;
+  }>;
+  limitations: string[];
 }

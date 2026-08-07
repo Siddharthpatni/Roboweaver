@@ -36,33 +36,20 @@ treat every "not started"/"deferred" item as a starting brief, not a fixed spec,
 re-verify the codebase state before resuming (this file decays like any other design
 doc).
 
-## Maturity scorecard
+## Current evidence snapshot (2026-08-07)
 
-Self-assessed against LLVM/MLIR/TVM/TensorRT as a reference point. Re-score after each
-phase rather than trusting this snapshot.
+Numeric self-scores were removed because they were subjective and invited claims the
+repository could not mechanically prove. Current merge gates are objective:
 
-| Area | Maturity |
-|---|---|
-| Compiler pipeline | 8.5/10 |
-| RoboIR | 8/10 → improved by Phase 2 (frozen, pass-managed, diffable) |
-| Safety verification | 8.5/10 → Phase 4's WaypointDecimationPass is independently re-verified against it (see below) |
-| Runtime execution | 8/10 |
-| Runtime recovery | 8.5/10 |
-| Multi-robot support | 7.5/10 → 8/10: Phase 3 added real cycle/resource-conflict detection over the DAG |
-| Backend abstraction | 8/10 |
-| Code generation | 8/10 |
-| Knowledge layer | 7.5/10 → 8.5/10: real registry-ingested graph (39 nodes/213 edges) replaces the old ~13-node demo graph, plus real multi-hop path + Obsidian export |
-| Optimization framework | 4/10 → 7/10: 2 real optimization passes + a motion-plan cache + a real cost model/Pareto filter (v2 item 8) |
-| Static analysis | 5/10 → 6/10: RW501/502/505/506 (CompiledSkill) + RW601/602/605 (choreography DAG) + RW507 (bounded forbidden-zone, v2 item 10); collision/dynamics-dependent checks still deferred |
-| Formal verification | 3/10 → 4/10: a real, bounded, discrete check (v2 item 10) — explicitly not a temporal-logic/SMT proof |
-| Benchmarking | 2/10 → 5/10: RoboBench (v2 item 11) is real compile-time measurement over every distinct robot × every NL-reachable skill category — not simulator-execution benchmarking |
-| Plugin ecosystem | 3/10 → 7/10: a real `PluginRegistry` (v2 item 3) backs both robot bridges and `RobotBackend`s; `CodegenBackend`/`DigitalTwin` both registry-based |
-| RoboIR (task/motion layer) | (new row) 3/10: real summary fields only (v2 item 1) — not the full task/motion/BT absorption |
-| Capability ontology | (new row) 6/10: real `CapabilityClaim`s with confidence/verified grounded in declared `RobotSpec` fields (v2 item 2) |
-| Digital twin | (new row) 4/10: one fully-real twin (native execution), one honest reachability-only placeholder (v2 item 4) |
-| Execution memory | (new row) 5/10: real, persisted, queryable — zero accumulated history yet (v2 item 6) |
-| Safety kernel | (new row) 5/10: real, mandatory at the one new enforcement point that exists (`deploy()`); not (yet) mandatory at `SkillRuntime.execute()` (v2 item 9) |
-| Self-improvement | (new row) 2/10: a real, tested mechanism (v2 item 12) that honestly returns nothing until real usage data exists |
+- complete, frozen `ProgramSpec` + target `LoweringSpec`, one source lowered across
+  independently verified concrete RobotSpecs;
+- IR-only safety, native simulation, ROS 2, URScript, deployment, and auditable
+  manifests; deployment revalidates the exact IR rather than trusting old diagnostics;
+- 386 tests across 49 files, a measured 78.21% branch coverage with a 75% floor,
+  Ruff/Pyflakes, dependency audits, Bandit, and frontend lint/type/build checks;
+- generated ROS 2 packages wheel-built and Humble-`colcon`-built in CI; and
+- explicitly unsupported collision/dynamics/process-model claims remain false in the
+  IR and UI instead of being counted as successful verification.
 
 ## Phase 1 — Existing Foundation
 
@@ -110,8 +97,8 @@ numbering at Phase 2 to match the original planning conversation; there is no ga
   - Default order: Verification → Capability → Safety.
 - **IR Diff.** `src/roboweaver/ir/diff.py` — `IRDiff`, `diff_ir()`, `diff_trace()`.
   Diffs the RoboIR schema fields that exist today (objects, capabilities, constraints,
-  execution/verification config), with `skill_id` excluded by default (random per
-  compile, pure noise). **Does not** produce a task/motion-level diff ("Removed MOVE
+  execution/verification config), with `skill_id` excluded by default. Skill ids are
+  now deterministic source identities. **Does not** produce a task/motion-level diff ("Removed MOVE
   MOVE, Merged GRASP, Inserted WAIT") — see "Deferred" below.
 - **Wired into `compiler.py`.** `SkillCompiler.compile_with_diagnostics()` now builds
   the IR, runs it through `PassManager([RoboIRVerificationPass(), CapabilityPass(),
@@ -147,9 +134,9 @@ numbering at Phase 2 to match the original planning conversation; there is no ga
   round, to keep the change scoped; a natural, low-effort follow-up
   (`dashboard/server.py`'s `/api/compile` already has `result` in scope).
 
-## Phase 3 — Static Analysis — **Done** (2026-08-04, jointly with Phase 4)
+## Phase 3 — Static Analysis — **Done** (historical 2026-08-04 record)
 
-**Architectural finding that shaped both phases:** RoboIR still has no task/motion/
+**Finding at that phase (superseded on 2026-08-07):** RoboIR then had no task/motion/
 behavior-tree fields (Phase 2's own deferred list), so any check touching tasks,
 waypoints, or timing has to operate on `CompiledSkill`, not `RoboIR`. Rather than
 genericize `ir/pass_manager.py::PassManager` (which would mean renaming already-
@@ -235,16 +222,10 @@ structurally apply to a single skill. They do apply, for real, to
   standard demo poses (real, non-trivial deltas) — proven with a synthetic
   near-zero-delta segment in tests, not assumed to fire "by luck". Also gated by
   `OptimizationLevel`.
-- **Motion-plan cache** (`src/roboweaver/optimize/motion_cache.py`, new) — every
-  compile today plans against the same 3 fixed Cartesian poses (no perception system
-  derives a real per-object pose yet), so the IK+trajectory computation is, honestly,
-  a pure function of `robot_spec.id` alone right now. `compute_pick_place_primitives()`
-  memoizes it per robot; `compiler.py::_plan_motion` became a thin wrapper (labels the
-  cached primitives with the object name, unchanged verbose output plus a
-  `(cached)` note). Measured effect: the full test suite (containing many repeated
-  compiles per robot) dropped from ~25s to ~14s. **Documented limitation, not
-  hidden:** the cache key must include the target pose, not just `robot_spec.id`,
-  once perception is ever wired in — it will silently serve a stale plan otherwise.
+- **Motion-plan cache** (`src/roboweaver/optimize/motion_cache.py`, new) — memoizes
+  exact Cartesian target sequences per RobotSpec. The cache key includes robot id,
+  every target coordinate, and trajectory settings, so action-specific or
+  user-specified poses cannot silently reuse a plan from another scene.
 - **Pipeline ordering fix.** `compiler.py::compile_with_diagnostics()` now runs the
   optimization pipeline (`SkillPassManager`) *before* `build_ir()`/the RoboIR pipeline,
   so `SafetyPass` verifies the final, optimized trajectories — not pre-optimization
@@ -285,15 +266,12 @@ map from the old numbering (some items reused directly) plus what's genuinely ne
 Every item below follows the same discipline as Phase 2/3/4: real, tested,
 cited-by-file work, gaps stated honestly rather than stubbed silently or faked.
 
-**1 — RoboIR stabilization (Stage 1, not the full migration).**
-`ir/schema.py`: `TaskSummary`, `MotionSummary` (frozen), `RoboIR` gains
-`task_summary`/`motion_summary: ... | None = None` (additive). `ir/builder.py::
-build_ir()` gains an optional `skill: CompiledSkill | None = None` param that
-populates real summaries from the real task graph/motion plan when passed;
-`compiler.py::compile_with_diagnostics()` passes the optimized skill.
-**Explicitly not done:** full raw-waypoint/BT absorption into RoboIR — still lives
-on `CompiledSkill`; the roadmap's literal MOVE/GRASP/WAIT-level IR diff still isn't
-real for the same reason it wasn't after Phase 2.
+**1 — RoboIR stabilization (completed beyond the original Stage 1).**
+`ir/schema.py` now contains complete target-independent `ProgramSpec` and concrete
+`LoweringSpec` values: ordered tasks, recursive behavior tree, parser provenance,
+IK evidence, exact target joints, trajectories, timing, and every waypoint. Built-in
+verification, native simulation, code generation, deployment, and manifests consume
+that IR. `CompiledSkill` remains only as a compatibility/optimization view.
 
 **2 — Capability ontology.** `ir/schema.py::CapabilityClaim(name, confidence,
 verified, source)`. `ir/builder.py` constructs real claims: manipulation
@@ -393,7 +371,10 @@ check, since every node in a real tree is reachable from the root by constructio
 (that would be a vacuous, always-passing check). `optimize/formal.py::
 check_forbidden_zone_violations()` — real, bounded: every compiled waypoint checked
 against a **declared** forbidden joint-range zone, `[]` honestly returned if none is
-declared. **Explicitly not attempted:** an SMT/temporal-logic proof of a
+declared. `BoundedFormalVerificationPass` now runs this automatically before and after
+optimization for validated `RobotSpec.forbidden_joint_ranges`; malformed declarations
+fail closed as `RW508`, and sampled violations block compilation as `RW507`.
+**Explicitly not attempted:** an SMT/temporal-logic proof of a
 continuous-time property — needs a new solver dependency (e.g. `z3-solver`, not
 added here without an explicit decision) and nonlinear real arithmetic over
 trigonometric forward kinematics, genuinely research-grade work. Cycle detection /
@@ -401,17 +382,11 @@ trigonometric forward kinematics, genuinely research-grade work. Cycle detection
 (`RW601`/`RW602`/`RW605`) and isn't redone here.
 
 **11 — Multi-robot benchmark ("RoboBench").** `benchmark/robobench.py::
-run_benchmark()` — real compile-pipeline measurement (latency, success/failure,
-diagnostic counts, waypoint `pct_reduction`) over every distinct registered robot ×
-every skill category the compiler's NL pipeline can actually reach. **Discovered,
-not assumed:** of the 17 `IndustrialSkillCategory` templates with real,
-hand-authored task graphs, only **13** are reachable through `SkillCompiler.compile()`
-at all — `PALLETIZING`, `POLISHING`, `DISASSEMBLY`, and `MOBILE_NAV` have no entry in
-`compiler.py::ACTION_CATEGORY_MAP`, so no natural-language instruction can ever route
-to them through the real pipeline (only reachable by calling
-`skills.taxonomy.get_industrial_skill_template()` directly — dead code from the
-compiler's perspective). This benchmark only exercises the 13 reachable ones; the
-other 4 are a discovered gap, not silently routed around. `roboweaver benchmark
+run_benchmark()` measures latency, success/failure, diagnostics, and waypoint
+reduction over every distinct registered robot × all **17** hand-authored categories.
+The four formerly unreachable categories (`PALLETIZING`, `POLISHING`, `DISASSEMBLY`,
+`MOBILE_NAV`) now have real Action routing and action-specific Cartesian paths.
+`roboweaver benchmark
 [--json] [--output FILE]`. Explicitly scoped down from "100 skills × 20 robots × 5
 simulators" (no simulators exist here) — stated in the report's own `scope` field.
 
@@ -468,19 +443,15 @@ API, and rebuilds the frontend shell around them. Same discipline as every phase
 above: real, tested, cited-by-file; gaps stated honestly.
 
 **1a — Generalized `_plan_motion` (closes the RW502 finding from Phase 3).**
-`optimize/motion_cache.py` rewritten: `compute_motion_primitives(robot_spec,
-n_targets)` interpolates `n_targets` real Cartesian waypoints across a fixed
-two-phase `APPROACH → WORK → RETRACT` path (renamed from the old fixed 3-pose
-scheme for generality), IK-solves each with warm-starting (`seed_q` chained
-target-to-target), memoized by `(robot_spec.id, n_targets)`.
-`compiler.py::_plan_motion` now iterates every real `TaskType.MOVE_TO` task in the
-task graph, calls `compute_motion_primitives(self.robot_spec, len(move_to_tasks))`,
-and keys `trajectories`/`ik_results` by each task's real `description` — every
+`compiler.py::_cartesian_targets()` creates typed, action-specific Cartesian inputs
+with explicit pose provenance. `optimize/motion_cache.py` IK-solves those exact
+targets with warm-starting (`seed_q` chained target-to-target) and memoizes by the
+full coordinate sequence plus robot profile. `_plan_motion` keys
+`trajectories`/`ik_results` by each task's real `description` — every
 `MOVE_TO` task across every category gets a real entry; RW502 no longer fires
-anywhere (`tests/test_plan_motion_generalization.py`, 4 tests). **Same documented
-limitation as before, unchanged:** targets are still assumed poses along a fixed
-path, not perception-derived — no perception system exists yet (RW201 stays a
-warning for the same reason it always has).
+anywhere (`tests/test_plan_motion_generalization.py`, 4 tests). Default scene poses
+remain explicitly assumed; complete user coordinates are preserved as
+`user_specified` and remove RW201 (`tests/test_motion_semantics.py`).
 
 **1b — 4 new actions make PALLETIZING/POLISHING/DISASSEMBLY/MOBILE_NAV reachable
 (closes the RoboBench finding from v2 item 11).** `types.py::Action` gains
@@ -760,13 +731,16 @@ Framer Motion transitions; a Monaco editor for instruction/RoboIR editing; EChar
 benchmark history; Zustand/TanStack Query global state; an Execution Memory timeline;
 trajectory replay/velocity/acceleration visualization in the Digital Twin.
 
-**Verified live:** `npx tsc --noEmit` and `npm run lint` clean; every nav destination
-driven via Playwright against a real `npm run dev` + `roboweaver dashboard` — a real
+**Historical verification for that redesign:** `npx tsc --noEmit` and `npm run lint`
+were clean; every nav destination was driven via Playwright against a real
+`npm run dev` + `roboweaver dashboard` — a real
 compile showing real pass cards, a real graph-derived compare (including two robots
 that pass the graph's coarse capability gate but genuinely fail to compile,
 correctly shown as `skipped`), a real cross-robot diff, Digital Twin/Knowledge
 Graph/Fleet/Connect all working unchanged in their new home — zero console errors.
-Fresh screenshots and a re-recorded demo GIF against the new UI (`docs/media/`).
+Screenshots and a demo GIF were recorded against that UI (`docs/media/`). They now
+predate the later sidebar/provider redesign; current multi-viewport evidence remains
+open in `MILESTONES.md` rather than being implied by those historical captures.
 
 **Tests added:** `tests/test_dashboard_diff_route.py` (4, real `/api/diff` against a
 live server) — 272/272 passing (`python -m pytest tests/ -q`).

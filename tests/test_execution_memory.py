@@ -10,7 +10,6 @@ from pathlib import Path
 import pytest
 
 from roboweaver.compiler import SkillCompiler
-from roboweaver.hardware import get_robot_spec
 from roboweaver.runtime.engine import SkillRuntime
 from roboweaver.runtime.memory import ExecutionMemoryStore
 

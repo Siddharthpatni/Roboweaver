@@ -7,9 +7,9 @@ UR arm, drive it with the ros2 bridge at ros2://192.168.1.40" is an inference,
 and one an LLM is genuinely good at when given the real evidence (banner text,
 reverse-DNS name, port, latency).
 
-The advisor uses Ollama, hosted on an operator-controlled HTTP origin. Endpoint
-facts such as IP addresses, banners, and hostnames are never routed through a
-cloud-model API by RoboWeaver.
+The advisor uses local Ollama by default. OpenRouter is an explicit operator choice;
+when selected, endpoint facts such as IP addresses, banners, and hostnames leave the
+machine and are sent to OpenRouter. The API key remains server-side.
 
 Whatever the provider, the model's answer is validated against the real registry
 before it is returned: a hallucinated robot id or an unsupported protocol is
@@ -27,6 +27,7 @@ from typing import Any
 from roboweaver.hardware.registry_robots import ROBOT_REGISTRY
 from roboweaver.json_utils import loads_strict
 from roboweaver.nlu.ollama_manager import OllamaManager, get_manager
+from roboweaver.nlu.openrouter_manager import OpenRouterManager, openrouter_status
 
 # The only protocols UniversalRobotDriver actually implements a bridge for.
 # "sim" performs a genuine TCP reachability probe; "ros2" attempts a real
@@ -144,6 +145,33 @@ class OllamaBackend(_Backend):
         return response.text or "", response.error
 
 
+class OpenRouterBackend(_Backend):
+    """Explicit cloud provider. The caller must opt in before endpoint facts leave."""
+
+    name = "openrouter"
+
+    def __init__(
+        self,
+        model: str | None = None,
+        timeout: float = 45.0,
+        manager: OpenRouterManager | None = None,
+    ):
+        self.timeout = timeout
+        self.manager = manager or OpenRouterManager(default_model=model)
+        self.model = model or self.manager.model_for_feature("advisor")
+
+    def complete(self, prompt: str) -> tuple[str, str | None]:
+        response = self.manager.generate(
+            prompt,
+            feature="advisor",
+            model=self.model,
+            json_mode=True,
+            timeout=self.timeout,
+            temperature=0.0,
+        )
+        return response.text or "", response.error
+
+
 class ConnectionAdvisor:
     """Recommends a driver binding for a discovered endpoint. Never connects."""
 
@@ -230,10 +258,13 @@ class ConnectionAdvisor:
 
 
 def build_advisor(provider: str, model: str | None = None) -> ConnectionAdvisor:
-    """Build the local advisor and reject unsupported egress paths."""
-    if provider != "ollama":
-        raise ValueError("provider must be 'ollama'; cloud model providers are not supported")
-    return ConnectionAdvisor(OllamaBackend(model=model))
+    """Build an explicitly selected provider; never silently fall back to cloud."""
+    selected = provider.strip().lower()
+    if selected == "ollama":
+        return ConnectionAdvisor(OllamaBackend(model=model))
+    if selected == "openrouter":
+        return ConnectionAdvisor(OpenRouterBackend(model=model))
+    raise ValueError("provider must be 'ollama' or 'openrouter'")
 
 
 def advisor_status() -> dict[str, Any]:
@@ -241,10 +272,18 @@ def advisor_status() -> dict[str, Any]:
     ollama = OllamaBackend()
     ollama_up = ollama.manager.is_available(timeout=3.0)
 
+    remote = openrouter_status()
     return {
         "ollama_available": ollama_up,
         "ollama_host": ollama.host,
         "ollama_model": ollama.model,
-        "providers": ["ollama"],
+        "openrouter_configured": remote["configured"],
+        "openrouter_model": remote["model"],
+        "openrouter_codegen_model": remote["codegen_model"],
+        "providers": ["ollama", "openrouter"],
         "supported_protocols": list(SUPPORTED_PROTOCOLS),
+        "remote_privacy_notice": (
+            "OpenRouter is remote. Selecting it sends endpoint host, port, banner, hostname, "
+            "type guess, and latency to OpenRouter."
+        ),
     }

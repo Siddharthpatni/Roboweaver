@@ -56,7 +56,7 @@ here:
 - **RoboBench** — a real compile-pipeline benchmark (latency, diagnostics, waypoint
   reduction) over every distinct registered robot × all 17 NL-reachable skill
   categories. `roboweaver benchmark` / `/api/benchmark`.
-- **A real, generalized motion planner** — every `MOVE_TO` task in every skill category
+- **A real, bounded serial-chain motion planner** — every `MOVE_TO` task in every skill category
   gets a real, IK-solved trajectory keyed by its own task description (previously only
   the pick/place category did; RW502 no longer fires anywhere).
 - **All 17 industrial/service skill categories are NL-reachable** — PALLETIZING,
@@ -79,36 +79,40 @@ here:
 
 In the order it makes sense to tackle them:
 
-1. **Perception.** No perception system exists; every object pose is a disclosed,
-   assumed default (`RW201`). This is the single biggest gap standing between today's
-   compiler and a skill that runs on a real, unstructured scene.
-2. **RoboIR as a computational graph, not just a job description.** `task_summary`/
-   `motion_summary` are real but read-only reflections of the task graph; the graph
-   itself still lives on `CompiledSkill`, not inside RoboIR. Folding it in — so
-   optimization passes rewrite RoboIR directly — is real architectural work, not done.
-3. **Motion planning as a real pass.** Currently a distinct call from `compiler.py`
+1. **Perception.** No perception system exists; default scene object poses are
+   disclosed assumptions (`RW201`), while complete user coordinates are recorded as
+   `user_specified`. Perception-derived observations remain the biggest gap between
+   today's compiler and a skill that locates objects in a real, unstructured scene.
+2. **Motion planning as a RoboIR pass.** Complete `ProgramSpec` and target
+   `LoweringSpec` data now live inside frozen RoboIR, but motion planning is still a
+   distinct lowering call from `compiler.py`
    before the Pass Manager runs, not an `IKPass`/`TrajectoryPass` inside it — real
    either way, but not yet inspectable via `--explain-passes` like the rest of the
    pipeline.
-4. **More genuine optimization passes**, not just validators/compressors — a
+3. **More genuine optimization passes**, not just validators/compressors — a
    motion-fusion pass and a nearest-neighbor task-reordering pass are the two most
    concretely scoped candidates.
-5. **Multi-robot scheduling.** Choreography *validation* (cycle detection, resource
+4. **Multi-robot scheduling.** Choreography *validation* (cycle detection, resource
    conflicts) is real; there's no scheduler that actively chooses tiering/ordering to
    optimize a multi-robot plan, only one that checks a given plan is valid.
-6. **Research-grade verification.** An SMT/temporal-logic proof of a continuous-time
+5. **Research-grade verification.** An SMT/temporal-logic proof of a continuous-time
    safety property — needs a solver dependency (e.g. `z3-solver`) not added here
    without a deliberate decision, and nonlinear real arithmetic over trigonometric
    forward kinematics. Today's formal verification is real but bounded/discrete.
-7. **Live simulator integration.** `RemoteTwin` is the honest placeholder for
+6. **Live simulator integration.** `RemoteTwin` is the honest placeholder for
    Isaac/Gazebo/Webots — real when those engines are reachable, which they aren't in
    this environment. This is the honest path to real robot/simulator experiments, not
    claiming ones that didn't happen.
-8. **Profile-guided optimization and deterministic replay**, once real execution
+7. **Profile-guided optimization and deterministic replay**, once real execution
    history (execution memory, above) has actually accumulated from real usage — the
    mechanism exists, the data doesn't yet.
-9. **An LLM-backed Task Understanding backend**, strictly additive to the deterministic
-   default, never a silent replacement for it.
+8. **Broader language understanding.** An opt-in local LLM parser exists and falls
+   back explicitly, but the deterministic default remains a scored taxonomy router,
+   not open-ended semantic understanding.
+9. **Production-depth embodiment lowerers.** Target legality and dedicated lowerers
+   now cover serial arms, holonomic/differential bases, branched humanoids, and
+   multi-finger hands. Next depth is vendor controller validation, complete body/hand
+   transforms, orientation objectives, dynamics, and hardware acceptance evidence.
 
 Single-operator bearer authentication now protects the control endpoint for remote
 deployments. Multi-tenant identity/RBAC, a skill marketplace, and mobile clients remain

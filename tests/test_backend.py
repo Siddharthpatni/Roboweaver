@@ -3,7 +3,10 @@ Verification suite for the RobotBackend contract (plugins/backend.py) -- item 3 
 docs/COMPILER_ROADMAP.md's v2 vision.
 """
 
+import ast
+import json
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -47,7 +50,70 @@ def test_ros2_backend_generates_a_real_package():
         assert out.exists()
         assert (out / "package.xml").exists()
         assert (out / "behavior_tree.xml").exists()
-    print(f"  -> real ROS2 package directory with package.xml/behavior_tree.xml [PASSED]")
+        package_name = out.name
+        assert (out / "resource" / package_name).exists()
+        assert (out / package_name / "__init__.py").exists()
+        action_client = out / package_name / "trajectory_client.py"
+        assert action_client.exists()
+        ast.parse(action_client.read_text(encoding="utf-8"))
+
+        manifest = json.loads((out / "compiled_skill.json").read_text(encoding="utf-8"))
+        spec = result.ir.execution.robot_id
+        assert manifest["robot_id"] == spec
+        expected = [
+            [float(value) for value in waypoint]
+            for segment in result.ir.lowering.trajectories
+            for waypoint in segment.waypoints
+        ]
+        emitted = [
+            waypoint
+            for segment in manifest["trajectories"]
+            for waypoint in segment["waypoints"]
+        ]
+        assert emitted == expected
+
+        generated_source = action_client.read_text(encoding="utf-8")
+        assert "FollowJointTrajectory" in generated_source
+        assert "positions = [0.0]" not in generated_source
+        assert "Trajectory controller rejected" in generated_source
+    print("  -> real ROS2 package directory with package.xml/behavior_tree.xml [PASSED]")
+
+
+def test_ros2_backend_rejects_waypoints_with_the_wrong_dof(tmp_path):
+    result = _real_result()
+    assert result.ir.lowering is not None
+    first_segment = result.ir.lowering.trajectories[0]
+    broken_segment = replace(
+        first_segment,
+        waypoints=(first_segment.waypoints[0][:-1],),
+    )
+    result.ir = replace(
+        result.ir,
+        lowering=replace(
+            result.ir.lowering,
+            trajectories=(broken_segment,) + result.ir.lowering.trajectories[1:],
+        ),
+    )
+
+    with pytest.raises(ValueError, match="target robot requires"):
+        BACKEND_REGISTRY.get("ros2").compile(result, tmp_path)
+
+
+def test_codegen_reads_roboir_not_mutable_compiled_skill(tmp_path):
+    result = _real_result()
+    assert result.ir.lowering is not None
+    expected_waypoints = sum(len(segment.waypoints) for segment in result.ir.lowering.trajectories)
+
+    # CompiledSkill remains as a compatibility/runtime view. Code generation must
+    # not consult it after RoboIR has become the verified source of truth.
+    result.skill.motion_plan.trajectories.clear()
+    ros_package = BACKEND_REGISTRY.get("ros2").compile(result, tmp_path / "ros")
+    manifest = json.loads((ros_package / "compiled_skill.json").read_text())
+    emitted_waypoints = sum(len(segment["waypoints"]) for segment in manifest["trajectories"])
+    assert emitted_waypoints == expected_waypoints
+
+    script = BACKEND_REGISTRY.get("urscript").compile(result, tmp_path / "ur")
+    assert script.read_text().count("movej(") == expected_waypoints
 
 
 def test_urscript_backend_generates_real_syntax():
@@ -61,10 +127,17 @@ def test_urscript_backend_generates_real_syntax():
         assert "def roboweaver_" in content
         assert content.count("movej(") > 0
         assert content.rstrip().endswith("()")  # program invocation as the last line
-        # Real waypoints from the (optimized) compiled skill -- not placeholders.
-        total_waypoints = sum(len(s.waypoints) for s in result.skill.motion_plan.trajectories.values())
+        # Real waypoints from verified RoboIR -- not placeholders.
+        assert result.ir.lowering is not None
+        total_waypoints = sum(len(s.waypoints) for s in result.ir.lowering.trajectories)
         assert content.count("movej(") == total_waypoints
     print(f"  -> {content.count('movej(')} real movej() calls match the compiled skill's waypoint count [PASSED]")
+
+
+def test_urscript_backend_refuses_non_ur_targets(tmp_path):
+    result = _real_result("kuka_iiwa")
+    with pytest.raises(ValueError, match="only supports verified Universal Robots"):
+        BACKEND_REGISTRY.get("urscript").compile(result, tmp_path)
 
 
 def test_backend_validate_returns_real_diagnostics():

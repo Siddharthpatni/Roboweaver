@@ -5,28 +5,10 @@ RW502 (optimize/passes.py) for every skill category -- not just pick-and-place.
 """
 
 from roboweaver.compiler import SkillCompiler
+from roboweaver.benchmark.robobench import _CANONICAL_INSTRUCTIONS as _INSTRUCTIONS
 from roboweaver.ir import check_safety, build_ir
 from roboweaver.optimize import motion_cache
 from roboweaver.types import TaskType
-
-# One real instruction per NL-reachable category (matches benchmark/robobench.py's
-# canonical set), pre-fix.
-_INSTRUCTIONS = {
-    "PICK_AND_PLACE": "Pick up the red cube",
-    "TIGHTEN_BOLT": "Tighten the M8 bolt",
-    "OPEN_DOOR": "Open the door",
-    "TOOL_EXCHANGE": "Exchange the tool",
-    "INSPECT_SURFACE": "Inspect the surface of the panel",
-    "WELD_SEAM": "Weld the seam",
-    "PEGGING": "Insert the peg into the alignment hole",
-    "POURING_LIQUID": "Pour the liquid into the beaker",
-    "PACKAGING": "Pack the item into the carton",
-    "CNC_LOADING": "Load the workpiece into the CNC chuck",
-    "SURGERY_ASSIST": "Assist with the surgical instrument",
-    "SORTING": "Sort the item into the correct bin",
-    "CLEANING": "Clean the work surface",
-}
-
 
 def test_every_move_to_task_gets_a_real_trajectory_entry():
     print("\n[TEST 1] Testing every MOVE_TO task across every reachable category gets a real motion_plan entry...")
@@ -57,8 +39,8 @@ def test_trajectories_are_real_and_safety_verified():
     print("\n[TEST 3] Testing generalized trajectories pass the real safety pass (RW304 velocity limits)...")
     compiler = SkillCompiler(target_robot="franka_panda")
     skill = compiler.compile("Weld the seam", verbose=False)
-    ir = build_ir(skill.intent, compiler.robot_spec, raw_instruction="test")
-    diagnostics = check_safety(skill, ir, compiler.robot_spec)
+    ir = build_ir(skill.intent, compiler.robot_spec, raw_instruction="test", skill=skill)
+    diagnostics = check_safety(ir, compiler.robot_spec)
     velocity_violations = [d for d in diagnostics if d.code == "RW304"]
     assert velocity_violations == []
     # Real, distinct IK-solved joint configurations per task -- not placeholders.

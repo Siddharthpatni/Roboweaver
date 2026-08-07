@@ -24,9 +24,9 @@ from __future__ import annotations
 import dataclasses
 
 from roboweaver.compiler import SkillCompiler
-from roboweaver.hardware.registry_robots import ROBOT_REGISTRY, get_robot_spec
+from roboweaver.hardware.registry_robots import get_robot_spec
 from roboweaver.hardware.robot_spec import JointSpec, LinkSpec, RobotSpec
-from roboweaver.ir import build_ir, check_safety
+from roboweaver.ir import SkillCompilationError, build_ir, check_safety
 from roboweaver.ir.schema import Constraints
 from roboweaver.types import (
     Action,
@@ -39,8 +39,8 @@ from roboweaver.types import (
     TaskGraph,
 )
 
-REACHABLE_ROBOTS = ["franka_panda", "ur5e", "kuka_iiwa", "kinova_gen3", "abb_irb120", "pepper"]
-UNREACHABLE_ROBOTS = ["temi", "shadow_hand", "robotiq_hand"]
+REACHABLE_ROBOTS = ["franka_panda", "ur5e", "kuka_iiwa", "kinova_gen3", "abb_irb120"]
+UNREACHABLE_ROBOTS = ["temi", "pepper"]
 
 
 def _tiny_robot_spec(dof: int = 2) -> RobotSpec:
@@ -96,9 +96,9 @@ def test_unreachable_embodiments_are_refused_not_silently_accepted():
             compiler.compile_with_diagnostics(
                 "Pick the red cube and place it into the blue bin", verbose=False
             )
-        except Exception as exc:
+        except SkillCompilationError as exc:
             raised = True
-            assert "RW301" in str(exc) or "did not converge" in str(exc)
+            assert any(item.code in {"RW301", "RW601"} for item in exc.diagnostics)
         assert raised, f"{robot_id} should have been refused (IK never converges for this target) but wasn't"
     print(f"  -> {len(UNREACHABLE_ROBOTS)} embodiments correctly refused instead of silently accepted [PASSED]")
 
@@ -112,8 +112,8 @@ def test_joint_limit_violation_detected():
         "lift": IKSolution(joint_angles=[0.5, 0.5], residual=0.0001, iterations=5, success=True),
     }
     skill = _empty_skill(spec.dof, ik_results)
-    ir = build_ir(skill.intent, spec, raw_instruction="test")
-    diagnostics = check_safety(skill, ir, spec)
+    ir = build_ir(skill.intent, spec, raw_instruction="test", skill=skill)
+    diagnostics = check_safety(ir, spec)
     codes = [d.code for d in diagnostics]
     assert "RW302" in codes, f"expected RW302 for a 1.5rad joint on a [-1,1] limit, got {codes}"
     print("  -> Out-of-range joint configuration correctly flagged [PASSED]")
@@ -125,11 +125,11 @@ def test_payload_violation_detected():
     ik_results = {"grasp": IKSolution(joint_angles=[0.0, 0.0], residual=0.0, iterations=1, success=True)}
     skill = _empty_skill(spec.dof, ik_results)
     intent = skill.intent
-    ir = build_ir(intent, spec, raw_instruction="test")
+    ir = build_ir(intent, spec, raw_instruction="test", skill=skill)
     # RoboIR is frozen (ir/schema.py) -- dataclasses.replace() produces a new instance
     # with this one field overridden, rather than mutating `ir` in place.
     ir = dataclasses.replace(ir, constraints=Constraints(payload_kg=5.0, precision_mm=1.0))  # spec caps at 2.0kg
-    diagnostics = check_safety(skill, ir, spec)
+    diagnostics = check_safety(ir, spec)
     codes = [d.code for d in diagnostics]
     assert "RW303" in codes, f"expected RW303 for a 5.0kg payload on a 2.0kg-rated arm, got {codes}"
     print("  -> Payload exceeding rated capacity correctly flagged [PASSED]")
@@ -146,8 +146,8 @@ def test_velocity_limit_violation_detected():
         )
     }
     skill = _empty_skill(spec.dof, ik_results, trajectories)
-    ir = build_ir(skill.intent, spec, raw_instruction="test")
-    diagnostics = check_safety(skill, ir, spec)
+    ir = build_ir(skill.intent, spec, raw_instruction="test", skill=skill)
+    diagnostics = check_safety(ir, spec)
     codes = [d.code for d in diagnostics]
     assert "RW304" in codes, f"expected RW304 for a 100rad/s move on a 1.0rad/s-rated joint, got {codes}"
     print("  -> Trajectory exceeding declared max_velocity correctly flagged [PASSED]")
@@ -162,8 +162,8 @@ def test_workspace_violation_detected():
         )
     }
     skill = _empty_skill(spec.dof, ik_results)
-    ir = build_ir(skill.intent, spec, raw_instruction="test")
-    diagnostics = check_safety(skill, ir, spec)
+    ir = build_ir(skill.intent, spec, raw_instruction="test", skill=skill)
+    diagnostics = check_safety(ir, spec)
     codes = [d.code for d in diagnostics]
     assert "RW305" in codes, f"expected RW305 for a 5m target on a 0.6m-reach arm, got {codes}"
     violation = next(d for d in diagnostics if d.code == "RW305")
@@ -186,8 +186,8 @@ def test_singularity_warning_detected():
         )
     }
     skill = _empty_skill(spec.dof, ik_results)
-    ir = build_ir(skill.intent, spec, raw_instruction="test")
-    diagnostics = check_safety(skill, ir, spec)
+    ir = build_ir(skill.intent, spec, raw_instruction="test", skill=skill)
+    diagnostics = check_safety(ir, spec)
     codes = [d.code for d in diagnostics]
     assert "RW306" in codes, f"expected RW306 for a fully-extended configuration, got {codes}"
     print("  -> Near-singular configuration correctly flagged [PASSED]")

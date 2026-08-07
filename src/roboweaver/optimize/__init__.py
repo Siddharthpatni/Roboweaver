@@ -1,12 +1,10 @@
 """
 Compiler optimization + static-analysis infrastructure for CompiledSkill.
 
-RoboIR (ir/pass_manager.py) has no task/motion/behavior-tree fields yet -- those
-still live only on CompiledSkill (docs/COMPILER_ROADMAP.md Phase 2's deferred list).
-This package is a second, symmetric Pass Manager for CompiledSkill: same shape as
-ir/pass_manager.py (manager-measured timing, generation threading, a real trace),
-kept as its own small module rather than a generic refactor of the RoboIR one --
-see docs/COMPILER_ROADMAP.md Phase 3/4 for why.
+RoboIR now carries complete program and lowering data. This package remains a second,
+small Pass Manager for the pre-RoboIR ``CompiledSkill`` optimization boundary so
+trajectory transformations can be verified before ``build_ir()`` freezes their
+result into the target lowering.
 """
 
 from roboweaver.optimize.pass_manager import (
@@ -19,9 +17,11 @@ from roboweaver.optimize.pass_manager import (
 )
 from roboweaver.optimize.passes import (
     CompiledSkillVerificationPass,
+    BoundedFormalVerificationPass,
     WaypointDecimationPass,
     RedundantSegmentElisionPass,
 )
+from roboweaver.optimize.collision_pass import CollisionPlanningPass
 
 __all__ = [
     "SkillPass",
@@ -31,6 +31,8 @@ __all__ = [
     "SkillPipelineTrace",
     "SkillPassManager",
     "CompiledSkillVerificationPass",
+    "BoundedFormalVerificationPass",
     "WaypointDecimationPass",
     "RedundantSegmentElisionPass",
+    "CollisionPlanningPass",
 ]

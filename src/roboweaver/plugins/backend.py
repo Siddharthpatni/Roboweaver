@@ -82,17 +82,23 @@ class RobotBackend(ABC):
         from roboweaver.plugins.safety_kernel import SafetyKernel
         SafetyKernel.enforce(result)
 
+        simulated_protocols = {"sim", "simulation", "test"}
+        is_physical = protocol.lower() not in simulated_protocols
+        if is_physical:
+            self._validate_physical_deployment(result, skip_simulation_check)
+
         robot_spec = get_robot_spec(result.ir.execution.robot_id)
 
         if not skip_simulation_check:
             from roboweaver.runtime.validation import validate_in_simulation
-            sim_result = validate_in_simulation(result.skill, robot_spec)
+            sim_result = validate_in_simulation(result.ir, robot_spec)
             if not sim_result.success:
                 raise DeploymentRefused(
                     f"Simulation validation failed before deploy to {protocol}://{uri} -- "
                     f"refusing to send trajectories to real hardware. "
                     f"height_gained={sim_result.height_gained:.4f}m, "
-                    f"joint_limits_respected={sim_result.joint_limits_respected}.",
+                    f"joint_limits_respected={sim_result.joint_limits_respected}, "
+                    f"reason={sim_result.failure_reason or 'modeled success criteria not met'}.",
                     execution_result=sim_result,
                 )
 
@@ -102,8 +108,11 @@ class RobotBackend(ABC):
 
         if status.is_connected:
             try:
-                for segment_name, seg in result.skill.motion_plan.trajectories.items():
-                    dt = seg.duration / max(len(seg.waypoints) - 1, 1)
+                if result.ir.lowering is None:
+                    raise DeploymentRefused("RoboIR has no verified target lowering to deploy.")
+                for seg in result.ir.lowering.trajectories:
+                    segment_name = seg.task_description
+                    dt = seg.duration_s / max(len(seg.waypoints) - 1, 1)
                     if not bridge.send_trajectory(seg.waypoints, dt=dt):
                         raise DeploymentRefused(
                             f"Bridge rejected trajectory segment '{segment_name}' for "
@@ -114,6 +123,24 @@ class RobotBackend(ABC):
 
         return status
 
+    @staticmethod
+    def _validate_physical_deployment(result: "CompilationResult", skip_simulation_check: bool) -> None:
+        if skip_simulation_check:
+            raise DeploymentRefused("Physical deployment cannot bypass simulation validation.")
+        assumed_objects = [
+            obj.id for obj in result.ir.objects if obj.pose_source == "assumed_default"
+        ]
+        if assumed_objects:
+            raise DeploymentRefused(
+                "Physical deployment requires measured or user-specified object poses; "
+                f"assumed defaults remain for {assumed_objects}."
+            )
+        confidence = result.ir.program.confidence if result.ir.program else 0.0
+        if confidence < 0.5:
+            raise DeploymentRefused(
+                f"Physical deployment requires front-end confidence >= 0.5; got {confidence:.2f}."
+            )
+
 
 class Ros2Backend(RobotBackend):
     name = "ros2"
@@ -121,16 +148,17 @@ class Ros2Backend(RobotBackend):
     def metadata(self) -> dict[str, Any]:
         return {
             "name": "ros2",
-            "description": "ROS 2 package: action server, launch file, BehaviorTree XML",
+            "description": "ROS 2 package: FollowJointTrajectory client, launch file, BehaviorTree XML",
             "output": "ros2_package_dir",
         }
 
     def capabilities(self) -> list[str]:
-        return ["any_dof", "behavior_tree_xml", "action_server"]
+        return ["any_dof", "behavior_tree_xml", "follow_joint_trajectory_client"]
 
     def compile(self, result: "CompilationResult", output_dir: Path) -> Path:
         from roboweaver.codegen.ros2_gen import generate_ros2_package
-        return generate_ros2_package(result.skill, output_dir)
+        robot_spec = get_robot_spec(result.ir.execution.robot_id)
+        return generate_ros2_package(result.ir, output_dir, robot_spec=robot_spec)
 
 
 class UrScriptBackend(RobotBackend):
@@ -150,7 +178,7 @@ class UrScriptBackend(RobotBackend):
         from roboweaver.codegen.urscript_gen import generate_urscript
         robot_spec = get_robot_spec(result.ir.execution.robot_id)
         out_path = Path(output_dir) / f"{safe_identifier(result.ir.skill_id, default='skill')}.script"
-        return generate_urscript(result.skill, robot_spec, out_path)
+        return generate_urscript(result.ir, robot_spec, out_path)
 
 
 BACKEND_REGISTRY: PluginRegistry[RobotBackend] = PluginRegistry(kind="robot backend")

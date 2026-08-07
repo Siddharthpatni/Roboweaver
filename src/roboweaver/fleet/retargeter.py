@@ -5,11 +5,9 @@ Cross-Embodiment Trajectory Retargeter — retargets skills between heterogeneou
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
 
 from roboweaver.hardware import RobotSpec, NDOFIKSolver, WorkspaceSafetyGuard, forward_kinematics_ndof, get_robot_spec
-from roboweaver.types import CompiledSkill, MotionPlan, MotionSegment, TaskGraph
-from roboweaver.math3d import Vec3
+from roboweaver.types import CompiledSkill, MotionPlan, MotionSegment
 
 
 @dataclass

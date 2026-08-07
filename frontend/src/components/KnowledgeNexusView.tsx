@@ -61,14 +61,14 @@ export const KnowledgeNexusView: React.FC = () => {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-6xl space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
+      <div className="w-full space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <span className="kicker">Knowledge Nexus</span>
-            <h1 className="text-[19px] font-semibold text-white mt-1">ROS 2 package catalog</h1>
+            <span className="kicker">ROS package library</span>
+            <h1 className="text-[19px] font-semibold text-white mt-1">Find software for robots and tasks</h1>
             <p className="text-[13px] text-slate-400 mt-1.5 leading-relaxed max-w-xl">
-              Live index of ROS 2 packages, hardware drivers, and navigation/manipulation stacks, served
-              directly from the backend package catalog.
+              Browse the indexed ROS 2 packages, hardware drivers, and navigation or manipulation
+              software known to the compiler.
             </p>
           </div>
           <div className="app-card px-4 py-3 text-right shrink-0">
@@ -88,7 +88,7 @@ export const KnowledgeNexusView: React.FC = () => {
         <div className="app-card p-5 space-y-4">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-emerald-400" />
-            <h3 className="text-[13px] font-semibold text-slate-200">Architecture recommender</h3>
+            <h3 className="text-[13px] font-semibold text-slate-200">Package recommender</h3>
             <span className="text-[11px] text-slate-500">— keyword-matched, not ML-based</span>
           </div>
 

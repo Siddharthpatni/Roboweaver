@@ -172,13 +172,13 @@ export const TopNav: React.FC<TopNavProps> = ({ active, onNavigate, apiOnline })
           <div>{navButton(overview)}</div>
           <div>
             <div className="mb-2 flex items-center justify-between px-3">
-              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-600">Build pipeline</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-600">Main workflow</span>
               <span className="text-[9px] text-slate-700">4 stages</span>
             </div>
             <div className="space-y-1">{pipelineViews.map((view, index) => navButton(view, index + 1))}</div>
           </div>
           <div>
-            <div className="mb-2 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-600">Operations</div>
+            <div className="mb-2 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-600">More tools</div>
             <div className="space-y-1">{supportViews.map((view) => navButton(view))}</div>
           </div>
         </nav>
@@ -194,7 +194,7 @@ export const TopNav: React.FC<TopNavProps> = ({ active, onNavigate, apiOnline })
             <Brain className="h-4 w-4" />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-[12px] font-semibold text-slate-200">Local AI</span>
+            <span className="block text-[12px] font-semibold text-slate-200">Optional AI helper</span>
             <span className="block truncate text-[10.5px] text-slate-500">
               {ollamaAvailable ? `${aiStatus?.models.length ?? 0} models ready` : 'Ollama offline'}
             </span>
@@ -241,7 +241,7 @@ export const TopNav: React.FC<TopNavProps> = ({ active, onNavigate, apiOnline })
         </button>
       </header>
 
-      <aside className="hidden h-full w-64 shrink-0 flex-col border-r border-white/[0.065] bg-[#0b111b] lg:flex">
+      <aside className="hidden h-full w-[clamp(15rem,18vw,20rem)] shrink-0 flex-col border-r border-white/[0.065] bg-[#0b111b] lg:flex">
         {sidebarContent}
       </aside>
 

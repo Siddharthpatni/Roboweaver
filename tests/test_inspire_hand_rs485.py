@@ -12,7 +12,9 @@ Verifies:
 import shutil
 import tempfile
 from pathlib import Path
+import pytest
 from roboweaver.hardware import get_robot_spec, InspireHandRS485Driver
+from roboweaver.hardware.inspire_hand_rs485 import InspireHandCommError
 from roboweaver.codegen.inspire_ros2_gen import generate_inspire_hand_ros2_package
 from roboweaver.fleet import PromptToWorkcellBuilder, SystemPromptParser
 
@@ -32,10 +34,14 @@ def test_inspire_hand_hardware_spec():
 def test_inspire_hand_rs485_driver_and_gestures():
     """Verify RS485 Driver packet framing, actuator position control, and gesture library."""
     print("\n[TEST 2] Testing Inspire RH56F1-E2 RS485 Driver & Gesture Library...")
-    driver = InspireHandRS485Driver(port="/dev/ttyUSB0", baudrate=115200)
+    driver = InspireHandRS485Driver(
+        port="/definitely/not/a/serial/device",
+        baudrate=115200,
+        allow_simulation=True,
+    )
     state = driver.connect()
-    assert state.is_connected
-    assert driver.simulated  # Runs cleanly in loopback simulation when physical port is absent
+    assert state.is_connected is False
+    assert driver.simulated  # Simulation is explicit and never presented as hardware connectivity.
 
     # 1. Test manual 6-actuator position control
     driver.set_positions([500, 300, 700, 700, 0, 0])
@@ -51,6 +57,17 @@ def test_inspire_hand_rs485_driver_and_gestures():
         assert driver.state.gesture_active == gesture
     print("  -> Verified Dexterous Gesture Library (fist, pinch, precision_grip, cylindrical_grip, open) [PASSED]")
     driver.disconnect()
+
+
+def test_inspire_hand_connection_failure_is_fail_closed():
+    driver = InspireHandRS485Driver(port="/definitely/not/a/serial/device")
+    state = driver.connect()
+
+    assert state.is_connected is False
+    assert driver.simulated is False
+    assert driver.last_connect_error
+    with pytest.raises(InspireHandCommError, match="not connected"):
+        driver.set_gesture("open")
 
 
 def test_inspire_hand_ros2_package_generation():
@@ -99,7 +116,7 @@ def test_inspire_hand_prompt_builder():
         assert (pkg_path / "launch" / "workcell_orchestration.launch.py").exists()
         launch_txt = (pkg_path / "launch" / "workcell_orchestration.launch.py").read_text(encoding="utf-8")
         assert "namespace='/inspire_hand_rh56f1_e2'" in launch_txt
-        print(f"  -> Verified Prompt-to-Workcell Multi-Robot Package with Inspire Hand [PASSED]")
+        print("  -> Verified Prompt-to-Workcell Multi-Robot Package with Inspire Hand [PASSED]")
     finally:
         shutil.rmtree(out_dir, ignore_errors=True)
 

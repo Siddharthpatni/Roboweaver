@@ -7,7 +7,7 @@ import { TopNav } from '../components/nav/TopNav';
 import { viewMetaFor } from '../components/nav/viewMeta';
 import { AICopilotPanel } from '../components/AICopilotPanel';
 import { RoboWeaverAPI } from '../lib/api';
-import { ViewType, RobotProfile, NexusPackage, DiscoveredRobot, VersionInfo } from '../types';
+import { AccessInfo, ViewType, RobotProfile, NexusPackage, DiscoveredRobot, VersionInfo } from '../types';
 import {
   Code2,
   Database,
@@ -69,6 +69,10 @@ const RobotConnectView = dynamic(
   () => import('../components/RobotConnectView').then((m) => m.RobotConnectView),
   { ssr: false, loading: viewLoading }
 );
+const ResearchLabView = dynamic(
+  () => import('../components/ResearchLabView').then((m) => m.ResearchLabView),
+  { ssr: false, loading: viewLoading }
+);
 
 export default function Home() {
   const [activeView, setActiveView] = useState<ViewType>('overview');
@@ -77,6 +81,7 @@ export default function Home() {
   const [packages, setPackages] = useState<NexusPackage[]>([]);
   const [discovered, setDiscovered] = useState<DiscoveredRobot[]>([]);
   const [version, setVersion] = useState<VersionInfo | null>(null);
+  const [access, setAccess] = useState<AccessInfo | null>(null);
   const [graphNodeCount, setGraphNodeCount] = useState(0);
   const activeMeta = viewMetaFor(activeView);
 
@@ -103,6 +108,10 @@ export default function Home() {
     RoboWeaverAPI.version()
       .then(setVersion)
       .catch(() => setVersion(null));
+
+    RoboWeaverAPI.access()
+      .then(setAccess)
+      .catch(() => setAccess(null));
 
     RoboWeaverAPI.graph()
       .then((g) => setGraphNodeCount(g.nodes.length))
@@ -133,7 +142,7 @@ export default function Home() {
               onClick={() => setActiveView('compile')}
               className="btn-neon flex items-center gap-2 px-3.5 py-2 text-[12px]"
             >
-              <Code2 className="h-3.5 w-3.5" /> New compilation
+              <Code2 className="h-3.5 w-3.5" /> Build a program
             </button>
           </div>
         </header>
@@ -152,16 +161,17 @@ export default function Home() {
           {activeView === 'connect' && <RobotConnectView />}
           {activeView === 'twin' && <LiveSimulationView />}
           {activeView === 'benchmark' && <BenchmarkView />}
+          {activeView === 'research' && <ResearchLabView />}
 
           {activeView === 'overview' && (
             <div className="h-full overflow-y-auto">
-              <div className="mx-auto max-w-6xl space-y-8 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
+              <div className="w-full space-y-8 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
                 <section className="app-card grid overflow-hidden lg:grid-cols-[1.25fr_0.75fr]">
                   <div className="relative flex flex-col justify-center border-b border-white/[0.07] p-6 sm:p-8 lg:border-b-0 lg:border-r">
                     <div className="pointer-events-none absolute -left-28 -top-28 h-64 w-64 rounded-full bg-cyan-300/[0.055] blur-3xl" />
                     <div className="relative max-w-2xl">
                       <div className="mb-4 flex flex-wrap items-center gap-2">
-                        <span className="kicker">Compiler control center</span>
+                        <span className="kicker">Start here</span>
                         <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${
                           apiOnline
                             ? 'border-cyan-300/20 bg-cyan-300/[0.07] text-cyan-200'
@@ -171,24 +181,25 @@ export default function Home() {
                         </span>
                       </div>
                       <h2 className="max-w-xl text-balance text-2xl font-semibold leading-tight tracking-[-0.025em] text-white sm:text-[32px]">
-                        Build portable robot skills with evidence at every stage.
+                        Describe one job. See which robots can run it.
                       </h2>
                       <p className="mt-4 max-w-xl text-[13px] leading-6 text-slate-400">
-                        Turn plain-language intent into RoboIR, verify it against real fleet capabilities,
-                        inspect motion in simulation, and generate a ROS 2 BehaviorTree package.
+                        RoboWeaver turns your sentence into ordered robot actions, checks each selected
+                        robot, calculates motion, and prepares downloadable code. Assumptions and missing
+                        evidence are always shown separately.
                       </p>
                       <div className="mt-6 flex flex-col gap-2.5 sm:flex-row">
                         <button
                           onClick={() => setActiveView('compile')}
                           className="btn-neon flex items-center justify-center gap-2 px-4 py-2.5 text-[13px]"
                         >
-                          <Code2 className="h-4 w-4" /> Start a compilation
+                          <Code2 className="h-4 w-4" /> Build a robot program
                         </button>
                         <button
                           onClick={() => setActiveView('compare')}
                           className="flex items-center justify-center gap-2 rounded-[0.625rem] border border-white/[0.1] bg-white/[0.035] px-4 py-2.5 text-[13px] font-semibold text-slate-200 hover:border-white/[0.18] hover:bg-white/[0.06]"
                         >
-                          Compare fleet options <ArrowUpRight className="h-3.5 w-3.5" />
+                          Help me choose a robot <ArrowUpRight className="h-3.5 w-3.5" />
                         </button>
                       </div>
                     </div>
@@ -197,17 +208,17 @@ export default function Home() {
                   <div className="bg-[#0b121d]/70 p-5 sm:p-6">
                     <div className="mb-4 flex items-center justify-between">
                       <div>
-                        <p className="text-[12px] font-semibold text-slate-200">Verified build path</p>
-                        <p className="mt-0.5 text-[10.5px] text-slate-600">From request to deployable output</p>
+                        <p className="text-[12px] font-semibold text-slate-200">What happens after you click compile</p>
+                        <p className="mt-0.5 text-[10.5px] text-slate-600">A real compiler workflow, in plain language</p>
                       </div>
                       <span className="font-data text-[10px] text-cyan-300">RoboIR v{version?.ir_version ?? '—'}</span>
                     </div>
                     <div className="space-y-2">
                       {[
-                        { view: 'compile' as ViewType, step: '01', label: 'Parse intent', detail: 'Normalize task and constraints' },
-                        { view: 'compare' as ViewType, step: '02', label: 'Verify target', detail: 'Check capability compatibility' },
-                        { view: 'twin' as ViewType, step: '03', label: 'Inspect safely', detail: 'Review simulated motion' },
-                        { view: 'packages' as ViewType, step: '04', label: 'Generate package', detail: 'Export ROS 2 artifacts' },
+                        { view: 'compile' as ViewType, step: '01', label: 'Understand the request', detail: 'Find the action, objects, and limits' },
+                        { view: 'compile' as ViewType, step: '02', label: 'Make an action plan', detail: 'Create ordered executable tasks' },
+                        { view: 'compare' as ViewType, step: '03', label: 'Check each robot', detail: 'Plan motion and reject unsafe targets' },
+                        { view: 'compile' as ViewType, step: '04', label: 'Prepare the download', detail: 'Generate robot-ready output' },
                       ].map((stage) => (
                         <button
                           key={stage.step}
@@ -361,12 +372,12 @@ export default function Home() {
                     </div>
 
                     <div className="pt-3 border-t border-white/[0.06] flex items-center justify-between gap-3">
-                      <span className="text-[12px] text-slate-500">Test grasp kinematics before deploy?</span>
+                      <span className="text-[12px] text-slate-500">Test a modeled Inspire Hand grasp?</span>
                       <button
                         onClick={() => setActiveView('twin')}
                         className="shrink-0 px-3 py-1.5 rounded-lg bg-violet-500/10 hover:bg-violet-500/15 text-violet-300 text-[12px] font-medium border border-violet-500/20 transition-colors"
                       >
-                        Digital twin →
+                        Hand simulator →
                       </button>
                     </div>
                   </div>
@@ -419,16 +430,28 @@ export default function Home() {
 
           {activeView === 'settings' && (
             <div className="h-full overflow-y-auto">
-              <div className="mx-auto max-w-2xl space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
+              <div className="w-full space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
                 <div>
                   <span className="kicker">Settings</span>
-                  <h2 className="text-[19px] font-semibold text-white mt-1">Connection & scope</h2>
+                  <h2 className="text-[19px] font-semibold text-white mt-1">Runtime connection and versions</h2>
                 </div>
 
                 <div className="app-card divide-y divide-white/[0.06]">
                   <div className="px-4 py-3.5 flex items-center justify-between gap-3">
                     <span className="text-[13px] text-slate-400">Backend API base URL</span>
                     <code className="text-[12.5px] font-data text-emerald-400">{RoboWeaverAPI.baseUrl}</code>
+                  </div>
+                  <div className="px-4 py-3.5 flex items-center justify-between gap-3">
+                    <span className="text-[13px] text-slate-400">Access mode</span>
+                    <span className="text-right text-[12.5px] font-medium text-cyan-300">
+                      {access?.mode === 'lan' ? 'LAN · shared compiler' : access ? 'Local workstation' : 'Unknown'}
+                    </span>
+                  </div>
+                  <div className="px-4 py-3.5 flex items-center justify-between gap-3">
+                    <span className="text-[13px] text-slate-400">Physical control from browsers</span>
+                    <span className={`text-[12.5px] font-medium ${access?.hardware_control ? 'text-amber-300' : 'text-emerald-400'}`}>
+                      {access?.hardware_control ? 'Explicitly enabled' : 'Blocked'}
+                    </span>
                   </div>
                   <div className="px-4 py-3.5 flex items-center justify-between gap-3">
                     <span className="text-[13px] text-slate-400">Connection status</span>
@@ -464,6 +487,12 @@ export default function Home() {
                     <div className="px-4 py-3.5 flex items-center justify-between gap-3">
                       <span className="text-[13px] text-slate-400">Registered robots</span>
                       <code className="text-[12.5px] font-data text-slate-300">{version.registered_robots}</code>
+                    </div>
+                    <div className="px-4 py-3.5 flex items-center justify-between gap-3">
+                      <span className="text-[13px] text-slate-400">Native LLVM/MLIR tool</span>
+                      <code className={`text-[12.5px] font-data ${version.native_mlir.available ? 'text-emerald-400' : 'text-amber-300'}`}>
+                        {version.native_mlir.available ? version.native_mlir.version ?? 'available' : 'not installed'}
+                      </code>
                     </div>
                     <div className="px-4 py-3.5 flex items-center justify-between gap-3">
                       <span className="text-[13px] text-slate-400">Self-healing supervisor</span>

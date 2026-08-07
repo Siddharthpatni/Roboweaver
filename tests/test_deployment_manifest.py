@@ -5,11 +5,13 @@ docs/COMPILER_ROADMAP.md's v2 vision.
 """
 
 import json
+import hashlib
 import tarfile
 import tempfile
 from pathlib import Path
 
 from roboweaver.compiler import SkillCompiler
+from roboweaver.codegen.groot2 import export_groot2_ir
 from roboweaver.plugins.safety_kernel import SafetyKernel
 from roboweaver.registry.package import SkillPackage, SkillPackageMetadata
 
@@ -27,6 +29,12 @@ def test_build_deployment_manifest_reflects_real_diagnostics_and_claims():
     assert manifest["robot_id"] == "franka_panda"
     assert manifest["backend"] == "ros2"
     assert manifest["safety_kernel_verified"] is True  # compile_with_diagnostics already refused any error
+    canonical_ir = json.dumps(
+        result.ir.to_dict(), sort_keys=True, separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")
+    assert manifest["ir_sha256"] == hashlib.sha256(canonical_ir).hexdigest()
+    assert manifest["roboir"] == result.ir.to_dict()
+    assert manifest["collision_check"] is False
     assert manifest["diagnostic_summary"]["error_count"] == 0
     assert manifest["capability_claims"] == [c.to_dict() for c in result.ir.required_capabilities.claims]
     print(f"  -> real manifest: {manifest['diagnostic_summary']}, "
@@ -61,14 +69,21 @@ def test_export_archive_with_manifest_bundles_it_into_the_rwsp():
     )
     pkg = SkillPackage(meta, result.skill)
     with tempfile.TemporaryDirectory() as tmpdir:
-        archive = pkg.export_archive(Path(tmpdir) / "test.rwsp", deployment_manifest=manifest)
+        archive = pkg.export_archive(
+            Path(tmpdir) / "test.rwsp",
+            deployment_manifest=manifest,
+            roboir=result.ir,
+        )
         with tarfile.open(archive, "r:gz") as tar:
             names = tar.getnames()
             assert "deployment_manifest.json" in names
             extracted = tar.extractfile("deployment_manifest.json")
             on_disk = json.loads(extracted.read())
+            behavior = tar.extractfile("behavior_tree.xml")
+            behavior_xml = behavior.read().decode("utf-8")
         assert on_disk == manifest
         assert on_disk["backend"] == "urscript"
+        assert behavior_xml == export_groot2_ir(result.ir)
     print("  -> real deployment_manifest.json bundled into the .rwsp archive, round-trips exactly [PASSED]")
 
 

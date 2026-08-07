@@ -5,7 +5,7 @@ Provides:
 1. RS485 serial packet encoder & decoder with real CRC-16/MODBUS framing
 2. Multi-Actuator position, velocity, and grasping force control
 3. Built-in dexterous grasping gesture library (open, fist, pinch, precision_grip, etc.)
-4. Honest software fallback mode for testing when physical RS485 hardware is absent
+4. Explicit software simulation mode for testing when physical RS485 hardware is absent
 
 The wire framing here (`0x55 0xAA` sync + slave id + command + length + data + CRC-16)
 is a RoboWeaver-defined envelope, not the vendor's proprietary register map — Inspire
@@ -16,9 +16,9 @@ tests/test_inspire_hand_real_serial_protocol.py for a loopback proof against a
 protocol-accurate virtual peer using a pty pair — no physical hand required to verify
 the wire logic is correct.
 
-When no physical hand is present (or pyserial can't open the port), the driver falls
-back to a clearly-flagged software simulation (`self.simulated = True`) instead of
-silently pretending to be connected to hardware.
+Physical connection failure is fail-closed by default. Tests and the dedicated
+simulator may opt into software simulation with ``allow_simulation=True``; even in
+that mode ``state.is_connected`` remains false because no physical transport exists.
 """
 
 from __future__ import annotations
@@ -72,18 +72,31 @@ class InspireHandRS485Driver:
     CMD_SET_POSITIONS = 0x01
     CMD_READ_STATE = 0x04
 
-    def __init__(self, port: str = "/dev/ttyUSB0", baudrate: int = 115200, slave_id: int = 0x01, read_timeout_s: float = 0.2):
+    def __init__(
+        self,
+        port: str = "/dev/ttyUSB0",
+        baudrate: int = 115200,
+        slave_id: int = 0x01,
+        read_timeout_s: float = 0.2,
+        *,
+        allow_simulation: bool = False,
+    ):
         self.port = port
         self.baudrate = baudrate
         self.slave_id = slave_id
         self.read_timeout_s = read_timeout_s
         self.serial_conn: Any | None = None
+        self.allow_simulation = allow_simulation
         self.simulated: bool = False
         self.last_connect_error: str | None = None
         self.state = InspireHandState()
 
     def connect(self) -> InspireHandState:
-        """Connect to the Inspire RH56F1-E2 over a real RS485 serial port, or fall back to simulation."""
+        """Connect to a physical hand, optionally enabling explicit simulation.
+
+        ``state.is_connected`` always describes the physical RS485 transport. A
+        caller that intentionally requested simulation can inspect ``simulated``.
+        """
         try:
             import serial
             self.serial_conn = serial.Serial(
@@ -98,11 +111,10 @@ class InspireHandRS485Driver:
             self.last_connect_error = None
             self.state.is_connected = True
         except Exception as exc:
-            # No physical hand reachable at this port (missing hardware, no pyserial, permission
-            # denied, etc.) — fall back to software simulation instead of faking a connection.
-            self.simulated = True
+            self.serial_conn = None
+            self.simulated = self.allow_simulation
             self.last_connect_error = f"{type(exc).__name__}: {exc}"
-            self.state.is_connected = True
+            self.state.is_connected = False
 
         return self.state
 
@@ -114,6 +126,16 @@ class InspireHandRS485Driver:
             except Exception:
                 pass
         self.state.is_connected = False
+
+    def _require_available(self) -> None:
+        if self.state.is_connected and self.serial_conn is not None:
+            return
+        if self.simulated:
+            return
+        reason = f" ({self.last_connect_error})" if self.last_connect_error else ""
+        raise InspireHandCommError(
+            "Inspire hand is not connected and simulation was not enabled" + reason
+        )
 
     def build_rs485_packet(self, cmd: int, data_bytes: bytes) -> bytes:
         """Build a framed RS485 packet: [0x55, 0xAA, slave_id, cmd, len, data..., crc_lo, crc_hi]."""
@@ -178,6 +200,7 @@ class InspireHandRS485Driver:
         """
         if len(positions) != 6:
             raise ValueError("Inspire RH56F1-E2 requires exactly 6 actuator positions (0-1000)")
+        self._require_available()
 
         clamped_pos = [max(0, min(1000, int(p))) for p in positions]
 
@@ -211,6 +234,7 @@ class InspireHandRS485Driver:
 
     def read_state(self) -> InspireHandState:
         """Query real-time actuator positions and current draw. Real round trip when hardware is connected."""
+        self._require_available()
         if not self.simulated and self.serial_conn:
             packet = self.build_rs485_packet(cmd=self.CMD_READ_STATE, data_bytes=b"")
             self.serial_conn.write(packet)

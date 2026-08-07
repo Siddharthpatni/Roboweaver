@@ -168,6 +168,8 @@ class OllamaManager:
     """Centralized client for all Ollama interactions. Singleton-friendly but
     not enforced — tests construct separate instances with different hosts."""
 
+    provider = "ollama"
+
     def __init__(self, host: str | None = None, default_model: str | None = None):
         self.host = _validate_http_origin(host or _config_value("OLLAMA_HOST", DEFAULT_HOST))
         self.default_model = default_model or _config_value("ROBOWEAVER_MODEL_DEFAULT", DEFAULT_MODEL)
@@ -332,8 +334,7 @@ class OllamaManager:
             "stream": False,
             "options": {"temperature": temperature},
         }
-        if system:
-            body["system"] = system
+        body.update({"system": system} if system else {})
         if json_mode:
             body["format"] = "json"
 
@@ -404,8 +405,7 @@ class OllamaManager:
             "stream": True,
             "options": {"temperature": temperature},
         }
-        if system:
-            body["system"] = system
+        body.update({"system": system} if system else {})
         req = urllib.request.Request(
             f"{self.host}/api/generate",
             data=json.dumps(body).encode("utf-8"),

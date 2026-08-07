@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 from roboweaver.hardware.registry_robots import ROBOT_REGISTRY
-from roboweaver.knowledge.ingest_registry import build_graph_from_registry
+from roboweaver.knowledge.ingest_registry import _REACHABLE_CATEGORIES, build_graph_from_registry
 from roboweaver.knowledge.obsidian_export import export_to_obsidian
 from roboweaver.knowledge.ontology import NodeType
 from roboweaver.knowledge.package_nexus import RoboticsPackageNexus
@@ -20,10 +20,11 @@ def test_ingestion_produces_real_counts_matching_live_registries():
     distinct_robot_ids = {spec.id for spec in ROBOT_REGISTRY.values()}
     assert len(graph.find_nodes_by_type(NodeType.ROBOT)) == len(distinct_robot_ids)
     assert len(graph.find_nodes_by_type(NodeType.PACKAGE)) == len(RoboticsPackageNexus.PACKAGE_CATALOG)
-    assert len(graph.find_nodes_by_type(NodeType.SKILL)) == 17  # every reachable category, incl. the 4 gap-fixed ones
+    skill_count = len(_REACHABLE_CATEGORIES)
+    assert len(graph.find_nodes_by_type(NodeType.SKILL)) == skill_count
     assert len(graph.edges) > 0
     print(f"  -> {len(distinct_robot_ids)} real robots, {len(RoboticsPackageNexus.PACKAGE_CATALOG)} "
-          f"real packages, 17 real skills, {len(graph.edges)} real edges [PASSED]")
+          f"real packages, {skill_count} real skills, {len(graph.edges)} real edges [PASSED]")
 
 
 def test_package_compatible_with_edges_match_real_data():
@@ -35,7 +36,7 @@ def test_package_compatible_with_edges_match_real_data():
     }
     expected_targets = {f"robot_{rid}" for rid in nav2.compatible_robots if f"robot_{rid}" in graph.nodes}
     assert real_targets == expected_targets
-    print(f"  -> nav2_bringup's real edges exactly match its declared compatible_robots [PASSED]")
+    print("  -> nav2_bringup's real edges exactly match its declared compatible_robots [PASSED]")
 
 
 def test_force_torque_skill_only_connects_to_robots_that_declare_the_sensor():
@@ -47,7 +48,7 @@ def test_force_torque_skill_only_connects_to_robots_that_declare_the_sensor():
         assert robot_node.properties["has_force_torque_sensor"] is True
     # temi has no force/torque sensor -- must NOT be connected.
     assert "robot_temi" not in tighten_targets
-    print(f"  -> TIGHTEN_BOLT connects only to real force/torque-capable robots [PASSED]")
+    print("  -> TIGHTEN_BOLT connects only to real force/torque-capable robots [PASSED]")
 
 
 def test_find_path_returns_a_real_multi_hop_path():

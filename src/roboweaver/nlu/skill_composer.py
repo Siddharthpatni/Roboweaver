@@ -143,30 +143,12 @@ class SkillComposer:
     def _parse_composition(self, instruction: str, resp: Any) -> SkillComposition:
         """Parse the LLM's JSON array into structured ComposedSteps."""
         raw = resp.text or ""
-
-        # Try to extract JSON array from the response
-        try:
-            parsed = loads_strict(raw)
-        except json.JSONDecodeError:
-            # Try to find a JSON array in the response
-            match = re.search(r'\[.*\]', raw, re.DOTALL)
-            if match:
-                try:
-                    parsed = loads_strict(match.group(0))
-                except json.JSONDecodeError:
-                    return SkillComposition(
-                        original_instruction=instruction,
-                        error=f"Model output was not valid JSON: {raw[:200]}",
-                        model=resp.model,
-                        latency_s=resp.latency_s,
-                    )
-            else:
-                return SkillComposition(
-                    original_instruction=instruction,
-                    error=f"Model output contained no JSON array: {raw[:200]}",
-                    model=resp.model,
-                    latency_s=resp.latency_s,
-                )
+        parsed, parse_error = self._decode_step_list(raw)
+        if parse_error:
+            return SkillComposition(
+                original_instruction=instruction, error=parse_error,
+                model=resp.model, latency_s=resp.latency_s,
+            )
 
         # Handle both list and dict-with-steps responses
         if isinstance(parsed, dict):
@@ -179,8 +161,43 @@ class SkillComposer:
                 latency_s=resp.latency_s,
             )
 
-        steps = []
-        robots_used = set()
+        steps, robots_used = self._validated_steps(parsed)
+
+        if not steps:
+            return SkillComposition(
+                original_instruction=instruction,
+                error="Model returned an empty step list.",
+                model=resp.model,
+                latency_s=resp.latency_s,
+            )
+
+        choreography = self._build_choreography_prompt(instruction, steps)
+        return SkillComposition(
+            original_instruction=instruction,
+            steps=steps,
+            suggested_robots=sorted(robots_used),
+            choreography_prompt=choreography,
+            model=resp.model,
+            latency_s=resp.latency_s,
+        )
+
+    @staticmethod
+    def _decode_step_list(raw: str) -> tuple[Any, str | None]:
+        try:
+            return loads_strict(raw), None
+        except json.JSONDecodeError:
+            match = re.search(r'\[.*\]', raw, re.DOTALL)
+            if not match:
+                return None, f"Model output contained no JSON array: {raw[:200]}"
+            try:
+                return loads_strict(match.group(0)), None
+            except json.JSONDecodeError:
+                return None, f"Model output was not valid JSON: {raw[:200]}"
+
+    @staticmethod
+    def _validated_steps(parsed: list[Any]) -> tuple[list[ComposedStep], set[str]]:
+        steps: list[ComposedStep] = []
+        robots_used: set[str] = set()
         valid_robot_ids = set(ROBOT_REGISTRY.keys())
 
         for i, item in enumerate(parsed):
@@ -226,25 +243,7 @@ class SkillComposer:
                 reasoning=reasoning,
             ))
 
-        if not steps:
-            return SkillComposition(
-                original_instruction=instruction,
-                error="Model returned an empty step list.",
-                model=resp.model,
-                latency_s=resp.latency_s,
-            )
-
-        # Generate choreography prompt for the WorkcellBuilder
-        choreography = self._build_choreography_prompt(instruction, steps)
-
-        return SkillComposition(
-            original_instruction=instruction,
-            steps=steps,
-            suggested_robots=sorted(robots_used),
-            choreography_prompt=choreography,
-            model=resp.model,
-            latency_s=resp.latency_s,
-        )
+        return steps, robots_used
 
     def _build_choreography_prompt(self, instruction: str, steps: list[ComposedStep]) -> str:
         """Generate the natural-language prompt that the WorkcellBuilder's

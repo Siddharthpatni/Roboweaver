@@ -45,9 +45,21 @@ class SkillIntent:
     """
     action: Action
     object_name: str
-    parameters: dict[str, float] = field(default_factory=dict)
+    parameters: dict[str, Any] = field(default_factory=dict)
     confidence: float = 1.0
     parse_warnings: list[str] = field(default_factory=list)
+
+
+def supplied_pose_satisfies_perception(intent: SkillIntent) -> bool:
+    """Whether one complete user pose replaces the template's locate-object step.
+
+    This is deliberately narrow. Sorting, pouring, insertion, navigation, and
+    compound placement still need classification, secondary-object geometry, or
+    localization evidence; one x/y/z triple cannot satisfy those contracts.
+    """
+    return intent.action is Action.PICK and all(
+        key in intent.parameters for key in ("x_m", "y_m", "z_m")
+    )
 
 
 # ─── Task Graph ────────────────────────────────────────────────────────
@@ -89,6 +101,7 @@ class IKResult:
     iterations: int
     success: bool = True
     target_pos: Sequence[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    solver: str = "damped_pseudoinverse_ik"
 
 
 IKSolution = IKResult
@@ -112,6 +125,10 @@ class MotionPlan:
     ik_results: dict[str, IKResult]              # name → IK solution
     trajectories: dict[str, TrajectorySegment]   # name → trajectory
     robot_model: str = "panda"
+    lowerer: str = "serial_arm"
+    collision_checked: bool = False
+    scene_digest: str | None = None
+    legalization_trace: tuple[str, ...] = ()
 
 
 # ─── Behavior Tree ────────────────────────────────────────────────────
@@ -144,6 +161,22 @@ class CompiledSkill:
     behavior_tree: BTNode
 
 
+@dataclass(frozen=True)
+class PortableSkill:
+    """Target-independent compiler front-end output.
+
+    A PortableSkill contains only semantics: parsed intent, ordered tasks and
+    behavior. It deliberately has no RobotSpec, IK solution, joint waypoint or
+    controller selection. ``SkillCompiler.lower()`` binds it to one concrete
+    embodiment and performs motion planning and safety verification there.
+    """
+
+    intent: SkillIntent
+    task_graph: TaskGraph
+    behavior_tree: BTNode
+    raw_instruction: str
+
+
 @dataclass
 class ExecutionResult:
     """Outcome of executing a skill in simulation."""
@@ -156,6 +189,10 @@ class ExecutionResult:
     frames: list[str] = field(default_factory=list)
     telemetry_frame_count: int = 0
     recovery_events: list[str] = field(default_factory=list)
+    validation_level: str = "unvalidated"
+    validated_claims: list[str] = field(default_factory=list)
+    unsupported_claims: list[str] = field(default_factory=list)
+    failure_reason: str | None = None
 
 
 def estimate_cycle_time(skill: CompiledSkill) -> float:

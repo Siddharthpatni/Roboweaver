@@ -1,13 +1,14 @@
 """
-Generalized N-DOF Kinematics Engine for Arbitrary Robot Embodiments.
+Generalized N-DOF Kinematics Engine for serial-chain robot profiles.
 
-Computes N-DOF Forward Kinematics, 3xN Position Jacobians, and Damped Pseudoinverse IK
-with nullspace optimization for redundant (7-DOF+) arms.
+Computes N-DOF forward kinematics, 3xN position Jacobians, and damped-pseudoinverse
+IK for the registry's serial-chain approximation. Branched humanoids, differential
+drives, and multi-finger trees require dedicated lowerers and are not modeled
+faithfully by this module.
 """
 
 from __future__ import annotations
 
-import math
 from typing import Sequence
 
 from roboweaver.hardware.robot_spec import RobotSpec
@@ -15,7 +16,7 @@ from roboweaver.math3d import Mat3, Transform3D, Vec3
 
 
 def forward_kinematics_ndof(spec: RobotSpec, q: Sequence[float]) -> Transform3D:
-    """Compute FK transform for an N-DOF robot defined by RobotSpec."""
+    """Compute FK for the serial-chain approximation declared by ``RobotSpec``."""
     n = min(spec.dof, len(q))
     curr_tf = Transform3D(Mat3.identity(), Vec3(0, 0, spec.base_height_m))
 
@@ -75,7 +76,8 @@ class NDOFIKSolver:
     """Generalized N-DOF Inverse Kinematics Solver.
 
     V2 improvements:
-    - **Multi-seed IK**: tries 5 seeds (clamped-zero + 4 random within joint limits)
+    - **Multi-seed IK**: tries 5 deterministic, well-spaced seeds (clamped-zero plus
+      4 joint-limit samples)
       and picks the solution with the lowest residual.  Dramatically improves solve
       rates for redundant arms where the zero-seed lands in a bad basin.
     - **Adaptive damping**: starts low and increases when the solver stalls near a
@@ -85,12 +87,20 @@ class NDOFIKSolver:
     def __init__(self, spec: RobotSpec):
         self.spec = spec
 
-    def _random_seed(self) -> list[float]:
-        """Generate a random seed within joint limits using a simple LCG so we
-        don't add a new runtime dependency on numpy/random just for IK seeding."""
-        import random
+    def _deterministic_seed(self, seed_index: int) -> list[float]:
+        """Generate a reproducible, well-spaced seed inside every joint range.
+
+        Compiler output must not depend on process-global PRNG state. Irrational
+        rotations distribute the samples without a random dependency while keeping
+        the exact same source, profile, and solver settings bit-for-bit repeatable.
+        """
         limits = self.spec.get_joint_limits()
-        return [random.uniform(lo, hi) for lo, hi in limits[:self.spec.dof]]
+        golden = 0.6180339887498949
+        silver = 0.4142135623730950
+        return [
+            lo + (hi - lo) * (((seed_index + 1) * golden + (joint_index + 1) * silver) % 1.0)
+            for joint_index, (lo, hi) in enumerate(limits[:self.spec.dof])
+        ]
 
     def _clamped_zero_seed(self) -> list[float]:
         """Zero clamped into each joint's declared range."""
@@ -117,13 +127,14 @@ class NDOFIKSolver:
 
         n = self.spec.dof
 
-        # Build seed list: explicit seed first, then clamped-zero, then randoms
+        # Build a stable seed list: explicit seed first, then clamped-zero, then
+        # deterministic joint-limit samples. Never consume process-global randomness.
         seeds: list[list[float]] = []
         if seed_q is not None and len(seed_q) == n:
             seeds.append(list(seed_q))
         seeds.append(self._clamped_zero_seed())
         while len(seeds) < num_seeds:
-            seeds.append(self._random_seed())
+            seeds.append(self._deterministic_seed(len(seeds) - 1))
 
         global_best_q: list[float] = seeds[0]
         global_best_err = float("inf")
@@ -182,13 +193,9 @@ class NDOFIKSolver:
             if err_norm < tol:
                 return True, best_q, err_norm, iteration + 1
 
-            # Adaptive damping: increase when stalling (near singularity)
-            if stall_count > 10:
-                current_damping = min(current_damping * 2.0, 0.1)
-                stall_count = 0
-            elif err_norm < prev_err * 0.95:
-                # Good progress — reduce damping for faster convergence
-                current_damping = max(current_damping * 0.8, damping * 0.1)
+            current_damping, stall_count = self._adapt_damping(
+                stall_count, err_norm, prev_err, current_damping, damping,
+            )
 
             prev_err = err_norm
 
@@ -248,3 +255,17 @@ class NDOFIKSolver:
 
         return best_err < tol * 5, best_q, best_err, max_iter
 
+    @staticmethod
+    def _adapt_damping(
+        stall_count: int,
+        error: float,
+        previous_error: float,
+        current: float,
+        baseline: float,
+    ) -> tuple[float, int]:
+        """Update singularity damping independently from the solve loop."""
+        if stall_count > 10:
+            return min(current * 2.0, 0.1), 0
+        if error < previous_error * 0.95:
+            return max(current * 0.8, baseline * 0.1), stall_count
+        return current, stall_count

@@ -9,9 +9,7 @@ Provides:
 """
 
 from __future__ import annotations
-import time
 from dataclasses import dataclass
-from typing import Any
 from roboweaver.hardware.inspire_hand_rs485 import InspireHandRS485Driver, InspireHandState
 
 
@@ -37,7 +35,11 @@ class InspireHandSimulator:
     }
 
     def __init__(self, port: str = "/dev/ttyUSB0", baudrate: int = 115200):
-        self.driver = InspireHandRS485Driver(port=port, baudrate=baudrate)
+        self.driver = InspireHandRS485Driver(
+            port=port,
+            baudrate=baudrate,
+            allow_simulation=True,
+        )
         self.driver.connect()
         self.current_object: SimulatedObject | None = None
         self.time_elapsed: float = 0.0
@@ -97,7 +99,7 @@ class InspireHandSimulator:
             "╔═════════════════════════════════════════════════════════════════════════════════╗",
             "║             INSPIRE ROBOTS RH56F1-E2 (RS485) DEXTEROUS HAND SIMULATOR           ║",
             "╠═════════════════════════════════════════════════════════════════════════════════╣",
-            f"║ BUS STATUS : CONNECTED (115200 Baud)    SIMULATION MODE: HIGH-FIDELITY ACTIVE   ║",
+            "║ BUS STATUS : CONNECTED (115200 Baud)    SIMULATION MODE: HIGH-FIDELITY ACTIVE   ║",
             f"║ GESTURE    : {state.gesture_active.upper().ljust(15)}            ELAPSED TIME   : {self.time_elapsed:5.2f} s               ║",
             "╠═════════════════════════════════════════════════════════════════════════════════╣",
         ]
@@ -117,7 +119,7 @@ class InspireHandSimulator:
             lines.append(f"║ GRASP STATUS   : {self.current_object.status.ljust(35)}  STABILITY  : {(self.stability_score * 100.0):5.1f}%         ║")
         else:
             lines.append(f"║ TARGET OBJECT  : NONE                      TOTAL FORCE: {total_force:6.2f} N          ║")
-            lines.append(f"║ GRASP STATUS   : OPEN WORKSPACE            STABILITY  : 100.0%         ║")
+            lines.append("║ GRASP STATUS   : OPEN WORKSPACE            STABILITY  : 100.0%         ║")
         lines.append("╚═════════════════════════════════════════════════════════════════════════════════╝")
 
         return "\n".join(lines)

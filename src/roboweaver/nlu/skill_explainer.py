@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from roboweaver.nlu.ollama_manager import OllamaManager, OllamaResponse, get_manager
+from roboweaver.nlu.ollama_manager import OllamaManager, get_manager
 
 
 @dataclass

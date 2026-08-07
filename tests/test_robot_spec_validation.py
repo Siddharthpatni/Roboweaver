@@ -55,6 +55,17 @@ def test_every_registered_robot_is_valid(robot_id):
     assert problems == [], f"{robot_id}: {problems}"
 
 
+def test_universal_preview_is_not_a_branded_robot_alias():
+    reference = get_robot_spec("universal")
+    ur5e = get_robot_spec("ur5e")
+
+    assert reference.id == "generic_6dof"
+    assert reference.manufacturer == "RoboWeaver Reference Contract"
+    assert reference.joints[0].name == "axis_1"
+    assert reference is not ur5e
+    assert reference.joints != ur5e.joints
+
+
 def test_distinct_profiles_do_not_expose_aliases_as_duplicate_robots():
     profiles = distinct_robot_specs()
     ids = [profile.id for profile in profiles]
@@ -117,6 +128,24 @@ def test_nonpositive_link_mass_is_detected():
     spec = _minimal_spec()
     spec.links[0] = LinkSpec("l1", 0.2, 0.0)
     assert any("mass must be positive" in p for p in spec.validate())
+
+
+def test_boolean_forbidden_bounds_are_rejected_as_non_numeric():
+    spec = _minimal_spec(forbidden_joint_ranges={0: (False, 0.5)})
+    assert any("must be numeric" in problem for problem in spec.validate())
+
+
+@pytest.mark.parametrize(
+    ("ranges", "message"),
+    [
+        ({2: (-0.1, 0.1)}, "outside dof"),
+        ({0: (1.0, -1.0)}, "inverted"),
+        ({0: (float("inf"), 2.0)}, "finite"),
+    ],
+)
+def test_invalid_forbidden_joint_ranges_are_detected(ranges, message):
+    problems = _minimal_spec(forbidden_joint_ranges=ranges).validate()
+    assert any(message in problem for problem in problems)
 
 
 def test_registry_import_fails_loudly_on_a_broken_spec():

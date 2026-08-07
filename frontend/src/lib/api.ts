@@ -4,6 +4,7 @@ import {
   NexusRecommendation,
   WorkcellBuildResult,
   CompiledSkillResult,
+  UniversalCompileMatrix,
   SimObjectProfile,
   SimulateResult,
   CompilationFailedError,
@@ -11,6 +12,7 @@ import {
   RobotFKResult,
   DiscoveryResult,
   ConnectionResult,
+  ConnectionCodeResult,
   NetworkInfo,
   ConnectionAdvice,
   DiscoveredRobot,
@@ -29,6 +31,11 @@ import {
   AIModelsResult,
   AIEnrichmentResult,
   AIModelMutationResult,
+  AccessInfo,
+  ExperimentPlanResult,
+  ObservabilityResult,
+  ResearchStatusResult,
+  ResearchEvaluationResult,
 } from '../types';
 
 // Same-origin by default: the Next.js server route attaches the backend token,
@@ -44,6 +51,7 @@ const API_BASE = process.env.NEXT_PUBLIC_ROBOWEAVER_API ?? '/api/roboweaver';
 const TIMEOUT_FAST_MS = 8_000; // registry lookups, simple queries
 const TIMEOUT_SCAN_MS = 30_000; // LAN subnet sweep (backend caps at 1024 hosts)
 const TIMEOUT_LLM_MS = 60_000; // must exceed the backend's own 45s provider timeout
+const TIMEOUT_CODEGEN_MS = 70_000; // one bounded provider review plus adapter generation
 const TIMEOUT_CONNECT_MS = 15_000; // TCP/ROS2 bridge probes
 
 /** Raised when the client gives up before the server responds. Distinguished
@@ -77,10 +85,15 @@ async function fetchWithTimeout(
 
 async function getJSON<T>(path: string, timeoutMs: number = TIMEOUT_FAST_MS): Promise<T> {
   const res = await fetchWithTimeout(path, timeoutMs);
+  const body = await res.json();
   if (!res.ok) {
-    throw new Error(`RoboWeaver API ${path} responded ${res.status}`);
+    const diagnostics = Array.isArray(body?.diagnostics)
+      ? body.diagnostics.map((item: { code?: string; message?: string }) =>
+          `${item.code ?? 'error'}: ${item.message ?? 'Compilation failed'}`).join(' ')
+      : null;
+    throw new Error(diagnostics ?? body?.error ?? `RoboWeaver API ${path} responded ${res.status}`);
   }
-  return res.json() as Promise<T>;
+  return body as T;
 }
 
 async function compileJSON(path: string, timeoutMs: number = TIMEOUT_FAST_MS): Promise<CompiledSkillResult> {
@@ -198,6 +211,32 @@ export const RoboWeaverAPI = {
         (explainAI ? '&explain=1' : ''),
       explainAI ? TIMEOUT_LLM_MS : TIMEOUT_FAST_MS,
     ),
+  compileMatrix: (instruction: string, robots?: string[]) =>
+    getJSON<UniversalCompileMatrix>(
+      `/api/compile-matrix?instruction=${encodeURIComponent(instruction)}` +
+        (robots && robots.length ? `&robots=${encodeURIComponent(robots.join(','))}` : ''),
+      TIMEOUT_SCAN_MS,
+    ),
+  /** Compile and download a real backend artifact derived from verified RoboIR. */
+  artifact: async (
+    instruction: string,
+    robot: string,
+    backend: 'ros2' | 'urscript',
+  ): Promise<{ blob: Blob; filename: string }> => {
+    const path = `/api/artifact?instruction=${encodeURIComponent(instruction)}` +
+      `&robot=${encodeURIComponent(robot)}&backend=${encodeURIComponent(backend)}`;
+    const res = await fetchWithTimeout(path, TIMEOUT_SCAN_MS);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null) as { reason?: string; error?: string } | null;
+      throw new Error(body?.reason ?? body?.error ?? `RoboWeaver API ${path} responded ${res.status}`);
+    }
+    const disposition = res.headers.get('content-disposition') ?? '';
+    const match = /filename="?([^";]+)"?/i.exec(disposition);
+    return {
+      blob: await res.blob(),
+      filename: match?.[1] ?? `roboweaver-${robot}.${backend === 'ros2' ? 'zip' : 'script'}`,
+    };
+  },
   /** Real cost figures for one instruction on one robot (optimize/cost_model.py). */
   cost: (instruction: string, robot: string = 'franka_panda') =>
     getJSON<CompiledSkillCostResult>(
@@ -219,6 +258,15 @@ export const RoboWeaverAPI = {
     getJSON<BenchmarkReportResult>(
       `/api/benchmark${robots && robots.length ? `?robots=${encodeURIComponent(robots.join(','))}` : ''}`,
       TIMEOUT_SCAN_MS
+    ),
+  researchStatus: () => getJSON<ResearchStatusResult>('/api/research/status'),
+  observability: () => getJSON<ObservabilityResult>('/api/observability'),
+  researchEvaluation: () => getJSON<ResearchEvaluationResult>('/api/research/benchmark', TIMEOUT_SCAN_MS),
+  planExperiment: (objective: string, useAI: boolean = true) =>
+    postJSON<ExperimentPlanResult>(
+      '/api/research/plan',
+      { objective, use_ai: useAI },
+      TIMEOUT_LLM_MS,
     ),
   /** Real knowledge graph built from the live registries (knowledge/ingest_registry.py). */
   graph: () => getJSON<KnowledgeGraphResult>('/api/graph'),
@@ -266,8 +314,14 @@ export const RoboWeaverAPI = {
     getJSON<DiscoveryResult>(`/api/discover?subnet=${encodeURIComponent(subnet)}`, TIMEOUT_SCAN_MS),
   network: () => getJSON<NetworkInfo>('/api/network'),
   version: () => getJSON<VersionInfo>('/api/version'),
+  access: async (): Promise<AccessInfo> => {
+    const res = await fetch('/api/access', { cache: 'no-store' });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body?.error ?? `Access policy responded ${res.status}`);
+    return body as AccessInfo;
+  },
   /** Ask an LLM to map a discovered endpoint onto a registry robot + protocol. */
-  adviseConnection: (robot: DiscoveredRobot, provider: string, model?: string) =>
+  adviseConnection: (robot: DiscoveredRobot, provider: 'ollama' | 'openrouter', model?: string) =>
     getJSON<ConnectionAdvice>(
       `/api/connect/advise?host=${encodeURIComponent(robot.host)}` +
         `&port=${robot.port}` +
@@ -281,6 +335,18 @@ export const RoboWeaverAPI = {
     ),
   connectRobot: (robot: string, protocol: string, uri: string) =>
     connectJSON({ robot, protocol, uri }),
+  /** Generate a deterministic no-motion connection adapter plus an optional AI review. */
+  generateConnectionCode: (
+    robot: string,
+    protocol: 'ros2' | 'sim',
+    uri: string,
+    provider: 'none' | 'ollama' | 'openrouter',
+    aiReview: boolean,
+  ) => postJSON<ConnectionCodeResult>(
+    '/api/connect/codegen',
+    { robot, protocol, uri, provider, ai_review: aiReview },
+    aiReview ? TIMEOUT_CODEGEN_MS : TIMEOUT_FAST_MS,
+  ),
   robotModel: (id: string) => getJSON<RobotModel>(`/api/robots/${encodeURIComponent(id)}/model`),
   /** Downloads the URDF text derived from the robot's real kinematic spec — not
    * an LLM-generated mesh; see codegen/urdf_gen.py for why. */

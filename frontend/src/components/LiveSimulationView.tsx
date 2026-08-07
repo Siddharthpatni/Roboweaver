@@ -92,13 +92,13 @@ export const LiveSimulationView: React.FC = () => {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-6xl space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
+      <div className="w-full space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
         <div>
-          <span className="kicker">Digital Twin</span>
-          <h1 className="text-[19px] font-semibold text-white mt-1">Inspire Hand grasp physics</h1>
+          <span className="kicker">Hand simulator</span>
+          <h1 className="text-[19px] font-semibold text-white mt-1">Test an Inspire Hand grasp in software</h1>
           <p className="text-[13px] text-slate-400 mt-1.5 leading-relaxed max-w-2xl">
-            Every gesture below runs the real <code className="font-data text-slate-300">InspireHandSimulator</code> grasp
-            stability engine on the backend — actuator forces, current draw, and slip risk are computed, not hand-typed.
+            Choose a gesture and object to calculate actuator force, current draw, and slip risk.
+            This view models Inspire Hand grasps only; it is not a universal physics simulator.
           </p>
         </div>
 

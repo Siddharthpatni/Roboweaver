@@ -8,7 +8,6 @@ Verifies:
 4. N-DOF Inverse Kinematics & Trajectory execution
 """
 
-import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -26,7 +25,7 @@ from roboweaver.hardware.universal_driver import (
     UniversalRobotDriver,
     resolve_bridge_class,
 )
-from roboweaver.compiler import SkillCompiler
+from roboweaver.compiler import ACTION_CATEGORY_MAP, SkillCompiler
 from roboweaver.codegen.ros2_gen import generate_ros2_package
 
 
@@ -117,20 +116,29 @@ def test_full_ros2_package_generation():
     print("\n[TEST 3] Testing Full ROS 2 Code Generation...")
     
     compiler = SkillCompiler(target_robot="kuka_iiwa")
-    skill = compiler.compile("Pick up the heavy gear assembly", verbose=False)
+    result = compiler.compile_with_diagnostics("Pick up the heavy gear assembly", verbose=False)
+    skill = result.skill
 
     out_dir = Path(tempfile.mkdtemp(prefix="roboweaver_test_ros2pkg_"))
     try:
-        pkg_path = generate_ros2_package(skill, out_dir)
+        pkg_path = generate_ros2_package(result.ir, out_dir)
         assert pkg_path.exists()
         assert (pkg_path / "behavior_tree.xml").exists()
         assert (pkg_path / "package.xml").exists()
         assert (pkg_path / "setup.py").exists()
-        assert (pkg_path / "action_server.py").exists()
+        assert (pkg_path / "setup.cfg").exists()
+        assert (pkg_path / pkg_path.name / "trajectory_client.py").exists()
+        assert (pkg_path / pkg_path.name / "__init__.py").exists()
+        assert (pkg_path / "resource" / pkg_path.name).exists()
+        assert (pkg_path / "compiled_skill.json").exists()
         skill_slug = f"{skill.intent.action.value.lower()}_{skill.intent.object_name}".replace(" ", "_")
         assert (pkg_path / "launch" / f"{skill_slug}.launch.py").exists()
         assert (pkg_path / "config" / "dds_qos_profile.yaml").exists()
         assert (pkg_path / "config" / "ros2_controllers.yaml").exists()
+
+        manifest = __import__("json").loads((pkg_path / "compiled_skill.json").read_text())
+        assert manifest["robot_id"] == "kuka_iiwa"
+        assert manifest["joint_names"] == [joint.name for joint in get_robot_spec("kuka_iiwa").joints]
 
         print(f"  -> Successfully generated complete ROS 2 package at {pkg_path.name}")
         print("  -> Verified config/dds_qos_profile.yaml & config/ros2_controllers.yaml [PASSED]")
@@ -139,20 +147,22 @@ def test_full_ros2_package_generation():
         shutil.rmtree(out_dir, ignore_errors=True)
 
 
-def test_all_16_skill_categories():
-    """Verify built-in and new skill categories."""
-    print("\n[TEST 4] Testing Expanded 16+ Skill Categories...")
+def test_every_declared_skill_category_has_a_real_template():
+    """Verify every built-in enum category is reachable and has a real template."""
+    print("\n[TEST 4] Testing every declared skill category...")
 
-    categories = [
-        "PICK_AND_PLACE", "TIGHTEN_BOLT", "OPEN_DOOR", "TOOL_EXCHANGE",
-        "INSPECT_SURFACE", "WELD_SEAM", "PALLETIZING", "POLISHING",
-        "DISASSEMBLY", "MOBILE_NAV"
-    ]
-    for cat in categories:
-        tmpl = get_industrial_skill_template(cat, "workpiece")
+    declared_categories = set(IndustrialSkillCategory) - {IndustrialSkillCategory.CUSTOM_SKILL}
+    reachable_categories = set(ACTION_CATEGORY_MAP.values())
+    assert declared_categories == reachable_categories
+    for category in sorted(declared_categories, key=lambda item: item.value):
+        tmpl = get_industrial_skill_template(category, "workpiece")
         assert len(tmpl.tasks) > 0
         assert tmpl.behavior_tree_root is not None
-        print(f"  -> Verified skill template: [{cat:15s}] - {tmpl.name} [PASSED]")
+        print(f"  -> Verified skill template: [{category.value:15s}] - {tmpl.name} [PASSED]")
+
+    custom = get_industrial_skill_template(IndustrialSkillCategory.CUSTOM_SKILL, "workpiece")
+    assert custom.category == "CUSTOM_SKILL"
+    assert custom.tasks
 
 
 def test_simulation_bridge_honest_tcp_reachability():
@@ -255,6 +265,6 @@ if __name__ == "__main__":
     test_universal_robot_driver_connection()
     test_full_ros2_package_generation()
     test_simulation_bridge_honest_tcp_reachability()
-    test_all_16_skill_categories()
+    test_every_declared_skill_category_has_a_real_template()
     test_robotics_package_nexus()
     print("\n=== ALL VERIFICATION TESTS PASSED SUCCESSFULLY ===")

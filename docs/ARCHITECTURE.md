@@ -45,20 +45,35 @@ paths. `plugins/registry.py::PluginRegistry` is a real, generic, name-keyed regi
 the same primitive backs robot-driver bridge dispatch, `RobotBackend`s, and
 `DigitalTwin`s. `plugins/backend.py::RobotBackend` (`metadata()`, `capabilities()`,
 `validate()`, `compile()`, `deploy()`) has two real implementations: `Ros2Backend`
-(wraps the existing ROS 2 codegen) and `UrScriptBackend` (real, syntactically valid
-URScript `movej()`/`sleep()`/`set_digital_out()` generated from the compiled skill's
-real task graph). `deploy()` runs the real Safety Kernel and a real simulation check
+(wraps the ROS 2 codegen) and `UrScriptBackend` (real, syntactically valid URScript
+generated exclusively from verified RoboIR trajectories). `deploy()` re-runs the real
+Safety Kernel on the exact IR and performs a real simulation check
 before any bridge connect is attempted. Adding a new backend is a registry entry, not a
 compiler change. Full detail: [`REDESIGN.md` §4](REDESIGN.md#4-robot-backends--stop-overfocusing-on-ros-2)
 and [`COMPILER_ROADMAP.md`](COMPILER_ROADMAP.md) (v2 Vision, item 3).
 
 **Honest scope note** (in response to external review): backends here perform code
-generation for a target middleware/controller dialect, not a full LLVM-style lowering
+generation for a target middleware/controller dialect, not a complete LLVM codegen stack
 chain (capability → controller → hardware-abstraction → middleware-abstraction →
 codegen as independently staged passes). `RobotBackend.validate()` +
 `RobotBackend.compile()` collapse several of those concerns into two real steps today.
 Splitting them into independently-inspectable lowering passes is a real, deferred
 deepening, not something this doc claims already exists.
+
+RoboWeaver now has two precise upstream-facing boundaries. First, its active target
+lowering uses full-conversion semantics: declared legal/illegal operations, ordered
+rewrite patterns, a convergence bound, and failure unless every source operation is
+legalized. Its RoboIR pass manager lazily caches analyses and invalidates everything a
+changing pass does not explicitly preserve. Second, the optional native bridge emits
+generic `roboweaver.*` MLIR operations and runs upstream `mlir-opt` canonicalize/CSE,
+recording tool/version/digests. This validates the emitted module; it does not lower to
+LLVM IR or machine code.
+
+Target lowerers are resolved through a typed Input/Transformation/Output phase registry
+with Python entry-point discovery. That phase composition is adapted from
+RoboticsLanguage. The RoboticsLanguage Python/XML AST and generators are not imported,
+and the repository is not vendored. These boundaries are intentional so architecture
+influence cannot be presented as source or runtime integration.
 
 ## RoboIR
 
@@ -75,13 +90,16 @@ constraints:
 required_capabilities:
   perception: [object_detection, pose_estimation]
   manipulation: [grasp_planning, inverse_kinematics]
-capability_claims: # real, per-capability confidence + provenance (v2 item 2)
-  - { name: sensing.force_torque, confidence: 1.0, verified: true, source: robot_spec }
+  sensing: []
+  claims:
+    - { name: manipulation.inverse_kinematics, confidence: 1.0, verified: true, source: declared }
 execution:
-  robot: { dof: 7 }
-  planner: { type: damped_pseudoinverse_ik }
+  robot_id: franka_panda
+  dof: 7
+  planner: damped_pseudoinverse_ik
+  controller: position
 verification:
-  collision_check: true
+  collision_check: false  # true only for a compile supplied with a checked Scene
   simulation_required: true
 ```
 
@@ -92,26 +110,24 @@ real confidence/verified provenance per capability, grounded in the target
 `RobotSpec`'s actual declared fields, not a guess. Full schema:
 [`REDESIGN.md` §2](REDESIGN.md#2-roboir).
 
-**Honest scope note**: RoboIR today is closer to a typed, capability-annotated *job
-description* than an executable computational graph — `task_summary`/`motion_summary`
-(v2 item 1) are real but read-only reflections of the task graph, not the graph itself.
-The actual per-task/per-motion structure (`TaskGraph`, `MotionPlan`) still lives on
-`CompiledSkill`, produced downstream of RoboIR, not encoded inside it. Folding that
-structure into RoboIR itself — so RoboIR is the thing optimization passes rewrite,
-rather than something optimization passes only read alongside a separate
-`CompiledSkill` — is real, deferred architectural work, tracked as an open item rather
-than implied to already be done.
+RoboIR contains both a target-independent `ProgramSpec` (parameters, ordered tasks,
+recursive behavior) and a target-specific `LoweringSpec` (joint names, IK evidence,
+durations, trajectories, every waypoint). Built-in safety, simulation, code generation,
+deployment, and manifests consume that complete IR. The optimization pass manager still
+uses `CompiledSkill` as a compatibility working view before final RoboIR construction;
+moving those transforms directly onto IR generations is a maintainability improvement,
+not a missing semantic payload.
 
 ## Compiler Debugger
 
 ```
-Error RW102: Cannot compile skill 'pick_and_place_v1' for backend 'ur5e_backend'.
+Error RW102: Cannot compile skill 'skill_m8_bolt_407db03cd329' for backend 'temi'.
 
   Reason:   RoboIR requires sensing.force_torque; the target backend does not
             declare a force/torque sensor.
   Required: sensing.force_torque
   Fixes:    1. Attach and register a force/torque sensor.
-            2. Change execution.controller.type to "position".
+            2. Use a task/controller that truthfully removes the force requirement.
             3. Select a different robot backend.
 ```
 
@@ -124,8 +140,9 @@ diagnostic taxonomy spans RW1xx (capability), RW2xx (perception), RW3xx (safety)
 RW6xx (multi-robot choreography DAG). Try it: `roboweaver compile "Tighten the bolt"
 --robot temi` raises exactly the RW102 diagnostic above, because Temi is a mobile base
 with no force/torque sensor (`has_force_torque_sensor=False`, a real field on its
-`RobotSpec`). Perception gaps (no perception system exists yet) surface as
-non-blocking `RW201` warnings instead of a silently assumed pose. Rendered live in the
+`RobotSpec`). A valid external observation is checked for frame, age, confidence,
+calibration, and finite pose before it can satisfy perception; otherwise the gap
+surfaces as a non-blocking `RW201` warning instead of a silently assumed pose. Rendered live in the
 frontend's Compiler view — auto-compiled on open, not an empty console waiting for
 input.
 

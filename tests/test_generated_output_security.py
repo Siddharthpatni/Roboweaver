@@ -1,6 +1,5 @@
 """Regression tests for untrusted names crossing code and filesystem boundaries."""
 
-from pathlib import Path
 
 import pytest
 
@@ -21,17 +20,23 @@ def _skill_with_hostile_names():
     )
     result.skill.intent.object_name = "../../escape\nend\ndef injected():"
     result.skill.task_graph.tasks[0].description = "observe\nend\ntextmsg('injected')"
+    result.ir = build_ir(
+        result.skill.intent,
+        get_robot_spec("ur5e"),
+        "hostile input",
+        result.skill,
+    )
     return result
 
 
 def test_generated_sources_sanitize_names_and_remain_inside_output_directory(tmp_path):
     result = _skill_with_hostile_names()
-    package_dir = generate_ros2_package(result.skill, tmp_path)
+    package_dir = generate_ros2_package(result.ir, tmp_path)
     assert package_dir.parent == tmp_path
     assert package_dir.name == "roboweaver_pick_escape_end_def_injected"
 
     script_path = generate_urscript(
-        result.skill,
+        result.ir,
         get_robot_spec("ur5e"),
         tmp_path / "skill.script",
     )

@@ -48,18 +48,18 @@ export const FleetRegistryView: React.FC = () => {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-6xl space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
+      <div className="w-full space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <span className="kicker">Fleet Registry</span>
-            <h1 className="text-[19px] font-semibold text-white mt-1">Hardware abstraction layer</h1>
+            <span className="kicker">Robot library</span>
+            <h1 className="text-[19px] font-semibold text-white mt-1">Robots the compiler can target</h1>
             <p className="text-[13px] text-slate-400 mt-1.5 leading-relaxed max-w-xl">
-              Every embodiment in the robot registry, from 3-DOF service AMRs to 20-DOF dexterous hands — each
-              with its own N-DOF kinematic chain, joint limits, and payload envelope.
+              Each profile describes a robot&apos;s joints, movement limits, reach, payload, tools, and
+              capabilities. The universal compiler uses these facts to accept or reject each target.
             </p>
           </div>
           <div className="app-card px-4 py-3 text-right shrink-0">
-            <div className="text-[10.5px] text-slate-500">Registered embodiments</div>
+            <div className="text-[10.5px] text-slate-500">Available robot profiles</div>
             <div className="text-xl font-semibold font-data text-cyan-400">{robots.length}</div>
           </div>
         </div>
@@ -111,6 +111,12 @@ export const FleetRegistryView: React.FC = () => {
                 <div className="flex items-center justify-between text-[11px]">
                   <span className="text-slate-500 capitalize">{r.gripper_type.replace(/_/g, ' ')}</span>
                   <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-data">{r.id}</span>
+                </div>
+                <div className="flex items-center justify-between gap-2 text-[10.5px]">
+                  <span className="text-slate-600">Compiler motion model</span>
+                  <span className="rounded bg-violet-500/10 px-1.5 py-0.5 font-data text-violet-300">
+                    {r.motion_model.replace(/_/g, ' ')}
+                  </span>
                 </div>
 
                 <button

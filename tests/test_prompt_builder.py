@@ -17,7 +17,9 @@ def test_shopmate_r_prompt_parsing():
 
     assert parsed.workcell_name == "ShopMate_R"
     assert set(parsed.robots) == {"temi", "pepper", "franka_panda"}
-    assert len(parsed.tasks) >= 3
+    assert parsed.tasks
+    assert all(task["instruction"].startswith(("Navigate", "Pick up")) for task in parsed.tasks)
+    assert any("HANDOVER_INTERACT" in warning for warning in parsed.warnings)
     print("  -> Verified ShopMate-R Prompt Parsing (Temi, Pepper, Franka Panda) [PASSED]")
 
 
@@ -45,7 +47,10 @@ def test_card_scanner_turtlebot_prompt():
 
 def test_build_system_from_prompt():
     """Verify end-to-end multi-robot system compilation and ROS 2 package export from text prompt."""
-    prompt = "Build ShopMate-R retail assistant with Temi for navigation, Pepper for customer interaction, and Franka arm for restocking"
+    prompt = (
+        "Franka Panda pick up the red cube, KUKA iiwa tighten the M8 bolt, "
+        "ABB weld the steel seam"
+    )
     out_dir = Path("local_test_prompt_out")
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -58,9 +63,9 @@ def test_build_system_from_prompt():
         assert (pkg_path / "launch" / "workcell_orchestration.launch.py").exists()
 
         launch_txt = (pkg_path / "launch" / "workcell_orchestration.launch.py").read_text(encoding="utf-8")
-        assert "namespace='/temi'" in launch_txt
-        assert "namespace='/pepper'" in launch_txt
         assert "namespace='/franka_panda'" in launch_txt
+        assert "namespace='/kuka_iiwa'" in launch_txt
+        assert "namespace='/abb_irb120'" in launch_txt
 
         print(f"  -> Successfully compiled ShopMate-R Workcell & exported ROS 2 package: {pkg_path.name} [PASSED]")
     finally:

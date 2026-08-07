@@ -1,6 +1,5 @@
 export const EXAMPLE_BUILD_PROMPTS: string[] = [
-  'Build ShopMate-R retail assistant with Temi for navigation, Pepper for customer interaction, and Franka arm for restocking',
-  'Build hospital logistics workcell with Temi AMR, Pepper humanoid, and Shadow Dexterous Hand',
-  'Build a visitor card scanner system with TurtleBot4 to scan security ID badges and navigate to reception desk',
-  'Build automated factory line with UR5e for pick and place, KUKA for bolt tightening, and ABB for welding',
+  'Franka Panda pick up the red cube, KUKA iiwa tighten the M8 bolt, ABB weld the steel seam',
+  'UR5e pick up the gear, KUKA iiwa inspect the panel, ABB weld the bracket seam',
+  'Franka Panda clean the work surface, UR5e package the finished item, KUKA iiwa inspect the package',
 ];

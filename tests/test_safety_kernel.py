@@ -4,6 +4,7 @@ docs/COMPILER_ROADMAP.md's v2 vision.
 """
 
 import dataclasses
+import math
 
 import pytest
 
@@ -58,6 +59,29 @@ def test_deploy_refuses_before_anything_else_when_safety_kernel_blocks():
         # this -- not the simulation-validation step, which is bypassed here.
         backend.deploy(tampered, protocol="sim", uri="sim://127.0.0.1:1", skip_simulation_check=True)
     print("  -> deploy() refused via the Safety Kernel even with the simulation check skipped [PASSED]")
+
+
+def test_enforce_revalidates_tampered_roboir_instead_of_trusting_old_diagnostics():
+    result = _real_result()
+    assert result.ir.lowering is not None
+    first = result.ir.lowering.trajectories[0]
+    bad_waypoint = (math.nan,) + first.waypoints[0][1:]
+    bad_trajectory = dataclasses.replace(first, waypoints=(bad_waypoint,))
+    result.ir = dataclasses.replace(
+        result.ir,
+        lowering=dataclasses.replace(
+            result.ir.lowering,
+            trajectories=(bad_trajectory,) + result.ir.lowering.trajectories[1:],
+        ),
+    )
+
+    assert not any(d.severity == "error" for d in result.diagnostics)
+    with pytest.raises(SkillCompilationError) as exc_info:
+        SafetyKernel.enforce(result)
+    assert any(
+        d.code == "RW401" and "non-finite" in d.reason
+        for d in exc_info.value.diagnostics
+    )
 
 
 if __name__ == "__main__":

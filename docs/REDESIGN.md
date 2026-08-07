@@ -1,11 +1,11 @@
 # RoboWeaver — Compiler Infrastructure Redesign (v3)
 
-**Status:** design revision 3, **with Phase 1 of §9 now implemented in the codebase**
-(not just designed) — see §11 for exactly what changed, cited by file, and what's still
-design-only. Every claim about current behavior cites the actual file. Changes from
-revision 2 are called out explicitly in §10 rather than silently merged in, because
-pretending a document never had a gap is the same dishonesty this whole redesign exists
-to remove from the product itself.
+**Status:** historical design revision 3 with a current implementation update on
+2026-08-07. The authoritative capability summary is the README and the stage table
+below. Later implementation has completed the ProgramSpec/LoweringSpec split,
+RoboIR-only verification/simulation/codegen/deployment, multi-target compilation,
+downloadable artifacts, execution memory, optimization passes, and ROS 2 colcon CI.
+Sections describing earlier gaps are retained as design history, not current claims.
 
 ---
 
@@ -101,7 +101,7 @@ execution:
     type: position                  # today's real controller mode; impedance is roadmap
 
 verification:
-  collision_check: true
+  collision_check: false             # honest: collision geometry is not modeled
   simulation_required: true
   safety_checks: [reach, floor, payload, joint_limits]
 ```
@@ -118,13 +118,10 @@ motion_requirements, safety, recovery, execution/validation/simulation metadata,
 dependencies, skill_version) is unchanged from revision 1 — the YAML above is the
 readable projection of that schema, not a replacement for it.
 
-**Why this had to be a stage, not a detail:** today's `compiler.py::SkillCompiler.compile()`
-goes straight from `SkillIntent` (one action, one object name, a `dict[str, float]` of
-parameters) to task decomposition. There's no artifact in between that a motion planner,
-a different robot backend, or a debugger could inspect independently. Making RoboIR its
-own stage means "show me what the compiler understood before it started planning motion"
-becomes a real, inspectable thing — which is also exactly what the Compiler Debugger (§6)
-needs to exist at all.
+**Current representation:** `ProgramSpec` stores target-independent parameters,
+ordered tasks, and behavior; `LoweringSpec` stores the selected RobotSpec, exact joint
+names, IK evidence, trajectories, durations, and every waypoint. `compile_targets()`
+parses once and lowers that same program independently for each concrete robot.
 
 ---
 
@@ -136,18 +133,18 @@ needs to exist at all.
 | 02 | Knowledge Normalization | `knowledge/ontology.py` typed node/edge conversion. Real, small, correct. | — |
 | 03 | Knowledge Graph | `knowledge/graph.py::RoboticsKnowledgeGraph` (real, generic) + the 11-package ROS 2 catalog (real, keyword-matched, not retrieval). | Seed data is a demo, not a comprehensive ontology. |
 | 04 | Task Understanding | `compiler.py::_parse_intent` + `fleet/prompt_builder.py::SystemPromptParser` — deterministic regex. **Compound-goal splitting fixed** (§11): "pick the red cube and place it into the blue bin" now parses source/destination as separate objects, tested in `tests/test_ir.py`. | Still two separate parsers (single-skill vs. multi-robot); unifying them is unstarted. |
-| **05** | **RoboIR Generation** | **Real, implemented** (§11): `ir/schema.py` (RoboIR dataclasses), `ir/builder.py` (`build_ir()`), `ir/diagnostics.py` (the Compiler Debugger). `compiler.py::SkillCompiler.compile_with_diagnostics()` is the Stage 04→05→06 entrypoint. Tested in `tests/test_ir.py`, exposed via `/api/compile`'s `ir`/`diagnostics` fields, and rendered in the frontend's Compiler view. | Schema covers objects/constraints/capabilities/execution/verification; safety/recovery/versioning metadata from the original design (revision 1) aren't populated yet. |
-| 06 | Skill Compilation | `compiler.py::SkillCompiler` — real, tested, now consumes/produces RoboIR via `compile_with_diagnostics()`. Still mixes four stages' responsibilities into one class's private methods. | Split per stage (still one class, just no longer IR-less). |
-| 07 | Motion Planning | `hardware/kinematics_ndof.py::NDOFIKSolver` — real N-DOF damped pseudoinverse, tested. `planner.py` **deleted** (§11) — confirmed zero imports before removal. | Position-only IK, no orientation target. |
+| **05** | **RoboIR Generation** | `ir/schema.py` stores complete `ProgramSpec` and `LoweringSpec`; `build_ir()` captures semantics, capability claims, IK evidence, exact joints and all trajectories. `/api/compile-matrix` demonstrates one parsed source and multiple independent lowerings. | Recovery policy metadata remains runtime-owned. |
+| 06 | Skill Compilation | `compile_portable()` parses/decomposes once without robot data; `lower_with_diagnostics()` independently binds that program to each concrete target. `compile_targets()` proves one-source/many-target lowering with a stable source digest. | Stage implementations remain methods on one class; separate modules are a maintainability improvement, not a semantic blocker. |
+| 07 | Motion Planning | An explicit conversion target selects serial-arm IK, holonomic/differential base, branched-humanoid, or multi-finger lowering. An optional typed Scene triggers final sampled environment-collision checking/replanning. | Arm IK is position-only; no self-collision, continuous swept-volume proof, orientation objective, or dynamics planner. |
 | 08 | Behavior Tree Compilation | `codegen/groot2.py` — real, tested. | — |
-| 09 | Simulation Verification | `runtime/engine.py::SkillRuntime` — real native + optional MuJoCo. | No pass/fail gate blocking Stage 11 yet. |
-| 10 | Safety Verification | `hardware/safety_guard.py::WorkspaceSafetyGuard` — real geometric checks. Not ISO 10218/15066 certified — never say otherwise. **Compiler Debugger's `sensing.force_torque` check (§11) is a new, separate capability-declaration gate**, distinct from this stage's geometric checks. | — |
-| 11 | Skill Packaging | `registry/package.py::SkillPackage` (`.rwsp` export) + real `rclpy` ROS 2 codegen. **`json.dump_str` dead branch removed; `to_dict()`/`from_dict()` now round-trip the full compiled skill** (§11). | Generated packages never `colcon`-build-checked in CI. |
-| 12 | Deployment | **Not implemented** — today's "deployment" is a local JSON write. | Entire stage is roadmap. |
+| 09 | Simulation Verification | `runtime/validation.py` reconstructs execution solely from complete RoboIR. NativeTwin reports process success only for PICK; other actions are explicitly `kinematic_only` and unsuccessful. Deployment uses this gate. | No weld/torque/pour/navigation process models; optional MuJoCo is not HIL evidence. |
+| 10 | Safety Verification | IR structural/finite/dimension checks plus capability, reach, workspace/floor, payload, joint-limit, finite-difference velocity, manipulability, and optional scene collision checks. Deployment re-runs them on the exact IR. | No self-collision, dynamics/torque proof, or safety certification. |
+| 11 | Skill Packaging | RoboIR-only ROS 2 `ament_python` packages, UR-only URScript, BehaviorTree XML, complete IR manifests, and reproducible download archives. CI wheel-builds and Humble-colcon-builds generated packages. | Controller/hardware-in-the-loop execution remains external. |
+| 12 | Deployment | Registered backends enforce safety, modeled simulation, measured/user pose provenance, parser confidence, bridge acceptance and segment send results. Physical simulation bypass is prohibited. | No certified controller or hardware-in-the-loop evidence. |
 | 13 | Runtime Execution | `hardware/universal_driver.py` bridges genuinely attempt live `rclpy`/TCP connections and honestly report failure. RS485 driver: real CRC-16/MODBUS, proven via pty loopback. | Never run against live hardware/ROS 2/Isaac/Gazebo. |
-| 14 | Monitoring | **Fixed (§11).** `runtime/telemetry.py::TelemetryRecorder` and `runtime/recovery.py::RecoveryEngine` are now genuinely called by `SkillRuntime.execute()` — real telemetry frames recorded per simulation step, real recovery diagnosis on grasp failure and joint-limit violation, both surfaced on `ExecutionResult`. Tested in `tests/test_ir.py`. | Recovery plans are diagnosed but not yet automatically acted on (no auto-retry loop). |
-| 15 | Execution Memory | **Does not exist.** `ExecutionResult` (now telemetry/recovery-enriched, §11) is still discarded after being returned to the caller — nothing persists it. | Entire stage is roadmap. |
-| 16 | Optimization | **Does not exist.** No mechanism reads Stage 15's history and revises a skill. | Depends on 15 existing first. Never call this "learning" or "intelligence" (§1). |
+| 14 | Monitoring | `TelemetryRecorder` records simulation frames; `RecoveryEngine` performs bounded corrective grasp retries and records recovery events. | Not a physical controller monitor. |
+| 15 | Execution Memory | `ExecutionMemoryStore` is opt-in, persisted and queryable; `SkillRuntime` records executions when attached. | No production history is bundled with the repository. |
+| 16 | Optimization | Two verified compile-time motion passes, exact-target motion caching, cost/Pareto comparison, and history-based adjustment suggestions. | Suggestions are not autonomously applied; this is optimization, not self-learning. |
 | 17 | Registry & Knowledge Update | **Reload bug fixed (§11).** `registry/repository.py::SkillRepository._load_all()` now reconstructs the full compiled skill via `SkillPackage.from_dict()` instead of discarding it (`skill=None`) — verified in `tests/test_ir.py` by simulating a process restart. | No feedback loop into Stage 03 yet. |
 
 ---
@@ -208,11 +205,11 @@ value case: a compiler with an IR (§2) can produce compiler-grade error message
 instead of a stack trace or a silently wrong skill.
 
 ```
-Error RW102: Cannot compile skill 'pick_and_place_v1' for backend 'ur5e_backend'.
+Error RW102: Cannot compile skill 'skill_m8_bolt_407db03cd329' for backend 'temi'.
 
   Reason:
     RoboIR requires capability `sensing.force_torque` (impedance controller
-    requested in execution.controller.type), but the target robot backend does
+    requested in execution.controller), but the target robot backend does
     not declare a force/torque sensor.
 
   Required capability:
@@ -220,7 +217,7 @@ Error RW102: Cannot compile skill 'pick_and_place_v1' for backend 'ur5e_backend'
 
   Possible fixes:
     1. Attach a force/torque sensor and register it on the robot's RobotSpec.
-    2. Change execution.controller.type to "position" (vision-only grasp).
+    2. Use a task/controller that truthfully removes the force requirement.
     3. Select a different robot backend that declares force_torque sensing.
 ```
 
@@ -305,8 +302,8 @@ that doc is about RoboWeaver's identity as a compiler.
 what's still open within Phase 1 (the API is still synchronous `http.server`, not
 FastAPI; the frontend is one flow, not yet the full pipeline-dashboard view from §7).
 
-**Phase 2 — Deployment & Runtime:** job/event model, async API, `colcon`-build CI
-check for generated packages, real Stage 12 deployment beyond a local file write.
+**Phase 2 — Deployment & Runtime:** `colcon` CI and guarded protocol deployment are
+implemented. A production job/event API and hardware-in-the-loop qualification remain.
 
 **Phase 3 — Multi-Robot Backend:** re-promote `MultiRobotChoreographer` (§5) from
 "working extension" to a documented, demoed capability once the single-robot pipeline
@@ -363,8 +360,9 @@ so this section stays checkable the same way the audit in §1 was.
   sensing — so compiling a `TIGHTEN` skill against either now genuinely raises
   `SkillCompilationError` with a structured `RW102` diagnostic (message, reason,
   required capability, numbered fixes). Perception capability gaps surface as
-  non-blocking `RW201` warnings on every pick/place skill, since no perception system
-  exists anywhere in RoboWeaver — an honest signal, not a suppressed one.
+  non-blocking `RW201` warnings whenever a perception-requiring skill still uses an
+  assumed pose. A complete user-specified pose or validated external observation can
+  remove the requirement it satisfies; no bundled detector or sensor driver is claimed.
 - **The exact compound-goal bug from §2, fixed.** `compiler.py::_parse_intent` now
   matches a `pick X and place it (in|into|on) Y` clause before the plain-pick regex,
   producing `Action.PLACE` with a `destination_object` parameter; `ir/builder.py`

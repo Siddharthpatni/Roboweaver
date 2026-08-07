@@ -10,7 +10,6 @@ Generates a standalone, production-ready ROS 2 package (`roboweaver_inspire_hand
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 
 def generate_inspire_hand_ros2_package(
@@ -85,7 +84,11 @@ class InspireHandRS485Node(Node):
         self.get_logger().info(f'Connecting to Inspire RH56F1-E2 on {{port}} @ {{baud}} baud...')
         self.driver = InspireHandRS485Driver(port=port, baudrate=baud)
         state = self.driver.connect()
-        self.get_logger().info(f'Inspire Hand Connected (Simulated loopback: {{self.driver.simulated}})')
+        if not state.is_connected:
+            raise RuntimeError(
+                f'Inspire Hand physical connection failed: {{self.driver.last_connect_error}}'
+            )
+        self.get_logger().info('Inspire Hand physical RS485 transport connected')
 
         # Subscriptions & Publishers
         self.cmd_sub = self.create_subscription(

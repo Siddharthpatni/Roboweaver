@@ -122,14 +122,18 @@ def test_coerce_json_text_handles_prose_and_fences():
     assert _coerce_json_text('Sure! {"a":1} hope that helps') == '{"a":1}'
 
 
-def test_advisor_status_is_local_only():
+def test_advisor_status_reports_local_and_explicit_remote_options():
     status = advisor_status()
-    assert status["providers"] == ["ollama"]
+    assert status["providers"] == ["ollama", "openrouter"]
     assert status["ollama_host"].startswith(("http://", "https://"))
+    assert isinstance(status["openrouter_configured"], bool)
+    assert isinstance(status["openrouter_codegen_model"], str)
+    assert "remote" in status["remote_privacy_notice"].lower()
 
 
-def test_advisor_factory_rejects_non_local_provider():
+def test_advisor_factory_supports_explicit_openrouter_and_rejects_unknown_provider():
     import pytest
 
-    with pytest.raises(ValueError, match="ollama"):
+    assert build_advisor("openrouter").backend.name == "openrouter"
+    with pytest.raises(ValueError, match="ollama.*openrouter"):
         build_advisor("remote")

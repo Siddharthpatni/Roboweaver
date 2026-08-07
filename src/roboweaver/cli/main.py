@@ -45,7 +45,7 @@ from pathlib import Path
 
 from roboweaver.compiler import SkillCompiler
 from roboweaver.ir import SkillCompilationError, OptimizationLevel, diff_ir, diff_trace
-from roboweaver.hardware import ROBOT_REGISTRY, distinct_robot_specs, get_robot_spec
+from roboweaver.hardware import distinct_robot_specs, get_robot_spec
 from roboweaver.fleet import SkillRetargeter, FleetOrchestrator
 from roboweaver.runtime import SkillRuntime
 from roboweaver.registry.package import SkillPackage, SkillPackageMetadata
@@ -82,47 +82,13 @@ def cmd_compile(args) -> int:
             instruction, verbose=not as_json, optimization_level=opt_level
         )
     except SkillCompilationError as exc:
-        if as_json:
-            print(json.dumps({
-                "ok": False,
-                "instruction": instruction,
-                "robot": spec.id,
-                "diagnostics": [d.to_dict() for d in exc.diagnostics],
-            }, indent=2))
-        else:
-            print(f"\n\033[1;31m✗ Compilation failed\033[0m — {len(exc.diagnostics)} blocking diagnostic(s):")
-            for d in exc.diagnostics:
-                print(f"  \033[31m{d.code}\033[0m {d.message}\n    {d.reason}")
-                for fix in d.fixes:
-                    print(f"      → {fix}")
-            print()
-        # Non-zero exit so CI and shell pipelines actually fail on a bad skill.
+        _print_compile_failure(exc, instruction, spec.id, as_json)
         return 2
 
     skill = result.skill
 
     if as_json:
-        out = {
-            "ok": True,
-            "instruction": instruction,
-            "robot": spec.id,
-            "opt_level": opt_level.value,
-            "intent": {
-                "action": skill.intent.action.value,
-                "object_name": skill.intent.object_name,
-                "confidence": skill.intent.confidence,
-                "parse_warnings": skill.intent.parse_warnings,
-                "parameters": skill.intent.parameters,
-            },
-            "tasks": [{"type": t.type.value, "description": t.description} for t in skill.task_graph.tasks],
-            "diagnostics": [d.to_dict() for d in result.diagnostics],
-        }
-        if explain_passes:
-            if result.skill_pipeline is not None:
-                out["skill_pipeline"] = result.skill_pipeline.to_dict()
-            if result.pipeline is not None:
-                out["pipeline"] = result.pipeline.to_dict()
-        print(json.dumps(out, indent=2))
+        _print_compile_json(result, instruction, spec.id, opt_level, explain_passes)
         return 0
 
     for w in skill.intent.parse_warnings:
@@ -133,23 +99,69 @@ def cmd_compile(args) -> int:
             print(f"    \033[33m{d.code}\033[0m {d.message}")
 
     if explain_passes:
-        def _print_pass_table(title: str, records) -> None:
-            print(f"\n  \033[1;36m{title}\033[0m (opt-level {opt_level.value}):")
-            for rec in records:
-                status = "skipped" if rec.skipped else ("modified" if rec.modified else "unchanged")
-                metrics_note = f"  {rec.metrics}" if rec.metrics else ""
-                print(
-                    f"    • {rec.pass_name:<28} {rec.timing_s * 1000:>7.3f}ms  "
-                    f"[{status}]  {len(rec.diagnostics)} diagnostic(s){metrics_note}"
-                )
+        _print_pipeline_traces(result, opt_level)
 
+    _register_compiled_skill(result, instruction, spec)
+    return 0
+
+
+def _print_compile_failure(exc, instruction: str, robot_id: str, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps({
+            "ok": False, "instruction": instruction, "robot": robot_id,
+            "diagnostics": [item.to_dict() for item in exc.diagnostics],
+        }, indent=2))
+        return
+    print(f"\n\033[1;31m✗ Compilation failed\033[0m — {len(exc.diagnostics)} blocking diagnostic(s):")
+    for diagnostic in exc.diagnostics:
+        print(f"  \033[31m{diagnostic.code}\033[0m {diagnostic.message}\n    {diagnostic.reason}")
+        for fix in diagnostic.fixes:
+            print(f"      → {fix}")
+    print()
+
+
+def _print_compile_json(result, instruction, robot_id, opt_level, explain_passes) -> None:
+    skill = result.skill
+    out = {
+        "ok": True, "instruction": instruction, "robot": robot_id,
+        "opt_level": opt_level.value,
+        "intent": {
+            "action": skill.intent.action.value, "object_name": skill.intent.object_name,
+            "confidence": skill.intent.confidence, "parse_warnings": skill.intent.parse_warnings,
+            "parameters": skill.intent.parameters,
+        },
+        "tasks": [{"type": task.type.value, "description": task.description} for task in skill.task_graph.tasks],
+        "diagnostics": [item.to_dict() for item in result.diagnostics],
+    }
+    if explain_passes:
         if result.skill_pipeline is not None:
-            _print_pass_table("Optimization Pipeline (CompiledSkill)", result.skill_pipeline.records)
-            print(f"    Total: {result.skill_pipeline.total_timing_s() * 1000:.3f}ms across {len(result.skill_pipeline.records)} pass(es)")
+            out["skill_pipeline"] = result.skill_pipeline.to_dict()
         if result.pipeline is not None:
-            _print_pass_table("RoboIR Pipeline", result.pipeline.records)
-            print(f"    Total: {result.pipeline.total_timing_s() * 1000:.3f}ms across {len(result.pipeline.records)} pass(es)")
+            out["pipeline"] = result.pipeline.to_dict()
+    print(json.dumps(out, indent=2))
 
+
+def _print_pipeline_traces(result, opt_level) -> None:
+    def print_table(title: str, records) -> None:
+        print(f"\n  \033[1;36m{title}\033[0m (opt-level {opt_level.value}):")
+        for record in records:
+            status = "skipped" if record.skipped else ("modified" if record.modified else "unchanged")
+            metrics_note = f"  {record.metrics}" if record.metrics else ""
+            print(
+                f"    • {record.pass_name:<28} {record.timing_s * 1000:>7.3f}ms  "
+                f"[{status}]  {len(record.diagnostics)} diagnostic(s){metrics_note}"
+            )
+    for title, pipeline in (
+        ("Optimization Pipeline (CompiledSkill)", result.skill_pipeline),
+        ("RoboIR Pipeline", result.pipeline),
+    ):
+        if pipeline is not None:
+            print_table(title, pipeline.records)
+            print(f"    Total: {pipeline.total_timing_s() * 1000:.3f}ms across {len(pipeline.records)} pass(es)")
+
+
+def _register_compiled_skill(result, instruction, spec) -> None:
+    skill = result.skill
     repo = SkillRepository()
     meta = SkillPackageMetadata(
         id=f"skill_{skill.intent.action.value.lower()}_{skill.intent.object_name}_{spec.id}",
@@ -162,7 +174,6 @@ def cmd_compile(args) -> int:
     pkg = SkillPackage(meta, skill)
     repo.register(pkg)
     print(f"  \033[0;32m✓ Registered skill package in repository: {meta.id}\033[0m\n")
-    return 0
 
 
 def cmd_diff(args) -> int:
@@ -320,7 +331,7 @@ def cmd_retarget(args) -> int:
     from_robot = getattr(args, "from_robot", "panda")
     to_robot = getattr(args, "to_robot", "ur5e")
 
-    print(f"\n\033[1;35mRoboWeaver Cross-Embodiment Trajectory Retargeter\033[0m")
+    print("\n\033[1;35mRoboWeaver Cross-Embodiment Trajectory Retargeter\033[0m")
     print(f"  Retargeting: \033[1m\"{instruction}\"\033[0m")
     print(f"  Source Robot: \033[36m{from_robot}\033[0m ──▶ Target Robot: \033[32m{to_robot}\033[0m\n")
 
@@ -332,10 +343,10 @@ def cmd_retarget(args) -> int:
 
     if res.success:
         print(f"  \033[1;32m✓ RETARGET SUCCESSFUL\033[0m — Skill retargeted from {res.source_robot_id} to {res.target_robot_id}")
-        print(f"    Trajectories generated for target kinematic chain.\n")
+        print("    Trajectories generated for target kinematic chain.\n")
         return 0
     else:
-        print(f"  \033[1;31m✗ RETARGET FAILED\033[0m — Safety or IK Violations:")
+        print("  \033[1;31m✗ RETARGET FAILED\033[0m — Safety or IK Violations:")
         for v in res.safety_violations:
             print(f"    • {v}")
         print()
@@ -346,7 +357,7 @@ def cmd_fleet(args) -> int:
     instruction = args.instruction
     cell_id = getattr(args, "cell", "factory_cell_1")
 
-    print(f"\n\033[1;35mRoboWeaver Fleet Orchestrator Deployment\033[0m")
+    print("\n\033[1;35mRoboWeaver Fleet Orchestrator Deployment\033[0m")
     print(f"  Deploying Skill: \033[1m\"{instruction}\"\033[0m to Workcell: \033[36m{cell_id}\033[0m\n")
 
     orchestrator = FleetOrchestrator()
@@ -360,7 +371,7 @@ def cmd_fleet(args) -> int:
     pkg = SkillPackage(meta, skill)
 
     results = orchestrator.deploy_skill_to_fleet(pkg, cell_id)
-    print(f"  Workcell Status:")
+    print("  Workcell Status:")
     for node_id, ok in results.items():
         status = "\033[32m[DEPLOYED & EXECUTING]\033[0m" if ok else "\033[31m[FAILED]\033[0m"
         print(f"    • {node_id:<16} ──▶ {status}")
@@ -464,7 +475,11 @@ def cmd_export(args) -> int:
     )
     pkg = SkillPackage(meta, skill)
     manifest = SafetyKernel.build_deployment_manifest(result, backend_name)
-    rwsp_file = pkg.export_archive(output_dir / f"{meta.id}.rwsp", deployment_manifest=manifest)
+    rwsp_file = pkg.export_archive(
+        output_dir / f"{meta.id}.rwsp",
+        deployment_manifest=manifest,
+        roboir=result.ir,
+    )
     print(f"\n\033[1;32m✓ Skill Successfully Exported\033[0m ({backend_name}):")
     print(f"  • Backend output: \033[1m{backend_output}\033[0m")
     print(f"  • Skill Package Archive: \033[1m{rwsp_file}\033[0m")
@@ -598,7 +613,7 @@ def cmd_advise(args) -> int:
     print(f"  URI        : {advice.uri}")
     print(f"  Confidence : {advice.confidence:.0%}")
     print(f"  Reasoning  : {advice.reasoning}")
-    print(f"\n  \033[0;37mA suggestion, not a verification. Confirm before connecting:\033[0m")
+    print("\n  \033[0;37mA suggestion, not a verification. Confirm before connecting:\033[0m")
     print(f"    roboweaver connect --robot {advice.robot_id} --protocol {advice.protocol} --uri {advice.uri}\n")
     return 0
 
@@ -649,7 +664,7 @@ def cmd_nexus(args) -> int:
         return 0
     elif action == "recommend":
         rec = RoboticsPackageNexus.recommend_stack_for_prompt(query_str)
-        print(f"\n\033[1;35m━━━ Knowledge Nexus Architecture Recommendation ━━━\033[0m")
+        print("\n\033[1;35m━━━ Knowledge Nexus Architecture Recommendation ━━━\033[0m")
         print(f"  Input Prompt         : \"{query_str}\"")
         print(f"  Matched Robot Models : {', '.join(rec['matched_robots'])}")
         print(f"  Recommended Packages : \033[1;32m{', '.join(rec['recommended_packages'])}\033[0m")
@@ -682,7 +697,7 @@ def cmd_graph(args) -> int:
         if as_json:
             print(json.dumps(graph.to_dict(), indent=2))
         else:
-            print(f"\n\033[1;35mRoboWeaver Knowledge Graph\033[0m — real ingestion from live registries")
+            print("\n\033[1;35mRoboWeaver Knowledge Graph\033[0m — real ingestion from live registries")
             print(f"  Nodes: {len(graph.nodes)}  Edges: {len(graph.edges)}")
         if getattr(args, "output", None):
             graph.save(args.output)
@@ -695,7 +710,7 @@ def cmd_graph(args) -> int:
             print(f"\n\033[1;31m✗ No path\033[0m found from '{args.from_id}' to '{args.to_id}' "
                   f"within {getattr(args, 'max_hops', 6)} hops.\n")
             return 1
-        print(f"\n\033[1;35mPath\033[0m: " + " → ".join(f"\033[36m{n}\033[0m" for n in path) + "\n")
+        print("\n\033[1;35mPath\033[0m: " + " → ".join(f"\033[36m{n}\033[0m" for n in path) + "\n")
         return 0
 
     if action == "export-obsidian":
@@ -861,47 +876,20 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    if args.command == "robots":
-        return cmd_robots(args)
-    elif args.command == "nexus":
-        return cmd_nexus(args)
-    elif args.command in ("build", "prompt"):
-        return cmd_build_system(args)
-    elif args.command == "graph":
-        return cmd_graph(args)
-    elif args.command == "sim":
-        return cmd_sim(args)
-    elif args.command == "compile":
-        return cmd_compile(args)
-    elif args.command == "diff":
-        return cmd_diff(args)
-    elif args.command == "compare":
-        return cmd_compare(args)
-    elif args.command == "benchmark":
-        return cmd_benchmark(args)
-    elif args.command == "retarget":
-        return cmd_retarget(args)
-    elif args.command == "fleet":
-        return cmd_fleet(args)
-    elif args.command == "execute":
-        return cmd_execute(args)
-    elif args.command == "list":
-        return cmd_list(args)
-    elif args.command == "export":
-        return cmd_export(args)
-    elif args.command == "urdf":
-        return cmd_urdf(args)
-    elif args.command == "discover":
-        return cmd_discover(args)
-    elif args.command == "connect":
-        return cmd_connect(args)
-    elif args.command == "advise":
-        return cmd_advise(args)
-    elif args.command == "dashboard":
-        return cmd_dashboard(args)
-    else:
+    handlers = {
+        "robots": cmd_robots, "nexus": cmd_nexus, "build": cmd_build_system,
+        "prompt": cmd_build_system, "graph": cmd_graph, "sim": cmd_sim,
+        "compile": cmd_compile, "diff": cmd_diff, "compare": cmd_compare,
+        "benchmark": cmd_benchmark, "retarget": cmd_retarget, "fleet": cmd_fleet,
+        "execute": cmd_execute, "list": cmd_list, "export": cmd_export,
+        "urdf": cmd_urdf, "discover": cmd_discover, "connect": cmd_connect,
+        "advise": cmd_advise, "dashboard": cmd_dashboard,
+    }
+    handler = handlers.get(args.command)
+    if handler is None:
         parser.print_help()
         return 0
+    return handler(args)
 
 
 if __name__ == "__main__":

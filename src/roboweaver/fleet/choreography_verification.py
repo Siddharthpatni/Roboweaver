@@ -128,6 +128,13 @@ def check_choreography(schedule: WorkcellSchedule) -> list[CompilerDiagnostic]:
         )
         return diagnostics
 
+    diagnostics.extend(_check_resource_conflicts(schedule))
+    diagnostics.extend(_check_handovers(schedule))
+    return diagnostics
+
+
+def _check_resource_conflicts(schedule: WorkcellSchedule) -> list[CompilerDiagnostic]:
+    diagnostics: list[CompilerDiagnostic] = []
     tiers = schedule.get_execution_tiers()
     for tier_idx, tier in enumerate(tiers):
         seen: dict[str, str] = {}
@@ -153,6 +160,11 @@ def check_choreography(schedule: WorkcellSchedule) -> list[CompilerDiagnostic]:
             else:
                 seen[step.robot_id] = step.step_id
 
+    return diagnostics
+
+
+def _check_handovers(schedule: WorkcellSchedule) -> list[CompilerDiagnostic]:
+    diagnostics: list[CompilerDiagnostic] = []
     robot_ids_in_schedule = {step.robot_id for step in schedule.steps.values()}
     for step in schedule.steps.values():
         if step.handover_target is None:

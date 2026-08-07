@@ -50,7 +50,7 @@ def test_heterogeneous_service_and_dexterous_robots():
 
 
 def test_multi_robot_choreography_pipeline():
-    """Verify building and compiling a multi-robot choreography across Temi, Pepper, Shadow Hand, and Franka."""
+    """Verify a heterogeneous choreography only assigns legal target operations."""
     print("\n[TEST 2] Testing Multi-Robot Choreography Pipeline (Hospital Logistics Workcell)...")
 
     choreographer = MultiRobotChoreographer(workcell_name="Hospital_Logistics")
@@ -62,37 +62,21 @@ def test_multi_robot_choreography_pipeline():
         instruction="Navigate to pharmacy storage shelf",
     )
 
-    # Step 2: Temi transports payload to hallway handover
+    # Step 2: Temi navigates to the hallway handover. Payload handling is not
+    # silently fabricated for a mobile base without a manipulator.
     choreographer.add_robot_task(
         step_id="step_2_temi_transport",
         robot_id="temi",
-        instruction="Pick up vial tray and transport to hallway handover station",
+        instruction="Navigate to hallway handover station",
         depends_on=["step_1_temi_nav"],
     )
 
-    # Step 3: Pepper receives tray from Temi
-    choreographer.add_robot_task(
-        step_id="step_3_pepper_handover",
-        robot_id="pepper",
-        instruction="Receive vial tray from Temi and greet medical staff",
-        depends_on=["step_2_temi_transport"],
-        handover_target="pepper",
-    )
-
-    # Step 4: Pepper places tray on inspection workbench
-    choreographer.add_robot_task(
-        step_id="step_4_pepper_bench",
-        robot_id="pepper",
-        instruction="Transfer vial tray to inspection workbench",
-        depends_on=["step_3_pepper_handover"],
-    )
-
-    # Step 5: Shadow Dexterous Hand grasps vial (Parallel Tier with Step 6)
+    # Shadow Dexterous Hand grasps vial in parallel with Franka inspection.
     choreographer.add_robot_task(
         step_id="step_5_shadow_hand_grasp",
         robot_id="shadow_hand",
         instruction="Grasp medical vial with 20-DOF tactile fingertips",
-        depends_on=["step_4_pepper_bench"],
+        depends_on=["step_2_temi_transport"],
     )
 
     # Step 6: Franka Panda arm inspects surface under microscope (Parallel Tier with Step 5)
@@ -100,26 +84,26 @@ def test_multi_robot_choreography_pipeline():
         step_id="step_6_franka_inspect",
         robot_id="franka_panda",
         instruction="Inspect surface of vial under microscope",
-        depends_on=["step_4_pepper_bench"],
+        depends_on=["step_2_temi_transport"],
     )
 
     # 1. Test compilation
     schedule = choreographer.compile_workcell(verbose=False)
-    assert len(schedule.steps) == 6
+    assert len(schedule.steps) == 4
     for step in schedule.steps.values():
         assert step.compiled_skill is not None
-    print("  -> Compiled all 6 choreographed tasks across Temi, Pepper, Shadow Hand, and Franka [PASSED]")
+    print("  -> Compiled 4 legal tasks across mobile, hand, and arm target dialects [PASSED]")
 
     # 2. Test execution tiers (topological sorting & parallel stages)
     tiers = schedule.get_execution_tiers()
-    assert len(tiers) == 5  # Step 1 -> Step 2 -> Step 3 -> Step 4 -> [Step 5, Step 6 in parallel]
-    assert len(tiers[4]) == 2
-    print(f"  -> Successfully computed 5 execution tiers (Tier 5 contains 2 parallel tasks: {tiers[4][0].robot_id} & {tiers[4][1].robot_id}) [PASSED]")
+    assert len(tiers) == 3
+    assert len(tiers[2]) == 2
+    print(f"  -> Tier 3 contains 2 parallel tasks: {tiers[2][0].robot_id} & {tiers[2][1].robot_id} [PASSED]")
 
     # 3. Test Composite BehaviorTree XML Generation
     bt_xml = choreographer.generate_composite_behavior_tree()
     assert '<BehaviorTree ID="Workcell_Hospital_Logistics_Root">' in bt_xml
-    assert '<Parallel ID="Parallel_Tier_4">' in bt_xml
+    assert '<Parallel ID="Parallel_Tier_2">' in bt_xml
     assert 'ID="[shadow_hand] step_5_shadow_hand_grasp: Grasp medical vial with 20-DOF tactile fingertips"' in bt_xml
     assert 'ID="[franka_panda] step_6_franka_inspect: Inspect surface of vial under microscope"' in bt_xml
     print("  -> Generated composite Groot2 BehaviorTree XML with synchronized <Parallel> & <Sequence> nodes [PASSED]")
@@ -138,12 +122,11 @@ def test_multi_robot_choreography_pipeline():
 
         launch_txt = (pkg_path / "launch" / "workcell_orchestration.launch.py").read_text(encoding="utf-8")
         assert "namespace='/temi'" in launch_txt
-        assert "namespace='/pepper'" in launch_txt
         assert "namespace='/shadow_hand'" in launch_txt
         assert "namespace='/franka_panda'" in launch_txt
 
         print(f"  -> Generated Multi-Robot ROS 2 Launch Package: [{pkg_path.name}]")
-        print("  -> Verified multi-namespace launch script (/temi, /pepper, /shadow_hand, /franka_panda) [PASSED]")
+        print("  -> Verified multi-namespace launch script (/temi, /shadow_hand, /franka_panda) [PASSED]")
         print("  -> Verified config/inter_robot_dds.yaml & composite_workcell_bt.xml [PASSED]")
     finally:
         shutil.rmtree(out_dir, ignore_errors=True)

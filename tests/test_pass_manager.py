@@ -37,7 +37,7 @@ def _compile_ir(robot_id: str, instruction: str = "Pick up the red cube"):
     """Real skill + RoboIR for a robot, via the same code path build_ir() itself uses."""
     compiler = SkillCompiler(target_robot=robot_id)
     skill = compiler.compile(instruction, verbose=False)
-    ir = build_ir(skill.intent, compiler.robot_spec, raw_instruction=instruction)
+    ir = build_ir(skill.intent, compiler.robot_spec, raw_instruction=instruction, skill=skill)
     return compiler, skill, ir
 
 
@@ -48,6 +48,13 @@ def test_roboir_is_frozen():
         ir.action = "SOMETHING_ELSE"
     with pytest.raises(dataclasses.FrozenInstanceError):
         ir.execution.dof = 99
+    with pytest.raises(AttributeError):
+        ir.objects.append(ir.objects[0])
+    assert ir.program is not None
+    with pytest.raises(TypeError):
+        ir.program.parameters["tampered"] = True
+    with pytest.raises(TypeError):
+        ir.program.tasks[0].parameters["tampered"] = True
     print("  -> ir.action and ir.execution.dof reassignment both raise FrozenInstanceError [PASSED]")
 
 
@@ -95,9 +102,29 @@ def test_verification_pass_flags_a_deliberately_malformed_ir():
     print("  -> RW401 raised for an execution.dof mismatch against the target robot [PASSED]")
 
 
+def test_verification_rejects_an_unclaimed_perception_operation():
+    compiler, skill, ir = _compile_ir("franka_panda")
+    bad_requirements = dataclasses.replace(ir.required_capabilities, perception=())
+    bad_ir = dataclasses.replace(ir, required_capabilities=bad_requirements)
+
+    result = RoboIRVerificationPass().run(
+        PassContext(ir=bad_ir, skill=skill, robot_spec=compiler.robot_spec)
+    )
+
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "RW401"
+    assert "contains PERCEIVE" in result.diagnostics[0].reason
+
+
 def test_capability_pass_matches_direct_function_call():
     print("\n[TEST 5] Testing CapabilityPass is a faithful wrap of check_required_capabilities()...")
-    compiler, skill, ir = _compile_ir("temi", "Tighten the M8 bolt")
+    # Capability verification is a pre-lowering target check. A holonomic base
+    # cannot legally lower TIGHTEN anymore, so construct that preflight RoboIR
+    # directly instead of asking the target dialect to fabricate arm motion.
+    compiler = SkillCompiler("temi")
+    portable = compiler.compile_portable("Tighten the M8 bolt", verbose=False)
+    skill = SkillCompiler("franka_panda").lower(portable, verbose=False)
+    ir = build_ir(portable.intent, compiler.robot_spec, "Tighten the M8 bolt", skill=None)
     direct = check_required_capabilities(ir, compiler.robot_spec)
     via_pass = CapabilityPass().run(
         PassContext(ir=ir, skill=skill, robot_spec=compiler.robot_spec)
@@ -110,7 +137,7 @@ def test_capability_pass_matches_direct_function_call():
 def test_safety_pass_matches_direct_function_call():
     print("\n[TEST 6] Testing SafetyPass is a faithful wrap of check_safety()...")
     compiler, skill, ir = _compile_ir("franka_panda")
-    direct = check_safety(skill, ir, compiler.robot_spec)
+    direct = check_safety(ir, compiler.robot_spec)
     via_pass = SafetyPass().run(
         PassContext(ir=ir, skill=skill, robot_spec=compiler.robot_spec)
     ).diagnostics
@@ -121,7 +148,7 @@ def test_safety_pass_matches_direct_function_call():
 class _StripLastSafetyCheckPass(CompilerPass):
     """Test-only IR-mutating pass -- proves the PassManager's generation mechanism and
     ir/diff.py's diffing actually work end-to-end, without shipping a fabricated
-    production "optimization" pass (no real one exists yet -- Phase 4)."""
+    production-only behavior to a test fixture."""
 
     name = "StripLastSafetyCheckPass"
 
@@ -191,13 +218,13 @@ def test_diff_ir_across_robots_shows_real_field_changes():
     panda_spec, ur5e_spec = get_robot_spec("franka_panda"), get_robot_spec("ur5e")
     if panda_spec.dof != ur5e_spec.dof:
         assert d.field_changes["execution.dof"] == (panda_spec.dof, ur5e_spec.dof)
-    # skill_id is a random uuid per compile -- must not show up as noise by default.
+    # skill_id is source-stable and still irrelevant to semantic cross-target diffing.
     assert "skill_id" not in d.field_changes
     print(f"  -> execution.robot_id changed {panda_result.ir.execution.robot_id} -> {ur5e_result.ir.execution.robot_id}; skill_id ignored [PASSED]")
 
 
 def test_optimization_level_plumbs_through_every_level_without_error():
-    print("\n[TEST 11] Testing every OptimizationLevel value compiles without error (plumbing only)...")
+    print("\n[TEST 11] Testing every OptimizationLevel value compiles without error...")
     compiler = SkillCompiler(target_robot="franka_panda")
     for level in OptimizationLevel:
         result = compiler.compile_with_diagnostics(

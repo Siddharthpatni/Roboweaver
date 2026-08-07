@@ -19,6 +19,7 @@ from typing import Sequence
 
 from roboweaver.ir.diagnostics import CompilerDiagnostic
 from roboweaver.ir.pass_manager import OptimizationLevel
+from roboweaver.optimize.formal import check_forbidden_zone_violations
 from roboweaver.optimize.pass_manager import SkillPass, SkillPassContext, SkillPassResult
 from roboweaver.types import BTNode, TaskType, TrajectorySegment, estimate_cycle_time
 
@@ -54,20 +55,10 @@ class CompiledSkillVerificationPass(SkillPass):
     RW501 (error): task_graph.tasks is empty -- should never happen, a genuinely
     fatal condition if it does.
 
-    RW502 (warning, not error): a MOVE_TO task's description has no matching entry in
-    motion_plan.trajectories or motion_plan.ik_results, meaning
-    runtime/engine.py::SkillRuntime.execute() would silently do *nothing* for that
-    task (not even an idle step). This turns out to be pervasive, not rare:
-    compiler.py::_plan_motion only ever generates the fixed 3-pose pick/place motion
-    plan (grasp/approach/lift) regardless of the skill's actual category, so most
-    non-pick/place templates' MOVE_TO descriptions (skills/taxonomy.py -- e.g.
-    TIGHTEN_BOLT's "Align torque tool with bolt head") never match any motion_plan
-    entry, and even PICK_AND_PLACE's own "Transfer to dropoff location" task doesn't.
-    Making this an error would refuse to compile nearly every skill in the registry
-    for a pre-existing gap this pass merely surfaces -- the same reasoning
-    ir/diagnostics.py's RW201 already applies to the (also pervasive) missing
-    perception system: real, disclosed, non-blocking, not fabricated as fixed and
-    not swept under the rug as passing.
+    RW502 (warning): a MOVE_TO task's description has no matching entry in
+    motion_plan.trajectories or motion_plan.ik_results. The generalized planner now
+    plans every built-in category, so this is a regression guard for malformed custom
+    programs and future planner changes rather than a known default-path warning.
 
     Also computes a real, non-fabricated timing-analysis signal: if one trajectory
     segment's duration exceeds 60% of the estimated total cycle time, flags it as
@@ -122,11 +113,8 @@ class CompiledSkillVerificationPass(SkillPass):
                     ),
                     required_capability=None,
                     fixes=[
-                        "compiler.py::_plan_motion currently only plans the fixed "
-                        "3-pose pick/place motion regardless of skill category -- "
-                        "extend it (or add a category-specific motion planner) to "
-                        "produce a trajectory/IK entry for every MOVE_TO task this "
-                        "skill's template declares.",
+                        "Ensure the active planner produces a trajectory or IK entry "
+                        "for every MOVE_TO task declared by the selected template.",
                     ],
                 )
             )
@@ -179,6 +167,31 @@ class CompiledSkillVerificationPass(SkillPass):
                     )
 
         return SkillPassResult(skill=skill, diagnostics=diagnostics, metrics=metrics, modified=False)
+
+
+class BoundedFormalVerificationPass(SkillPass):
+    """Fail-closed discrete forbidden-zone verification for the active target.
+
+    The pass runs both before and after optimization. Checking the original sampled
+    trajectory prevents waypoint decimation from hiding an intermediate sampled
+    violation; checking the final trajectory verifies the artifact that downstream
+    code generation and deployment consume.
+    """
+
+    name = "BoundedFormalVerificationPass"
+
+    def run(self, ctx: SkillPassContext) -> SkillPassResult:
+        declared = ctx.robot_spec.forbidden_joint_ranges
+        diagnostics = check_forbidden_zone_violations(ctx.skill, declared)
+        return SkillPassResult(
+            skill=ctx.skill,
+            diagnostics=diagnostics,
+            metrics={
+                "declared_forbidden_zones": float(len(declared)),
+                "forbidden_zone_diagnostics": float(len(diagnostics)),
+            },
+            modified=False,
+        )
 
 
 class WaypointDecimationPass(SkillPass):

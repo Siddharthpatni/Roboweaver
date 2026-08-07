@@ -92,13 +92,13 @@ export const CompareView: React.FC = () => {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-4xl space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
+      <div className="w-full space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
         <div>
-          <span className="kicker">Compare</span>
-          <h1 className="text-[19px] font-semibold text-white mt-1">One instruction, every real target</h1>
+          <span className="kicker">Choose a robot</span>
+          <h1 className="text-[19px] font-semibold text-white mt-1">Find the best robot for this job</h1>
           <p className="text-[13px] text-slate-400 mt-1.5 leading-relaxed max-w-2xl">
-            Real cost-ranked comparison across robots — leave the robot list empty and the real
-            knowledge graph supplies candidates via its own <code className="font-data text-slate-300">SUITABLE_FOR</code> edges.
+            Describe the job and RoboWeaver will compile it for each candidate, reject robots that
+            cannot meet the requirements, and rank the accepted options by estimated cost.
           </p>
         </div>
 
@@ -123,7 +123,7 @@ export const CompareView: React.FC = () => {
 
           <div className="space-y-1.5">
             <span className="text-[11px] text-slate-500 font-medium">
-              Robots (leave all unchecked for real graph-derived candidates)
+              Robots to compare (leave all unchecked to use every suitable candidate)
             </span>
             <div className="flex flex-wrap gap-1.5">
               {robots.map((r) => (

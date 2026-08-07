@@ -14,16 +14,12 @@ Features:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Any
 
 from roboweaver.compiler import SkillCompiler
-from roboweaver.hardware import get_robot_spec, RobotSpec
 from roboweaver.ir import SkillCompilationError
 from roboweaver.types import CompiledSkill, BTNode
-from roboweaver.codegen.groot2 import export_groot2_xml
 from roboweaver.fleet.choreography_verification import check_choreography
 
 
@@ -140,7 +136,11 @@ class MultiRobotChoreographer:
             compiler = self._get_compiler(step.robot_id)
             if verbose:
                 print(f"\n  [Compiling Step: {step.step_id}] -> Robot: \033[36m{step.robot_id}\033[0m")
-            step.compiled_skill = compiler.compile(step.instruction, verbose=False)
+            # A workcell must use the same verified compiler boundary as every
+            # standalone deployment; compile() alone omits capability/safety passes.
+            step.compiled_skill = compiler.compile_with_diagnostics(
+                step.instruction, verbose=False,
+            ).skill
             if verbose:
                 spec = compiler.robot_spec
                 print(f"    ✓ Compiled for {spec.name} ({spec.dof}-DOF) | Intent: {step.compiled_skill.intent.action.value}")
@@ -242,7 +242,7 @@ def generate_launch_description():
         (launch_dir / "workcell_orchestration.launch.py").write_text(launch_py, encoding="utf-8")
 
         # 4. Generate universal robot agent runner Python script
-        agent_py = f"""#!/usr/bin/env python3
+        agent_py = """#!/usr/bin/env python3
 \"\"\"Universal ROS 2 Multi-Robot Choreography Agent Node.\"\"\"
 
 import rclpy
@@ -255,7 +255,7 @@ class WorkcellRobotAgent(Node):
         super().__init__('workcell_robot_agent')
         self.declare_parameter('robot_id', 'generic_robot')
         robot_id = self.get_parameter('robot_id').get_parameter_value().string_value
-        self.get_logger().info(f'RoboWeaver Multi-Robot Agent Active for [namespace: {{robot_id}}]')
+        self.get_logger().info(f'RoboWeaver Multi-Robot Agent Active for [namespace: {robot_id}]')
 
 
 def main(args=None):

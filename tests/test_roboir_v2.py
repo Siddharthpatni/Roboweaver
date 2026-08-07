@@ -25,7 +25,7 @@ def test_build_ir_with_skill_populates_real_summaries():
 
     assert ir.task_summary is not None
     assert ir.task_summary.task_count == len(skill.task_graph.tasks)
-    assert ir.task_summary.task_types == [t.type.value for t in skill.task_graph.tasks]
+    assert list(ir.task_summary.task_types) == [t.type.value for t in skill.task_graph.tasks]
 
     assert ir.motion_summary is not None
     assert ir.motion_summary.segment_count == len(skill.motion_plan.trajectories)

@@ -23,8 +23,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from roboweaver.nlu.ollama_manager import (
-    DEFAULT_HOST,
-    DEFAULT_MODEL,
     OllamaManager,
     get_manager,
 )

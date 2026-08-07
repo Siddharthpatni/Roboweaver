@@ -9,9 +9,9 @@ import tarfile
 import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from roboweaver.codegen.groot2 import export_groot2_xml
+from roboweaver.codegen.groot2 import export_groot2_ir, export_groot2_xml
 from roboweaver.identifiers import require_safe_identifier
 from roboweaver.types import (
     Action,
@@ -25,6 +25,9 @@ from roboweaver.types import (
     TaskType,
     TrajectorySegment,
 )
+
+if TYPE_CHECKING:
+    from roboweaver.ir.schema import RoboIR
 
 
 @dataclass
@@ -180,7 +183,10 @@ class SkillPackage:
         return cls(meta, skill)
 
     def export_archive(
-        self, output_path: str | Path, deployment_manifest: dict[str, Any] | None = None,
+        self,
+        output_path: str | Path,
+        deployment_manifest: dict[str, Any] | None = None,
+        roboir: "RoboIR | None" = None,
     ) -> Path:
         """Export skill package to a `.rwsp` tarball archive.
 
@@ -214,9 +220,14 @@ class SkillPackage:
                     json.dumps(deployment_manifest, indent=2), encoding="utf-8"
                 )
 
-            # Write behavior_tree.xml
-            if self.skill is not None:
-                bt_xml = export_groot2_xml(self.skill)
+            # Production export supplies RoboIR, the compiler's verified fixed point.
+            # The CompiledSkill branch remains only for old package callers.
+            if roboir is not None or self.skill is not None:
+                bt_xml = (
+                    export_groot2_ir(roboir)
+                    if roboir is not None
+                    else export_groot2_xml(self.skill)
+                )
                 (pkg_dir / "behavior_tree.xml").write_text(bt_xml, encoding="utf-8")
 
             # Create tar.gz archive with extension .rwsp

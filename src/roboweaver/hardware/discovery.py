@@ -582,28 +582,22 @@ class RobotDiscoveryService:
     def _guess_robot_type(target: dict[str, Any]) -> str:
         """Heuristic guess of what type of robot is at this port."""
         name = target.get("name", "").lower()
-        if "universal" in name or "ur " in name:
-            return "Universal Robots (UR)"
-        elif "kuka" in name:
-            return "KUKA Industrial"
-        elif "fanuc" in name:
-            return "Fanuc Industrial"
-        elif "abb" in name:
-            return "ABB Industrial"
-        elif "franka" in name:
-            return "Franka Emika Panda"
-        elif "isaac" in name:
-            return "NVIDIA Isaac Sim"
-        elif "gazebo" in name or "ignition" in name:
-            return "Gazebo / Ignition Simulator"
-        elif "webots" in name:
-            return "Webots Simulator"
-        elif "ros 2" in name or "ros2" in name:
-            return "ROS 2 Node"
-        elif "moveit" in name:
-            return "MoveIt Planning Server"
-        elif "roboweaver" in name:
-            return "RoboWeaver Backend"
+        signatures = (
+            (("universal", "ur "), "Universal Robots (UR)"),
+            (("kuka",), "KUKA Industrial"),
+            (("fanuc",), "Fanuc Industrial"),
+            (("abb",), "ABB Industrial"),
+            (("franka",), "Franka Emika Panda"),
+            (("isaac",), "NVIDIA Isaac Sim"),
+            (("gazebo", "ignition"), "Gazebo / Ignition Simulator"),
+            (("webots",), "Webots Simulator"),
+            (("ros 2", "ros2"), "ROS 2 Node"),
+            (("moveit",), "MoveIt Planning Server"),
+            (("roboweaver",), "RoboWeaver Backend"),
+        )
+        for needles, label in signatures:
+            if any(needle in name for needle in needles):
+                return label
         return "Unknown Robot/Service"
 
     def to_dict(self, result: DiscoveryResult) -> dict[str, Any]:

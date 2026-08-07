@@ -1,0 +1,16 @@
+# Exact CI/test toolchain. Runtime installation uses this file followed by
+# `pip install -e . --no-deps`, so declared ranges cannot drift between runs.
+build==1.2.2.post1
+coverage==7.10.1
+iniconfig==2.1.0
+packaging==25.0
+pluggy==1.6.0
+pygments==2.19.2
+pyproject-hooks==1.2.0
+pyserial==3.5
+pytest==8.4.1
+pytest-cov==6.2.1
+ruff==0.12.4
+setuptools==80.9.0
+tomli==2.2.1 ; python_version < "3.11"
+wheel==0.45.1

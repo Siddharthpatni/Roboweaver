@@ -12,6 +12,7 @@ from roboweaver.ir import OptimizationLevel, build_ir, check_safety
 from roboweaver.optimize import motion_cache
 from roboweaver.optimize.pass_manager import SkillPassContext
 from roboweaver.optimize.passes import (
+    BoundedFormalVerificationPass,
     CompiledSkillVerificationPass,
     WaypointDecimationPass,
     RedundantSegmentElisionPass,
@@ -87,8 +88,10 @@ def test_waypoint_decimation_reduces_count_and_stays_safety_verified():
 
     # Re-verify the decimated result through the real safety pass -- proves the
     # decimation is safety-preserving, not just "fewer points".
-    ir = build_ir(result.skill.intent, compiler.robot_spec, raw_instruction="test")
-    diagnostics = check_safety(result.skill, ir, compiler.robot_spec)
+    ir = build_ir(
+        result.skill.intent, compiler.robot_spec, raw_instruction="test", skill=result.skill
+    )
+    diagnostics = check_safety(ir, compiler.robot_spec)
     assert [d for d in diagnostics if d.code == "RW304"] == []
     print(f"  -> {before} -> {after} waypoints ({result.metrics['pct_reduction']}% reduction), RW304 still clean [PASSED]")
 
@@ -165,9 +168,15 @@ def test_compile_with_diagnostics_full_pipeline_end_to_end():
 
     assert result.skill_pipeline is not None
     assert [r.pass_name for r in result.skill_pipeline.records] == [
-        "CompiledSkillVerificationPass", "WaypointDecimationPass",
-        "RedundantSegmentElisionPass", "CompiledSkillVerificationPass",
+        "CompiledSkillVerificationPass", "BoundedFormalVerificationPass",
+        "WaypointDecimationPass", "RedundantSegmentElisionPass",
+        "CompiledSkillVerificationPass", "BoundedFormalVerificationPass",
     ]
+    formal_records = [
+        record for record in result.skill_pipeline.records
+        if record.pass_name == BoundedFormalVerificationPass.name
+    ]
+    assert len(formal_records) == 2
     # WaypointDecimationPass really did reduce the waypoint count on the skill that
     # ends up in the CompilationResult -- not a side computation that got discarded.
     before = sum(len(s.waypoints) for s in result.skill_pipeline.initial_skill.motion_plan.trajectories.values())

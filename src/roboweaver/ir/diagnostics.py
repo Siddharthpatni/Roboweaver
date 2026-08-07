@@ -3,11 +3,10 @@ Compiler Debugger — checks a RoboIR's required capabilities against a target
 RobotSpec's declared capabilities and produces structured, LLVM/rustc-style
 diagnostics instead of a silent failure or a wrong skill.
 
-Perception checks are always warnings, never errors: no perception system exists
-anywhere in RoboWeaver today, so a skill that needs `perception.pose_estimation`
-would fail on every registered robot if perception were treated as blocking. Being
-honest about that gap (docs/REDESIGN.md's audit) is the point -- it's a warning that
-the target pose is assumed, not measured, not a reason to refuse to compile.
+Unsatisfied perception checks are warnings for source that still uses an assumed pose.
+A configured observation provider validates timestamp, frame, confidence, calibration,
+and finite coordinates before compilation; a valid measured pose removes only the
+capability requirement it actually satisfies.
 
 Sensing checks (e.g. force/torque) are blocking: RobotSpec.has_force_torque_sensor is
 real, declared per-robot data, so a mismatch here is a genuine, checkable compile error.
@@ -69,23 +68,28 @@ def check_required_capabilities(ir: RoboIR, robot_spec: RobotSpec) -> list[Compi
                 required_capability="sensing.force_torque",
                 fixes=[
                     "Attach and register a force/torque sensor on this robot's RobotSpec.",
-                    'Change execution.controller to "position" for a vision-only approach.',
+                    "Use a different task/controller only if it truthfully removes the force-control requirement.",
                     "Select a different robot backend that declares force_torque sensing.",
                 ],
             )
         )
 
     for cap in ir.required_capabilities.perception:
+        assumed_pose = any(obj.pose_source == "assumed_default" for obj in ir.objects)
         diagnostics.append(
             CompilerDiagnostic(
                 code="RW201",
                 severity="warning",
-                message=f"Skill '{ir.skill_id}' requires perception.{cap}, which RoboWeaver does not implement yet.",
-                reason="No perception system is wired into RoboWeaver -- object poses are assumed defaults, not measured.",
+                message=f"Skill '{ir.skill_id}' still requires perception.{cap}.",
+                reason=(
+                    "No validated external observation was supplied -- object poses are assumed defaults, not measured."
+                    if assumed_pose
+                    else "The supplied pose does not satisfy this action's full perception contract."
+                ),
                 required_capability=f"perception.{cap}",
                 fixes=[
-                    "Proceed using an assumed default object pose (current behavior).",
-                    "Wire a real perception stage before deploying this skill to physical hardware.",
+                    "Proceed only in a controlled scene with the disclosed pose provenance.",
+                    "Configure a validated observation provider before physical deployment.",
                 ],
             )
         )

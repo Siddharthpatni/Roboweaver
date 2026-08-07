@@ -9,6 +9,7 @@ import {
   Database,
   Radar,
   Gauge,
+  FlaskConical,
   Settings,
   LucideIcon,
 } from 'lucide-react';
@@ -26,17 +27,18 @@ export interface ViewMeta {
 }
 
 export const VIEW_META: ViewMeta[] = [
-  { id: 'overview', label: 'Control center', icon: LayoutDashboard, group: 'support', description: 'System health and next actions' },
-  { id: 'compile', label: 'Compile', icon: Code2, group: 'pipeline', description: 'Intent to verified RoboIR' },
-  { id: 'compare', label: 'Compare', icon: GitCompare, group: 'pipeline', description: 'Rank compatible robots' },
-  { id: 'workcell', label: 'Workcell', icon: Wand2, group: 'pipeline', description: 'Coordinate multiple robots' },
-  { id: 'benchmark', label: 'Benchmark', icon: Gauge, group: 'pipeline', description: 'Measure compiler performance' },
-  { id: 'robots', label: 'Fleet registry', icon: Boxes, group: 'support', description: 'Capabilities and constraints' },
-  { id: 'connect', label: 'Connections', icon: Radar, group: 'support', description: 'Discover robot endpoints' },
-  { id: 'twin', label: 'Digital twin', icon: Cpu, group: 'support', description: 'Inspect motion before deploy' },
-  { id: 'graph', label: 'Knowledge graph', icon: Share2, group: 'support', description: 'Trace capability evidence' },
-  { id: 'packages', label: 'Package catalog', icon: Database, group: 'support', description: 'Browse indexed ROS 2 assets' },
-  { id: 'settings', label: 'Settings', icon: Settings, group: 'support', description: 'Runtime and connection scope' },
+  { id: 'overview', label: 'Start here', icon: LayoutDashboard, group: 'support', description: 'What RoboWeaver does and what to do next' },
+  { id: 'compile', label: 'Build a program', icon: Code2, group: 'pipeline', description: 'Describe a task and test robot targets' },
+  { id: 'compare', label: 'Choose a robot', icon: GitCompare, group: 'pipeline', description: 'Find the best compatible target' },
+  { id: 'workcell', label: 'Plan multiple robots', icon: Wand2, group: 'pipeline', description: 'Coordinate a shared job' },
+  { id: 'benchmark', label: 'Test the compiler', icon: Gauge, group: 'pipeline', description: 'Measure speed and reliability' },
+  { id: 'research', label: 'Research lab', icon: FlaskConical, group: 'pipeline', description: 'Design and isolate new robot embodiments' },
+  { id: 'robots', label: 'Robot library', icon: Boxes, group: 'support', description: 'Robot capabilities and limits' },
+  { id: 'connect', label: 'Connect hardware', icon: Radar, group: 'support', description: 'Find and test robot endpoints' },
+  { id: 'twin', label: 'Hand simulator', icon: Cpu, group: 'support', description: 'Test modeled Inspire Hand grasps' },
+  { id: 'graph', label: 'Capability evidence', icon: Share2, group: 'support', description: 'See why robots and tools match' },
+  { id: 'packages', label: 'ROS package library', icon: Database, group: 'support', description: 'Browse indexed robot software' },
+  { id: 'settings', label: 'Settings', icon: Settings, group: 'support', description: 'Runtime, AI, and connections' },
 ];
 
 export function viewMetaFor(view: ViewType): ViewMeta {

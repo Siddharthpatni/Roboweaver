@@ -147,12 +147,12 @@ def test_too_many_robots_in_compare_is_rejected(live_server):
     print("  -> real 400 for 25 robots, compare_robots() never invoked [PASSED]")
 
 
-def test_connection_advisor_rejects_non_local_model_provider(live_server):
+def test_connection_advisor_rejects_unknown_model_provider(live_server):
     status, _, body = _get(
         f"{live_server}/api/connect/advise?provider=remote&host=127.0.0.1&port=30002"
     )
     assert status == 400
-    assert body["error"] == "provider must be 'ollama'."
+    assert body["error"] == "provider must be 'ollama' or 'openrouter'."
 
 
 def test_normal_compile_still_works_end_to_end(live_server):
@@ -162,6 +162,30 @@ def test_normal_compile_still_works_end_to_end(live_server):
     assert body["instruction"] == "Pick up the red cube"
     assert body["ir"]["skill"]["id"]
     print("  -> real compile still succeeds -- hardening didn't break the normal path [PASSED]")
+
+
+def test_research_plan_and_prompt_free_observability_are_real_routes(live_server):
+    status, _, body = _post(
+        f"{live_server}/api/research/plan",
+        {"objective": "Make a climbing monkey robot", "use_ai": False},
+    )
+    assert status == 200
+    assert body["spec"]["name"] == "climbing_monkey"
+    assert "model.urdf" in body["artifacts"]
+    assert body["sandbox"]["network"] == "none"
+    assert body["safety"]["model_authored_code_executed"] is False
+
+    status, _, observability = _get(f"{live_server}/api/observability")
+    assert status == 200
+    assert "traces" in observability
+    assert "cache" in observability
+    assert "Prompts" in observability["traces"]["privacy"]
+
+
+def test_research_plan_validates_body(live_server):
+    status, _, body = _post(f"{live_server}/api/research/plan", {"use_ai": False})
+    assert status == 400
+    assert "objective" in body["error"]
 
 
 def test_health_endpoints_are_available(live_server):
@@ -177,6 +201,28 @@ def test_connect_get_is_rejected_without_side_effect(live_server):
     status, _, body = _get(f"{live_server}/api/connect?robot=franka_panda")
     assert status == 405
     assert body["error"] == "method_not_allowed"
+
+
+def test_connection_codegen_is_post_only_and_keeps_endpoint_out_of_source(live_server):
+    status, _, body = _get(f"{live_server}/api/connect/codegen")
+    assert status == 405
+    assert body["error"] == "method_not_allowed"
+
+    status, _, body = _post(
+        f"{live_server}/api/connect/codegen",
+        {
+            "robot": "ur5e",
+            "protocol": "sim",
+            "uri": "sim://192.168.10.20:30002",
+            "provider": "none",
+            "ai_review": False,
+        },
+    )
+    assert status == 200
+    assert body["filename"] == "connect_ur5e.py"
+    assert "192.168.10.20" not in body["code"]
+    assert body["environment"]["ROBOWEAVER_TARGET_URI"] == "sim://192.168.10.20:30002"
+    assert body["safety_notes"]
 
 
 def test_connect_post_validates_json_and_robot_id(live_server):
@@ -335,7 +381,7 @@ def test_logs_do_not_include_query_values(live_server, caplog):
     caplog.set_level(logging.INFO, logger="roboweaver.dashboard")
     secret_prompt = "customer-private-work-order"
     status, _, _ = _get(f"{live_server}/api/compile?instruction={secret_prompt}")
-    assert status == 200
+    assert status == 400
     assert secret_prompt not in caplog.text
 
 

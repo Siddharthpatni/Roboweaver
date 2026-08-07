@@ -39,7 +39,7 @@ def print_banner(instruction: str) -> None:
 
 def print_validation(result) -> None:
     """Print stage 6: validation results."""
-    print(f"\n\033[1;36m━━━ STAGE 6/6: Validate \033[0m")
+    print("\n\033[1;36m━━━ STAGE 6/6: Validate \033[0m")
 
     checks = [
         (result.height_gained > 0.03,
@@ -64,9 +64,9 @@ def print_result(result, video_path: str | None) -> None:
     print(f"\033[1;35m{'═' * (w + 2)}\033[0m")
 
     if result.success:
-        print(f"  \033[1;32m✅ SUCCESS — Robot picked up the red cube.\033[0m")
+        print("  \033[1;32m✅ SUCCESS — Robot picked up the red cube.\033[0m")
     else:
-        print(f"  \033[1;31m❌ FAILURE — Cube was not successfully lifted.\033[0m")
+        print("  \033[1;31m❌ FAILURE — Cube was not successfully lifted.\033[0m")
         print(f"     Height gained: {result.height_gained:.3f}m (need ≥0.03m)")
 
     if video_path:

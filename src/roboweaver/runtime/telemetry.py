@@ -4,7 +4,7 @@ Telemetry Engine — records 100Hz real-time execution telemetry and metrics.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Any
 
 

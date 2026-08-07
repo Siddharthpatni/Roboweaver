@@ -93,13 +93,13 @@ export const BenchmarkView: React.FC = () => {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-5xl space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
+      <div className="w-full space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
         <div>
-          <span className="kicker">Benchmark</span>
-          <h1 className="text-[19px] font-semibold text-white mt-1">RoboBench — real compile-pipeline measurement</h1>
+          <span className="kicker">Test the compiler</span>
+          <h1 className="text-[19px] font-semibold text-white mt-1">Measure compile speed and success</h1>
           <p className="text-[13px] text-slate-400 mt-1.5 leading-relaxed max-w-2xl">
-            Every distinct registered robot × every NL-reachable skill category, real compile
-            latency and diagnostics. Not simulator-execution benchmarking.
+            Run every supported task category against the selected robots. This measures compiler
+            latency and compatibility only; it does not measure physical execution or simulator speed.
           </p>
         </div>
 

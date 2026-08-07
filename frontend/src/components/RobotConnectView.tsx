@@ -18,6 +18,11 @@ import {
   CircuitBoard,
   Network,
   Sparkles,
+  Code2,
+  Copy,
+  Download,
+  Cloud,
+  HardDrive,
 } from 'lucide-react';
 import { RoboWeaverAPI, TimeoutError } from '../lib/api';
 import {
@@ -25,6 +30,7 @@ import {
   DiscoveryResult,
   ConnectionResult,
   ConnectionAdvice,
+  ConnectionCodeResult,
   NetworkInfo,
   RobotProfile,
 } from '../types';
@@ -157,7 +163,11 @@ export const RobotConnectView: React.FC = () => {
   const [subnet, setSubnet] = useState('');
   const [advising, setAdvising] = useState<Record<string, boolean>>({});
   const [advice, setAdvice] = useState<Record<string, ConnectionAdvice>>({});
-  const provider = 'ollama';
+  const [provider, setProvider] = useState<'ollama' | 'openrouter'>('ollama');
+  const [generatingCode, setGeneratingCode] = useState<Record<string, boolean>>({});
+  const [generatedCode, setGeneratedCode] = useState<Record<string, ConnectionCodeResult>>({});
+  const [codeErrors, setCodeErrors] = useState<Record<string, string>>({});
+  const [copiedCode, setCopiedCode] = useState<Record<string, boolean>>({});
 
   const scan = useCallback(async (range?: string) => {
     setScanning(true);
@@ -256,20 +266,59 @@ export const RobotConnectView: React.FC = () => {
     }
   };
 
+  const handleGenerateCode = async (robot: DiscoveredRobot) => {
+    const key = `${robot.host}:${robot.port}`;
+    const registryId = registryIds[key] ?? defaultRegistryId(robot);
+    setGeneratingCode((current) => ({ ...current, [key]: true }));
+    setCodeErrors((current) => ({ ...current, [key]: '' }));
+    try {
+      const generated = await RoboWeaverAPI.generateConnectionCode(
+        registryId,
+        bridgeProtocolFor(robot),
+        bridgeUriFor(robot),
+        provider,
+        true,
+      );
+      setGeneratedCode((current) => ({ ...current, [key]: generated }));
+    } catch (generationError) {
+      setCodeErrors((current) => ({
+        ...current,
+        [key]: generationError instanceof Error ? generationError.message : 'Connection code generation failed.',
+      }));
+    } finally {
+      setGeneratingCode((current) => ({ ...current, [key]: false }));
+    }
+  };
+
+  const handleCopyCode = async (key: string, code: string) => {
+    await navigator.clipboard.writeText(code);
+    setCopiedCode((current) => ({ ...current, [key]: true }));
+    window.setTimeout(() => setCopiedCode((current) => ({ ...current, [key]: false })), 1400);
+  };
+
+  const handleDownloadCode = (result: ConnectionCodeResult) => {
+    const blob = new Blob([result.code], { type: 'text/x-python' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = result.filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
   const found = result?.discovered ?? [];
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-4xl space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
+      <div className="w-full space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
         {/* Header */}
         <div className="flex items-start justify-between gap-5 flex-wrap">
           <div>
-            <span className="kicker">Robot Connect</span>
-            <h1 className="text-[19px] font-semibold text-white mt-1">Auto-discover nearby robots</h1>
+            <span className="kicker">Connect hardware</span>
+            <h1 className="text-[19px] font-semibold text-white mt-1">Find robot controllers on this network</h1>
             <p className="text-[13px] text-slate-400 mt-1.5 leading-relaxed max-w-2xl">
-              Probes the standard robot and simulator control ports — ROS 2 DDS, Isaac Sim, Gazebo,
-              Webots, UR, KUKA, Fanuc, ABB and Franka — with a real TCP connect. Only sockets that
-              actually answered are listed, so an empty result genuinely means nothing is listening.
+              RoboWeaver checks common robot and simulator ports with a real network connection.
+              Only endpoints that answer are shown; finding a port does not certify the robot as safe.
             </p>
           </div>
           <button
@@ -285,6 +334,35 @@ export const RobotConnectView: React.FC = () => {
             {scanning ? 'Scanning…' : 'Scan this machine'}
           </button>
         </div>
+
+        <section className="app-card p-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.45fr)] lg:items-center">
+          <div className="flex items-start gap-3 min-w-0">
+            {provider === 'ollama' ? <HardDrive className="w-4 h-4 mt-0.5 text-cyan-300 shrink-0" /> : <Cloud className="w-4 h-4 mt-0.5 text-violet-300 shrink-0" />}
+            <div>
+              <h2 className="text-[13.5px] font-semibold text-slate-100">AI helper for identification and code review</h2>
+              <p className="text-[11.5px] text-slate-400 leading-relaxed mt-1">
+                Generated connection code always comes from RoboWeaver&apos;s validated template. The selected model only identifies endpoints, adds comments, and reports possible issues.
+              </p>
+              {provider === 'openrouter' && (
+                <p className="text-[11px] text-amber-300/90 leading-relaxed mt-2">
+                  Cloud mode: endpoint identification sends the host, port, banner, hostname, type guess, and latency to OpenRouter. Code review does not send the endpoint URI.
+                </p>
+              )}
+            </div>
+          </div>
+          <label className="grid gap-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-slate-500">
+            AI provider
+            <select value={provider} onChange={(event) => setProvider(event.target.value as 'ollama' | 'openrouter')} className="app-well rounded-lg px-3 py-2 text-[12px] normal-case tracking-normal text-slate-200">
+              <option value="ollama">Ollama · local</option>
+              <option value="openrouter">OpenRouter · cloud/free router</option>
+            </select>
+            <span className={`normal-case font-normal tracking-normal ${provider === 'ollama' ? (network?.advisor.ollama_available ? 'text-cyan-300' : 'text-amber-300') : (network?.advisor.openrouter_configured ? 'text-cyan-300' : 'text-amber-300')}`}>
+              {provider === 'ollama'
+                ? (network?.advisor.ollama_available ? `Ready · ${network.advisor.ollama_model}` : 'Ollama is not reachable')
+                : (network?.advisor.openrouter_configured ? `Ready · code: ${network.advisor.openrouter_codegen_model} · advice: ${network.advisor.openrouter_model}` : 'Add OPENROUTER_API_KEY to .env')}
+            </span>
+          </label>
+        </section>
 
         {/* LAN range sweep */}
         <div className="app-card p-5 space-y-3">
@@ -492,8 +570,8 @@ export const RobotConnectView: React.FC = () => {
                   <div className="flex items-center justify-between gap-2 flex-wrap pt-1 border-t border-cyan-400/[0.07]">
                     <div className="flex items-center gap-2 pt-2 flex-wrap">
                       <Sparkles className="w-3.5 h-3.5 text-violet-400 shrink-0" />
-                      <span className="text-[11.5px] text-slate-500">Identify with local Ollama</span>
-                      <span className={`status-dot-${network?.advisor.ollama_available ? 'online' : 'offline'}`} />
+                      <span className="text-[11.5px] text-slate-500">Identify with {provider === 'ollama' ? 'local Ollama' : 'OpenRouter cloud'}</span>
+                      <span className={`status-dot-${provider === 'ollama' ? (network?.advisor.ollama_available ? 'online' : 'offline') : (network?.advisor.openrouter_configured ? 'online' : 'offline')}`} />
                       <button
                         onClick={() => handleAdvise(robot)}
                         disabled={advising[key]}
@@ -574,25 +652,64 @@ export const RobotConnectView: React.FC = () => {
                       </select>
                     </label>
 
-                    <button
-                      onClick={() => handleConnect(robot)}
-                      disabled={isConnecting}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[12.5px] font-semibold transition-all disabled:opacity-50 ${
-                        conn?.is_connected
-                          ? 'bg-cyan-500/10 border border-cyan-500/30 text-cyan-300'
-                          : 'btn-neon'
-                      }`}
-                    >
-                      {isConnecting ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : conn?.is_connected ? (
-                        <PlugZap className="w-4 h-4" />
-                      ) : (
-                        <Plug className="w-4 h-4" />
-                      )}
-                      {isConnecting ? 'Connecting…' : conn?.is_connected ? 'Connected' : 'Connect'}
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={() => handleGenerateCode(robot)} disabled={generatingCode[key]} className="flex items-center gap-2 px-3.5 py-2 rounded-lg border border-violet-400/25 bg-violet-500/[0.08] text-violet-300 text-[12px] font-semibold disabled:opacity-50 hover:bg-violet-500/[0.13]">
+                        {generatingCode[key] ? <Loader2 className="w-4 h-4 animate-spin" /> : <Code2 className="w-4 h-4" />}
+                        {generatingCode[key] ? 'Generating…' : 'Generate connection code'}
+                      </button>
+                      <button
+                        onClick={() => handleConnect(robot)}
+                        disabled={isConnecting}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[12.5px] font-semibold transition-all disabled:opacity-50 ${
+                          conn?.is_connected
+                            ? 'bg-cyan-500/10 border border-cyan-500/30 text-cyan-300'
+                            : 'btn-neon'
+                        }`}
+                      >
+                        {isConnecting ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : conn?.is_connected ? (
+                          <PlugZap className="w-4 h-4" />
+                        ) : (
+                          <Plug className="w-4 h-4" />
+                        )}
+                        {isConnecting ? 'Connecting…' : conn?.is_connected ? 'Connected' : 'Connect'}
+                      </button>
+                    </div>
                   </div>
+
+                  {codeErrors[key] && <p className="text-[11.5px] text-rose-300">{codeErrors[key]}</p>}
+
+                  {generatedCode[key] && (
+                    <section className="rounded-lg border border-violet-400/20 bg-violet-500/[0.045] p-4 space-y-3 animate-fade-in">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div>
+                          <div className="flex items-center gap-2"><Code2 className="w-4 h-4 text-violet-300" /><h3 className="text-[12.5px] font-semibold text-slate-100">Validated no-motion connection adapter</h3></div>
+                          <p className="text-[10.5px] text-slate-500 mt-1">{generatedCode[key].filename} · deterministic source · AI review is additive</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={() => handleCopyCode(key, generatedCode[key].code)} className="compiler-action-button"><Copy className="w-3.5 h-3.5" />{copiedCode[key] ? 'Copied' : 'Copy'}</button>
+                          <button onClick={() => handleDownloadCode(generatedCode[key])} className="compiler-action-button is-primary"><Download className="w-3.5 h-3.5" />Download</button>
+                        </div>
+                      </div>
+                      <div className="app-well rounded-lg px-3 py-2 text-[11px] text-slate-400 break-all">
+                        Set <code className="font-data text-cyan-200">ROBOWEAVER_TARGET_URI</code> to{' '}
+                        <code className="font-data text-cyan-200">{generatedCode[key].environment.ROBOWEAVER_TARGET_URI}</code>, then run{' '}
+                        <code className="font-data text-cyan-200">python {generatedCode[key].filename}</code>.
+                      </div>
+                      <pre className="compiler-code-block max-h-72">{generatedCode[key].code}</pre>
+                      {generatedCode[key].ai_error ? (
+                        <p className="text-[11px] text-amber-300/90">Deterministic code is ready; {provider} review was unavailable: {generatedCode[key].ai_error}</p>
+                      ) : generatedCode[key].annotated_code ? (
+                        <details className="app-well rounded-lg p-3">
+                          <summary className="cursor-pointer text-[11.5px] font-semibold text-violet-300">Show {generatedCode[key].provider} review · {generatedCode[key].model}</summary>
+                          <pre className="compiler-code-block max-h-72 mt-3">{generatedCode[key].annotated_code}</pre>
+                          {(generatedCode[key].issues.length > 0 || generatedCode[key].suggestions.length > 0) && <div className="mt-3 text-[11px] text-slate-400 space-y-1">{generatedCode[key].issues.map((issue) => <p key={issue}>Issue: {issue}</p>)}{generatedCode[key].suggestions.map((suggestion) => <p key={suggestion}>Suggestion: {suggestion}</p>)}</div>}
+                        </details>
+                      ) : null}
+                      <div className="space-y-1">{generatedCode[key].safety_notes.map((note) => <p key={note} className="text-[10.5px] text-slate-500">• {note}</p>)}</div>
+                    </section>
+                  )}
 
                   {/* Row 4: connection outcome */}
                   {conn && (

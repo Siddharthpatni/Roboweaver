@@ -36,8 +36,8 @@ export const WorkcellBuilderView: React.FC = () => {
     try {
       const data = await RoboWeaverAPI.build(prompt);
       setResult(data);
-    } catch {
-      setError('Could not reach the RoboWeaver backend. Start it with: roboweaver dashboard --port 8080');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The workcell could not be compiled.');
     } finally {
       setLoading(false);
     }
@@ -85,14 +85,13 @@ export const WorkcellBuilderView: React.FC = () => {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-4xl space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
+      <div className="w-full space-y-6 px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
         <div>
-          <span className="kicker">Workcell Builder</span>
-          <h1 className="text-[19px] font-semibold text-white mt-1">Prompt-to-system compiler</h1>
+          <span className="kicker">Plan multiple robots</span>
+          <h1 className="text-[19px] font-semibold text-white mt-1">Turn one shared job into a coordinated plan</h1>
           <p className="text-[13px] text-slate-400 mt-1.5 leading-relaxed max-w-2xl">
-            Describe a multi-robot job in plain English. RoboWeaver parses the fleet, schedules a DAG of
-            execution tiers, compiles a skill per robot embodiment, and synthesizes a Groot2 BehaviorTree —
-            live, from the compiler running on the backend.
+            Describe a multi-robot job in plain English. RoboWeaver assigns work, orders tasks that
+            depend on each other, and compiles a separate program for every selected robot.
           </p>
         </div>
 
@@ -121,7 +120,7 @@ export const WorkcellBuilderView: React.FC = () => {
 
           <div className="flex items-center justify-between pt-1 gap-3">
             <span className="text-[11.5px] text-slate-500 truncate">
-              Compiles via <code className="font-data text-slate-400">PromptToWorkcellBuilder</code>
+              Unsupported clauses fail or remain disclosed; nothing silently becomes PICK.
             </span>
             <div className="flex items-center gap-2 shrink-0">
               <button
@@ -130,7 +129,7 @@ export const WorkcellBuilderView: React.FC = () => {
                 className="flex items-center gap-2 px-3.5 py-2 rounded-lg border border-violet-400/25 bg-violet-500/[0.08] text-violet-300 disabled:opacity-50 text-[12.5px] transition-colors hover:bg-violet-500/[0.13]"
               >
                 {composeLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                {composeLoading ? 'Decomposing…' : 'AI Compose'}
+                {composeLoading ? 'Planning…' : 'Ask AI to draft'}
               </button>
               <button
                 onClick={handleBuild}
@@ -138,7 +137,7 @@ export const WorkcellBuilderView: React.FC = () => {
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-[#0a0c11] text-[13px] font-semibold transition-colors"
               >
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-                {loading ? 'Compiling…' : 'Compile workcell'}
+                {loading ? 'Building…' : 'Build multi-robot plan'}
               </button>
             </div>
           </div>
@@ -200,6 +199,11 @@ export const WorkcellBuilderView: React.FC = () => {
         {/* Results */}
         {result && (
           <div className="space-y-5 animate-fade-in">
+            {result.warnings.length > 0 && (
+              <div className="app-card p-4 border-amber-400/20 text-[12px] text-amber-200 space-y-1">
+                {result.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+              </div>
+            )}
             <div className="app-card p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
                 <div className="flex items-center gap-1.5 text-emerald-400">

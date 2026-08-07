@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import MagicMock
 
 from roboweaver.nlu.ollama_manager import OllamaManager, OllamaResponse
-from roboweaver.nlu.skill_composer import SkillComposer, SkillComposition, ComposedStep
+from roboweaver.nlu.skill_composer import SkillComposer, SkillComposition
 
 
 def _mock_manager(text: str | None = None, error: str | None = None) -> OllamaManager:

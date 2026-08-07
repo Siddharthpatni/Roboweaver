@@ -16,16 +16,38 @@ sim = [
     "imageio[ffmpeg]>=2.31,<3",
 ]
 test = [
-    "pytest>=7.0,<9",
-    "build>=1.2,<2",
+    "pytest==8.4.1",
+    "pytest-cov==6.2.1",
+    "build==1.2.2.post1",
+    "ruff==0.12.4",
 ]
 
 [project.scripts]
 roboweaver = "roboweaver.cli.main:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools==80.9.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+
+[tool.coverage.run]
+branch = true
+source = ["roboweaver"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 75
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["F"]

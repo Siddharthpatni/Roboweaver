@@ -7,12 +7,20 @@ from roboweaver.ir.schema import (
     RequiredCapabilities,
     ExecutionSpec,
     VerificationSpec,
+    IRTask,
+    IRBehaviorNode,
+    ProgramSpec,
+    IRIKSolution,
+    IRTrajectory,
+    LoweringSpec,
 )
 from roboweaver.ir.builder import build_ir
 from roboweaver.ir.diagnostics import CompilerDiagnostic, SkillCompilationError, check_required_capabilities
 from roboweaver.ir.safety import check_safety
 from roboweaver.ir.pass_manager import (
     OptimizationLevel,
+    AnalysisManager,
+    PreservedAnalyses,
     PassContext,
     PassResult,
     CompilerPass,
@@ -22,6 +30,7 @@ from roboweaver.ir.pass_manager import (
 )
 from roboweaver.ir.passes import RoboIRVerificationPass, CapabilityPass, SafetyPass
 from roboweaver.ir.diff import IRDiff, diff_ir, diff_trace
+from roboweaver.ir.adapters import compiled_skill_from_ir
 
 __all__ = [
     "RoboIR",
@@ -30,12 +39,20 @@ __all__ = [
     "RequiredCapabilities",
     "ExecutionSpec",
     "VerificationSpec",
+    "IRTask",
+    "IRBehaviorNode",
+    "ProgramSpec",
+    "IRIKSolution",
+    "IRTrajectory",
+    "LoweringSpec",
     "build_ir",
     "CompilerDiagnostic",
     "SkillCompilationError",
     "check_required_capabilities",
     "check_safety",
     "OptimizationLevel",
+    "AnalysisManager",
+    "PreservedAnalyses",
     "PassContext",
     "PassResult",
     "CompilerPass",
@@ -48,4 +65,5 @@ __all__ = [
     "IRDiff",
     "diff_ir",
     "diff_trace",
+    "compiled_skill_from_ir",
 ]

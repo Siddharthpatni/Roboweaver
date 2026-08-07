@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { NextRequest } from 'next/server';
+import { accessHeaders, accessPolicy } from '../../../../lib/server-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -45,8 +46,8 @@ function upstreamBase(): URL {
 
 function timeoutFor(path: string, method: string): number {
   if (method === 'POST' && path === '/api/ai/pull') return 5 * 60_000;
-  if (path.startsWith('/api/ai/') || path === '/api/connect/advise') return 70_000;
-  if (path === '/api/discover' || path === '/api/benchmark') return 35_000;
+  if (path.startsWith('/api/ai/') || path === '/api/research/plan' || path === '/api/connect/advise' || path === '/api/connect/codegen') return 75_000;
+  if (path === '/api/discover' || path === '/api/benchmark' || path === '/api/research/benchmark') return 35_000;
   return 20_000;
 }
 
@@ -59,6 +60,13 @@ async function proxy(request: NextRequest, context: RouteContext): Promise<Respo
   }
 
   const upstreamPath = `/${segments.map(encodeURIComponent).join('/')}`;
+  const policy = accessPolicy(request, upstreamPath);
+  if (!policy.permitted) {
+    const status = policy.reason === 'host_not_allowed' ? 421 : 403;
+    const response = jsonError(policy.reason ?? 'request_not_permitted', status, requestId);
+    for (const [name, value] of Object.entries(accessHeaders(policy))) response.headers.set(name, value);
+    return response;
+  }
   let upstream: URL;
   try {
     upstream = upstreamBase();
@@ -107,6 +115,7 @@ async function proxy(request: NextRequest, context: RouteContext): Promise<Respo
     }
     responseHeaders.set('Cache-Control', 'no-store');
     responseHeaders.set('X-Request-ID', response.headers.get('x-request-id') ?? requestId);
+    for (const [name, value] of Object.entries(accessHeaders(policy))) responseHeaders.set(name, value);
     return new Response(response.body, { status: response.status, headers: responseHeaders });
   } catch {
     return jsonError('upstream_unavailable', 502, requestId);

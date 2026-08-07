@@ -7,9 +7,11 @@ requests -- nothing here mocks the handler.
 """
 
 import json
+import io
 import threading
 import urllib.error
 import urllib.request
+import zipfile
 
 import pytest
 
@@ -38,6 +40,14 @@ def _get(url: str):
             return resp.status, json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         return exc.code, json.loads(exc.read())
+
+
+def _get_raw(url: str):
+    try:
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            return resp.status, dict(resp.headers), resp.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, dict(exc.headers), exc.read()
 
 
 def test_diff_reports_real_field_changes_between_two_real_robots(live_server):
@@ -89,7 +99,96 @@ def test_diff_reports_a_real_compilation_failure_for_an_incompatible_robot(live_
     assert body["error"] == "compilation_failed"
     assert body["robot"] == "temi"
     assert any(d["code"] == "RW102" for d in body["diagnostics"])
-    print(f"  -> real RW102 compilation failure surfaced, not a silently empty/fake diff [PASSED]")
+    print("  -> real RW102 compilation failure surfaced, not a silently empty/fake diff [PASSED]")
+
+
+def test_compile_matrix_returns_one_source_and_multiple_real_lowerings(live_server):
+    status, body = _get(
+        f"{live_server}/api/compile-matrix?instruction=Pick+up+the+red+cube"
+        "&robots=franka_panda,ur5e,kuka_iiwa"
+    )
+    assert status == 200
+    assert len(body["source_digest"]) == 64
+    assert set(body["targets"]) == {"franka_panda", "ur5e", "kuka_iiwa"}
+    assert body["failures"] == {}
+
+    programs = [target["ir"]["program"] for target in body["targets"].values()]
+    assert programs[1:] == programs[:-1]
+    assert {
+        target["ir"]["lowering"]["robot_id"] for target in body["targets"].values()
+    } == {"franka_panda", "ur5e", "kuka_iiwa"}
+    assert all(target["behavior_tree_xml"] for target in body["targets"].values())
+    assert all(
+        target["native_mlir"]["status"] in {"succeeded", "unavailable", "disabled"}
+        for target in body["targets"].values()
+    )
+
+
+def test_compile_matrix_preserves_successes_when_one_target_is_rejected(live_server):
+    status, body = _get(
+        f"{live_server}/api/compile-matrix?instruction=Tighten+the+M8+bolt"
+        "&robots=franka_panda,temi"
+    )
+    assert status == 200
+    assert "franka_panda" in body["targets"]
+    assert "temi" in body["failures"]
+    assert any(item["code"] == "RW102" for item in body["failures"]["temi"])
+
+
+@pytest.mark.parametrize("endpoint", ["compile?robot=franka_panda", "compile-matrix?robots=franka_panda,ur5e"])
+def test_compile_endpoints_fail_closed_for_unknown_source_actions(live_server, endpoint):
+    status, body = _get(f"{live_server}/api/{endpoint}&instruction=Unpack+the+shipment")
+    assert status == 400
+    assert body["error"] == "compilation_failed"
+    assert [diagnostic["code"] for diagnostic in body["diagnostics"]] == ["RW101"]
+
+
+def test_workcell_endpoint_refuses_a_prompt_without_executable_actions(live_server):
+    status, body = _get(f"{live_server}/api/build?prompt=Discuss+factory+automation")
+    assert status == 400
+    assert body["error"] == "compilation_failed"
+    assert [diagnostic["code"] for diagnostic in body["diagnostics"]] == ["RW101"]
+
+
+def test_artifact_endpoint_returns_reproducible_buildable_ros2_package(live_server):
+    url = (
+        f"{live_server}/api/artifact?instruction=Pick+up+the+red+cube"
+        "&robot=franka_panda&backend=ros2"
+    )
+    status, headers, body = _get_raw(url)
+    second_status, _, second_body = _get_raw(url)
+
+    assert status == second_status == 200
+    assert headers["Content-Type"] == "application/zip"
+    assert body == second_body
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        names = archive.namelist()
+        package_xml = next(name for name in names if name.endswith("/package.xml"))
+        manifest_name = next(name for name in names if name.endswith("/compiled_skill.json"))
+        setup_name = next(name for name in names if name.endswith("/setup.py"))
+        assert package_xml and setup_name
+        manifest = json.loads(archive.read(manifest_name))
+        assert manifest["robot_id"] == "franka_panda"
+        assert manifest["trajectories"]
+        assert manifest["roboir"]["program"]["tasks"]
+
+
+def test_artifact_endpoint_returns_urscript_only_for_ur_target(live_server):
+    status, headers, body = _get_raw(
+        f"{live_server}/api/artifact?instruction=Pick+up+the+red+cube"
+        "&robot=ur5e&backend=urscript"
+    )
+    assert status == 200
+    assert headers["Content-Type"].startswith("text/plain")
+    assert b"def roboweaver_" in body
+    assert b"movej(" in body
+
+    rejected_status, _, rejected_body = _get_raw(
+        f"{live_server}/api/artifact?instruction=Pick+up+the+red+cube"
+        "&robot=kuka_iiwa&backend=urscript"
+    )
+    assert rejected_status == 400
+    assert json.loads(rejected_body)["error"] == "artifact_generation_failed"
 
 
 if __name__ == "__main__":

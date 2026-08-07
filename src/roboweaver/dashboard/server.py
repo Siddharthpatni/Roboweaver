@@ -26,7 +26,7 @@ from typing import Any
 
 from roboweaver import __version__ as ROBOWEAVER_VERSION
 from roboweaver.compiler import SkillCompiler
-from roboweaver.codegen.groot2 import export_groot2_xml
+from roboweaver.codegen.groot2 import export_groot2_ir
 from roboweaver.knowledge.ingest_registry import build_graph_from_registry
 from roboweaver.knowledge.package_nexus import RoboticsPackageNexus
 from roboweaver.registry.repository import SkillRepository
@@ -39,8 +39,10 @@ from roboweaver.ir import RoboIR, SkillCompilationError
 from roboweaver.json_utils import loads_strict
 from roboweaver.hardware.discovery import RobotDiscoveryService, MAX_SCAN_HOSTS
 from roboweaver.codegen.urdf_gen import generate_urdf
+from roboweaver.codegen.connection_gen import generate_connection_code
 from roboweaver.nlu.connection_advisor import advisor_status, build_advisor
 from roboweaver.hardware.universal_driver import resolve_bridge_class
+from roboweaver.upstream import native_mlir_tool_status
 
 logger = logging.getLogger("roboweaver.dashboard")
 
@@ -78,6 +80,7 @@ _MAX_ROBOTS_PARAM = 20
 _MAX_JSON_BODY_BYTES = 4096
 _MAX_REQUEST_TARGET_BYTES = 8192
 _MAX_QUERY_FIELDS = 32
+_ROUTE_NOT_HANDLED = object()
 _MAX_REQUEST_ID_LEN = 64
 _MIN_CONTROL_TOKEN_LEN = 32
 _MAX_CONTROL_TOKEN_LEN = 512
@@ -93,10 +96,15 @@ _EXPENSIVE_PATHS = frozenset({
     "/api/build",
     "/api/compare",
     "/api/compile",
+    "/api/compile-matrix",
+    "/api/artifact",
     "/api/connect/advise",
+    "/api/connect/codegen",
     "/api/discover",
     "/api/diff",
     "/api/graph/export-obsidian",
+    "/api/research/plan",
+    "/api/research/benchmark",
 })
 _EXPENSIVE_PREFIXES = ("/api/ai/",)
 
@@ -207,7 +215,14 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             return
 
         path = urlparse(self.path).path
-        if path not in ("/api/connect", "/api/ai/pull", "/api/ai/config"):
+        post_handlers = {
+            "/api/connect": self._connect_robot,
+            "/api/connect/codegen": self._generate_connection_adapter,
+            "/api/ai/pull": self._pull_ai_model,
+            "/api/ai/config": self._configure_ai_model,
+            "/api/research/plan": self._plan_research_experiment,
+        }
+        if path not in post_handlers:
             self._send_json({"error": "method_not_allowed"}, status=405)
             return
         if not self._authorize_api_request():
@@ -220,12 +235,7 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
         payload = self._read_json_body()
         if payload is None:
             return
-        if path == "/api/connect":
-            self._run_handler(lambda: self._connect_robot(payload))
-        elif path == "/api/ai/pull":
-            self._run_handler(lambda: self._pull_ai_model(payload))
-        else:
-            self._run_handler(lambda: self._configure_ai_model(payload))
+        self._run_handler(lambda: post_handlers[path](payload))
 
     def do_OPTIONS(self):
         if not self._prepare_request():
@@ -335,975 +345,1383 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"error": f"query accepts at most {_MAX_QUERY_FIELDS} fields."}, status=400)
             return
 
-        if path == "/api/knowledge" or path == "/api/graph":
-            # Real ingestion (knowledge/ingest_registry.py) -- robots/packages/
-            # skills/edges from the live registries, not the old ~13-node demo graph.
-            kg = build_graph_from_registry()
-            self._send_json(kg.to_dict())
-
-        elif path == "/api/graph/path":
-            from_id = query.get("from", [""])[0]
-            to_id = query.get("to", [""])[0]
-            if not from_id or not to_id:
-                self._send_json({"error": "both 'from' and 'to' query params are required"}, status=400)
+        handlers = (
+            self._route_get_01,
+            self._route_get_02,
+            self._route_get_03,
+            self._route_get_04,
+            self._route_get_05,
+            self._route_get_06,
+            self._route_get_07,
+            self._route_get_robot_model,
+            self._route_get_robot_urdf,
+            self._route_get_robot_fk,
+            self._route_get_08,
+            self._route_get_09,
+            self._route_get_10,
+            self._route_get_11,
+            self._route_get_12,
+            self._route_get_13,
+            self._route_get_14,
+            self._route_get_15,
+            self._route_get_16,
+            self._route_get_17,
+            self._route_get_18,
+            self._route_get_19,
+            self._route_get_20,
+            self._route_get_21,
+            self._route_get_22,
+            self._route_get_23,
+            self._route_get_24,
+            self._route_get_25,
+            self._route_get_26,
+            self._route_get_27,
+            self._route_get_28,
+            self._route_get_29,
+            self._route_get_30,
+            self._route_get_31,
+            self._route_get_33,
+            self._route_get_32,
+        )
+        for handler in handlers:
+            if handler(path, query) is not _ROUTE_NOT_HANDLED:
                 return
-            kg = build_graph_from_registry()
-            path_ids = kg.find_path(from_id, to_id, max_hops=6)
-            self._send_json({"from": from_id, "to": to_id, "path": path_ids})
+        self._send_json({"error": "not_found"}, status=404)
 
-        elif path == "/api/graph/export-obsidian":
-            # Same real export the CLI's `roboweaver graph export-obsidian`
-            # command produces (knowledge/obsidian_export.py) -- written to a
-            # server-side temp directory (never a client-supplied path) and
-            # streamed back as a zip, so "download the Obsidian vault" is a
-            # real one-click action from the browser instead of a CLI-only
-            # capability.
-            import io
-            import tempfile
-            import zipfile
+    def _route_get_01(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/knowledge" or path == "/api/graph"):
+            return _ROUTE_NOT_HANDLED
+        # Real ingestion (knowledge/ingest_registry.py) -- robots/packages/
+        # skills/edges from the live registries, not the old ~13-node demo graph.
+        kg = build_graph_from_registry()
+        self._send_json(kg.to_dict())
 
-            from roboweaver.knowledge.obsidian_export import export_to_obsidian
 
-            kg = build_graph_from_registry()
-            with tempfile.TemporaryDirectory() as tmpdir:
-                out_dir = export_to_obsidian(kg, tmpdir)
-                buf = io.BytesIO()
-                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for md_file in sorted(Path(out_dir).glob("*.md")):
-                        zf.write(md_file, arcname=md_file.name)
-                body = buf.getvalue()
+    def _route_get_02(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/graph/path"):
+            return _ROUTE_NOT_HANDLED
+        from_id = query.get("from", [""])[0]
+        to_id = query.get("to", [""])[0]
+        if not from_id or not to_id:
+            self._send_json({"error": "both 'from' and 'to' query params are required"}, status=400)
+            return
+        kg = build_graph_from_registry()
+        path_ids = kg.find_path(from_id, to_id, max_hops=6)
+        self._send_json({"from": from_id, "to": to_id, "path": path_ids})
 
-            self._send_bytes(
-                body,
-                content_type="application/zip",
-                extra_headers={
-                    "Content-Disposition": 'attachment; filename="roboweaver-knowledge-graph-obsidian.zip"'
-                },
-            )
 
-        elif path == "/api/nexus/packages":
-            pkgs = RoboticsPackageNexus.get_all_packages()
-            self._send_json([
-                {
-                    "id": p.id,
-                    "name": p.name,
-                    "category": p.category,
-                    "description": p.description,
-                    "compatible_robots": p.compatible_robots,
-                    "ros2_dependencies": p.ros2_dependencies,
-                    "default_topics": p.default_topics,
-                    "default_actions": p.default_actions,
-                    "version": p.version,
-                }
-                for p in pkgs
-            ])
+    def _route_get_03(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/graph/export-obsidian"):
+            return _ROUTE_NOT_HANDLED
+        # Same real export the CLI's `roboweaver graph export-obsidian`
+        # command produces (knowledge/obsidian_export.py) -- written to a
+        # server-side temp directory (never a client-supplied path) and
+        # streamed back as a zip, so "download the Obsidian vault" is a
+        # real one-click action from the browser instead of a CLI-only
+        # capability.
+        import io
+        import tempfile
+        import zipfile
 
-        elif path == "/api/nexus/recommend":
-            prompt = query.get("prompt", ["Build ShopMate-R retail assistant with Temi, Pepper, and Franka"])[0]
-            if self._reject_if_too_long(prompt, "prompt"):
-                return
-            rec = RoboticsPackageNexus.recommend_stack_for_prompt(prompt)
-            self._send_json(rec)
+        from roboweaver.knowledge.obsidian_export import export_to_obsidian
 
-        elif path == "/api/skills":
-            repo = SkillRepository()
-            pkgs = repo.list_packages()
-            self._send_json([
-                {
-                    "id": p.id,
-                    "name": p.name,
-                    "version": p.version,
-                    "action": p.action,
-                    "target_object": p.target_object,
-                    "description": p.description,
-                }
-                for p in pkgs
-            ])
+        kg = build_graph_from_registry()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_dir = export_to_obsidian(kg, tmpdir)
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for md_file in sorted(Path(out_dir).glob("*.md")):
+                    zf.write(md_file, arcname=md_file.name)
+            body = buf.getvalue()
 
-        elif path == "/api/robots":
-            robots = []
-            for spec in distinct_robot_specs():
-                robots.append({
-                    "id": spec.id,
-                    "name": spec.name,
-                    "manufacturer": spec.manufacturer,
-                    "dof": spec.dof,
-                    "payload_capacity_kg": spec.payload_capacity_kg,
-                    "max_reach_m": spec.max_reach_m,
-                    "gripper_type": spec.gripper_type,
-                    "description": spec.description,
-                })
-            self._send_json(robots)
+        self._send_bytes(
+            body,
+            content_type="application/zip",
+            extra_headers={
+                "Content-Disposition": 'attachment; filename="roboweaver-knowledge-graph-obsidian.zip"'
+            },
+        )
 
-        elif path.startswith("/api/robots/") and path.endswith("/model"):
-            # get_robot_spec() silently falls back to Franka Panda for an
-            # unknown id (registry_robots.py; other callers rely on that
-            # default, so it isn't changed here) -- checked against
-            # ROBOT_REGISTRY directly so a typo'd id in the URL doesn't come
-            # back as a 200 with the wrong robot's kinematics.
-            robot_id = path[len("/api/robots/"):-len("/model")]
-            if robot_id not in ROBOT_REGISTRY:
-                self._send_json({"error": f"Unknown robot id '{robot_id}'."}, status=404)
-                return
-            spec = ROBOT_REGISTRY[robot_id]
-            self._send_json({
+
+    def _route_get_04(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/nexus/packages"):
+            return _ROUTE_NOT_HANDLED
+        pkgs = RoboticsPackageNexus.get_all_packages()
+        self._send_json([
+            {
+                "id": p.id,
+                "name": p.name,
+                "category": p.category,
+                "description": p.description,
+                "compatible_robots": p.compatible_robots,
+                "ros2_dependencies": p.ros2_dependencies,
+                "default_topics": p.default_topics,
+                "default_actions": p.default_actions,
+                "version": p.version,
+            }
+            for p in pkgs
+        ])
+
+
+    def _route_get_05(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/nexus/recommend"):
+            return _ROUTE_NOT_HANDLED
+        prompt = query.get("prompt", ["Build ShopMate-R retail assistant with Temi, Pepper, and Franka"])[0]
+        if self._reject_if_too_long(prompt, "prompt"):
+            return
+        rec = RoboticsPackageNexus.recommend_stack_for_prompt(prompt)
+        self._send_json(rec)
+
+
+    def _route_get_06(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/skills"):
+            return _ROUTE_NOT_HANDLED
+        repo = SkillRepository()
+        pkgs = repo.list_packages()
+        self._send_json([
+            {
+                "id": p.id,
+                "name": p.name,
+                "version": p.version,
+                "action": p.action,
+                "target_object": p.target_object,
+                "description": p.description,
+            }
+            for p in pkgs
+        ])
+
+
+    def _route_get_07(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/robots"):
+            return _ROUTE_NOT_HANDLED
+        robots = []
+        for spec in distinct_robot_specs():
+            robots.append({
                 "id": spec.id,
                 "name": spec.name,
+                "manufacturer": spec.manufacturer,
                 "dof": spec.dof,
-                "base_height_m": spec.base_height_m,
+                "payload_capacity_kg": spec.payload_capacity_kg,
                 "max_reach_m": spec.max_reach_m,
-                "joints": [
-                    {
-                        "name": j.name,
-                        "type": j.type,
-                        "axis": list(j.axis),
-                        "lower_limit": j.lower_limit,
-                        "upper_limit": j.upper_limit,
-                    }
-                    for j in spec.joints
-                ],
-                "links": [{"name": l.name, "length": l.length, "mass": l.mass} for l in spec.links],
+                "gripper_type": spec.gripper_type,
+                "motion_model": spec.motion_model,
+                "description": spec.description,
             })
+        self._send_json(robots)
 
-        elif path.startswith("/api/robots/") and path.endswith("/urdf"):
-            # get_robot_spec() silently falls back to Franka Panda for an
-            # unknown id (a pre-existing gap in registry_robots.py, not
-            # introduced here) -- checked against ROBOT_REGISTRY directly so
-            # this endpoint doesn't inherit that and hand back the wrong
-            # robot's model with a 200.
-            robot_id = path[len("/api/robots/"):-len("/urdf")]
-            if robot_id not in ROBOT_REGISTRY:
-                self._send_json({"error": f"Unknown robot id '{robot_id}'."}, status=404)
-                return
-            spec = ROBOT_REGISTRY[robot_id]
-            urdf_xml = generate_urdf(spec)
-            body = urdf_xml.encode("utf-8")
-            self._send_bytes(
-                body,
-                content_type="application/xml; charset=utf-8",
-                extra_headers={"Content-Disposition": f'attachment; filename="{spec.id}.urdf"'},
-            )
-
-        elif path.startswith("/api/robots/") and path.endswith("/fk"):
-            robot_id = path[len("/api/robots/"):-len("/fk")]
-            if robot_id not in ROBOT_REGISTRY:
-                self._send_json({"error": f"Unknown robot id '{robot_id}'."}, status=404)
-                return
-            spec = ROBOT_REGISTRY[robot_id]
-            q_param = query.get("q", [""])[0]
-            if q_param:
-                try:
-                    q = [float(v) for v in q_param.split(",")]
-                except ValueError:
-                    self._send_json(
-                        {"error": "q must be a comma-separated list of finite numbers."},
-                        status=400,
-                    )
-                    return
-            else:
-                q = [0.0] * spec.dof
-            if len(q) != spec.dof or not all(math.isfinite(value) for value in q):
-                self._send_json(
-                    {"error": f"q must contain exactly {spec.dof} finite joint values."},
-                    status=400,
-                )
-                return
-            positions = forward_kinematics_chain_ndof(spec, q)
-            self._send_json({
-                "id": spec.id,
-                "q": q,
-                # Real forward-kinematics chain -- the exact function the compiler's
-                # motion planner uses -- not a client-side approximation.
-                "positions": [[p.x, p.y, p.z] for p in positions],
-            })
-
-        elif path == "/api/build":
-            prompt = query.get(
-                "prompt",
-                ["Build ShopMate-R retail assistant with Temi for navigation, Pepper for customer interaction, and Franka arm for restocking"],
-            )[0]
-            if self._reject_if_too_long(prompt, "prompt"):
-                return
-
-            parsed = SystemPromptParser.parse(prompt)
-            choreographer = MultiRobotChoreographer(workcell_name=parsed.workcell_name)
-            for t in parsed.tasks:
-                choreographer.add_robot_task(
-                    step_id=t["step_id"],
-                    robot_id=t["robot_id"],
-                    instruction=t["instruction"],
-                    depends_on=t["depends_on"],
-                    handover_target=t["handover_target"],
-                )
-            schedule = choreographer.compile_workcell(verbose=False)
-            tiers = schedule.get_execution_tiers()
-            bt_xml = choreographer.generate_composite_behavior_tree()
-
-            res = {
-                "prompt": prompt,
-                "workcell_name": parsed.workcell_name,
-                "robots": parsed.robots,
-                "tiers": [
-                    [
-                        {
-                            "step_id": s.step_id,
-                            "robot_id": s.robot_id,
-                            "instruction": s.instruction,
-                            "depends_on": s.depends_on,
-                            "handover_target": s.handover_target,
-                            "action": s.compiled_skill.intent.action.value if s.compiled_skill else None,
-                        }
-                        for s in tier
-                    ]
-                    for tier in tiers
-                ],
-                "behavior_tree_xml": bt_xml,
-            }
-            self._send_json(res)
-
-        elif path == "/api/simulate/gestures":
-            self._send_json(list(InspireHandRS485Driver.GESTURES.keys()))
-
-        elif path == "/api/simulate/objects":
-            self._send_json([
+    def _route_get_robot_model(self, path: str, query: dict[str, list[str]]):
+        if not (path.startswith("/api/robots/") and path.endswith("/model")):
+            return _ROUTE_NOT_HANDLED
+        # get_robot_spec() silently falls back to Franka Panda for an
+        # unknown id (registry_robots.py; other callers rely on that
+        # default, so it isn't changed here) -- checked against
+        # ROBOT_REGISTRY directly so a typo'd id in the URL doesn't come
+        # back as a 200 with the wrong robot's kinematics.
+        robot_id = path[len("/api/robots/"):-len("/model")]
+        if robot_id not in ROBOT_REGISTRY:
+            self._send_json({"error": f"Unknown robot id '{robot_id}'."}, status=404)
+            return
+        spec = ROBOT_REGISTRY[robot_id]
+        self._send_json({
+            "id": spec.id,
+            "name": spec.name,
+            "dof": spec.dof,
+            "base_height_m": spec.base_height_m,
+            "max_reach_m": spec.max_reach_m,
+            "motion_model": spec.motion_model,
+            "kinematic_chains": spec.kinematic_chains,
+            "collision_radius_m": spec.collision_radius_m,
+            "joints": [
                 {
-                    "id": key,
-                    "name": obj.name,
-                    "diameter_mm": obj.diameter_mm,
-                    "compatible_gestures": obj.compatible_gestures,
-                    "min_hold_force_n": obj.min_hold_force_n,
-                    "max_safe_force_n": obj.max_safe_force_n,
+                    "name": j.name,
+                    "type": j.type,
+                    "axis": list(j.axis),
+                    "lower_limit": j.lower_limit,
+                    "upper_limit": j.upper_limit,
                 }
-                for key, obj in InspireHandSimulator.OBJECT_CATALOG.items()
-            ])
+                for j in spec.joints
+            ],
+            "links": [{"name": l.name, "length": l.length, "mass": l.mass} for l in spec.links],
+        })
 
-        elif path == "/api/simulate":
-            gesture = query.get("gesture", ["open"])[0]
-            object_key = query.get("object", ["medical_vial"])[0]
+    def _route_get_robot_urdf(self, path: str, query: dict[str, list[str]]):
+        if not (path.startswith("/api/robots/") and path.endswith("/urdf")):
+            return _ROUTE_NOT_HANDLED
+        # get_robot_spec() silently falls back to Franka Panda for an
+        # unknown id (a pre-existing gap in registry_robots.py, not
+        # introduced here) -- checked against ROBOT_REGISTRY directly so
+        # this endpoint doesn't inherit that and hand back the wrong
+        # robot's model with a 200.
+        robot_id = path[len("/api/robots/"):-len("/urdf")]
+        if robot_id not in ROBOT_REGISTRY:
+            self._send_json({"error": f"Unknown robot id '{robot_id}'."}, status=404)
+            return
+        spec = ROBOT_REGISTRY[robot_id]
+        urdf_xml = generate_urdf(spec)
+        body = urdf_xml.encode("utf-8")
+        self._send_bytes(
+            body,
+            content_type="application/xml; charset=utf-8",
+            extra_headers={"Content-Disposition": f'attachment; filename="{spec.id}.urdf"'},
+        )
 
-            if gesture not in InspireHandRS485Driver.GESTURES:
-                self._send_json({"error": f"Unknown gesture '{gesture}'"}, status=400)
-                return
-            if object_key not in InspireHandSimulator.OBJECT_CATALOG:
-                self._send_json({"error": f"Unknown object '{object_key}'"}, status=400)
-                return
-
-            sim = InspireHandSimulator()
-            sim.load_object(object_key)
-            sim.driver.set_gesture(gesture)
-            for _ in range(5):
-                state = sim.step(dt=0.05)
-
-            total_force = round(sum(state.actuator_forces_n), 2)
-            res = {
-                "gesture": state.gesture_active,
-                "object": object_key,
-                "is_simulated": sim.driver.simulated,
-                "connect_fallback_reason": sim.driver.last_connect_error,
-                "actuator_positions": state.actuator_positions,
-                "actuator_currents_ma": state.actuator_currents_ma,
-                "actuator_forces_n": state.actuator_forces_n,
-                "total_force_n": total_force,
-                "object_name": sim.current_object.name if sim.current_object else None,
-                "object_status": sim.current_object.status if sim.current_object else "NO OBJECT LOADED",
-                "stability_score": round(sim.stability_score, 2),
-                "slip_risk": sim.current_object.slip_risk if sim.current_object else 0.0,
-            }
-            self._send_json(res)
-
-        elif path == "/api/compile":
-            instruction = query.get("instruction", ["Pick up the red cube"])[0]
-            robot_id = query.get("robot", ["franka_panda"])[0]
-            if self._reject_if_too_long(instruction, "instruction"):
-                return
-            if not self._require_robot_id(robot_id):
-                return
-
-            compiler = SkillCompiler(target_robot=robot_id)
+    def _route_get_robot_fk(self, path: str, query: dict[str, list[str]]):
+        if not (path.startswith("/api/robots/") and path.endswith("/fk")):
+            return _ROUTE_NOT_HANDLED
+        robot_id = path[len("/api/robots/"):-len("/fk")]
+        if robot_id not in ROBOT_REGISTRY:
+            self._send_json({"error": f"Unknown robot id '{robot_id}'."}, status=404)
+            return
+        spec = ROBOT_REGISTRY[robot_id]
+        q_param = query.get("q", [""])[0]
+        if q_param:
             try:
-                result = compiler.compile_with_diagnostics(instruction, verbose=False)
-            except SkillCompilationError as exc:
-                self._send_json(
-                    {
-                        "error": "compilation_failed",
-                        "diagnostics": [d.to_dict() for d in exc.diagnostics],
-                    },
-                    status=400,
-                )
-                return
-
-            bt_xml = export_groot2_xml(result.skill)
-
-            res = {
-                "instruction": instruction,
-                "robot": robot_id,
-                "intent": {
-                    "action": result.skill.intent.action.value,
-                    "object_name": result.skill.intent.object_name,
-                    "parameters": result.skill.intent.parameters,
-                    "confidence": result.skill.intent.confidence,
-                },
-                "tasks": [
-                    {"type": t.type.value, "description": t.description}
-                    for t in result.skill.task_graph.tasks
-                ],
-                "behavior_tree_xml": bt_xml,
-                "ir": result.ir.to_dict(),
-                "diagnostics": [d.to_dict() for d in result.diagnostics],
-            }
-            # Additive: the real Pass Manager traces (ir/pass_manager.py,
-            # optimize/pass_manager.py), opt-in via a query param so the default
-            # response shape/size is unchanged for existing callers.
-            if query.get("explain_passes", ["0"])[0] == "1":
-                if result.pipeline is not None:
-                    res["pipeline"] = result.pipeline.to_dict()
-                if result.skill_pipeline is not None:
-                    res["skill_pipeline"] = result.skill_pipeline.to_dict()
-            # AI is an explicitly requested annotation, never a compile gate.
-            # A missing local model therefore leaves the real result intact and
-            # reports the explanation failure alongside it with HTTP 200.
-            if query.get("explain", ["0"])[0] == "1":
-                from roboweaver.nlu.skill_explainer import SkillExplainer
-                explanation_input = dict(res)
-                if result.pipeline is not None:
-                    explanation_input["pipeline"] = result.pipeline.to_dict()
-                if result.skill_pipeline is not None:
-                    explanation_input["skill_pipeline"] = result.skill_pipeline.to_dict()
-                spec = ROBOT_REGISTRY.get(robot_id)
-                spec_dict = ({
-                    "gripper_type": spec.gripper_type,
-                    "payload_capacity_kg": spec.payload_capacity_kg,
-                    "max_reach_m": spec.max_reach_m,
-                } if spec else None)
-                explanation = SkillExplainer().explain_compilation(explanation_input, spec_dict)
-                res["explanation"] = explanation.text
-                res["explanation_model"] = explanation.model
-                res["explanation_latency_s"] = round(explanation.latency_s, 3)
-                res["explanation_error"] = explanation.error
-            self._send_json(res)
-
-        elif path == "/api/diff":
-            # Real cross-robot RoboIR diff -- mirrors cli/main.py::cmd_diff()'s
-            # --robot2 path exactly (same compile calls, same ir/diff.py::diff_ir()).
-            # Per that function's own docstring, per-pass diffing (no robot2) shows
-            # "no differences" for almost every real compile today, since the three
-            # registered RoboIR passes are diagnostics-only -- this endpoint
-            # deliberately only exposes the honest, substantive comparison.
-            from roboweaver.ir.diff import diff_ir
-
-            instruction = query.get("instruction", ["Pick up the red cube"])[0]
-            if self._reject_if_too_long(instruction, "instruction"):
-                return
-            robot_id = query.get("robot", ["franka_panda"])[0]
-            robot2_id = query.get("robot2", [""])[0]
-            if not robot2_id:
-                self._send_json({"error": "'robot2' query param is required"}, status=400)
-                return
-            if not self._require_robot_ids([robot_id, robot2_id]):
-                return
-
-            compiler = SkillCompiler(target_robot=robot_id)
-            try:
-                result = compiler.compile_with_diagnostics(instruction, verbose=False)
-            except SkillCompilationError as exc:
-                self._send_json(
-                    {"error": "compilation_failed", "robot": robot_id,
-                     "diagnostics": [d.to_dict() for d in exc.diagnostics]},
-                    status=400,
-                )
-                return
-
-            compiler2 = SkillCompiler(target_robot=robot2_id)
-            try:
-                result2 = compiler2.compile_with_diagnostics(instruction, verbose=False)
-            except SkillCompilationError as exc:
-                self._send_json(
-                    {"error": "compilation_failed", "robot": robot2_id,
-                     "diagnostics": [d.to_dict() for d in exc.diagnostics]},
-                    status=400,
-                )
-                return
-
-            diff = diff_ir(result.ir, result2.ir)
-            diff_payload = {
-                "instruction": instruction,
-                "from_robot": robot_id,
-                "to_robot": robot2_id,
-                "field_changes": {k: list(v) for k, v in diff.field_changes.items()},
-                "objects_added": [o.to_dict() for o in diff.objects_added],
-                "objects_removed": [o.to_dict() for o in diff.objects_removed],
-                "objects_changed": [
-                    {"before": old.to_dict(), "after": new.to_dict()}
-                    for old, new in diff.objects_changed
-                ],
-            }
-            if query.get("explain", ["0"])[0] == "1":
-                from roboweaver.nlu.skill_explainer import SkillExplainer
-                explanation = SkillExplainer().explain_diff(diff_payload)
-                diff_payload["explanation"] = explanation.text
-                diff_payload["explanation_model"] = explanation.model
-                diff_payload["explanation_latency_s"] = round(explanation.latency_s, 3)
-                diff_payload["explanation_error"] = explanation.error
-            self._send_json(diff_payload)
-
-        elif path == "/api/cost":
-            from roboweaver.optimize.cost_model import compute_cost
-
-            instruction = query.get("instruction", ["Pick up the red cube"])[0]
-            robot_id = query.get("robot", ["franka_panda"])[0]
-            if self._reject_if_too_long(instruction, "instruction"):
-                return
-            if not self._require_robot_id(robot_id):
-                return
-            compiler = SkillCompiler(target_robot=robot_id)
-            try:
-                result = compiler.compile_with_diagnostics(instruction, verbose=False)
-            except SkillCompilationError as exc:
-                self._send_json(
-                    {"error": "compilation_failed", "diagnostics": [d.to_dict() for d in exc.diagnostics]},
-                    status=400,
-                )
-                return
-            cost = compute_cost(result.skill, result.ir, compiler.robot_spec)
-            self._send_json({
-                "instruction": instruction, "robot": robot_id,
-                "estimated_cycle_time_s": cost.estimated_cycle_time_s,
-                "payload_margin_kg": cost.payload_margin_kg,
-                "total_joint_travel_rad": cost.total_joint_travel_rad,
-                "manipulability_margin": cost.manipulability_margin,
-                "historical_success_rate": cost.historical_success_rate,
-            })
-
-        elif path == "/api/compare":
-            from roboweaver.optimize.cost_model import compare_robots
-
-            instruction = query.get("instruction", ["Pick up the red cube"])[0]
-            if self._reject_if_too_long(instruction, "instruction"):
-                return
-            robots_param = query.get("robots", [""])[0]
-            # Omitting 'robots' is a real, distinct request now, not an error --
-            # it means "let the knowledge graph suggest candidates" (real
-            # SUITABLE_FOR edges for this instruction's real skill category), not
-            # "compare nothing." compare_robots(robot_ids=None) does that lookup.
-            robot_ids = [r.strip() for r in robots_param.split(",") if r.strip()] or None
-            if robot_ids is not None and len(robot_ids) > _MAX_ROBOTS_PARAM:
-                self._send_json(
-                    {"error": f"'robots' accepts at most {_MAX_ROBOTS_PARAM} ids -- each one compiles a full skill."},
-                    status=400,
-                )
-                return
-            if robot_ids is not None and not self._require_robot_ids(robot_ids):
-                return
-            comparison = compare_robots(instruction, robot_ids)
-            self._send_json({
-                "instruction": instruction,
-                "candidate_source": comparison.candidate_source,
-                "ranked": [
-                    {
-                        "robot": rid, "score": score,
-                        "cost": {
-                            "estimated_cycle_time_s": cost.estimated_cycle_time_s,
-                            "payload_margin_kg": cost.payload_margin_kg,
-                            "total_joint_travel_rad": cost.total_joint_travel_rad,
-                            "manipulability_margin": cost.manipulability_margin,
-                            "historical_success_rate": cost.historical_success_rate,
-                        },
-                    }
-                    for rid, score, cost in comparison.ranked
-                ],
-                "pareto_optimal": comparison.pareto_optimal,
-                "skipped": comparison.skipped,
-            })
-
-        elif path == "/api/benchmark":
-            from roboweaver.benchmark.robobench import run_benchmark
-
-            robots_param = query.get("robots", [""])[0]
-            # A small default subset (not every registered robot) keeps a live
-            # dashboard-triggered call fast and predictable -- the CLI/roboweaver
-            # benchmark command is the place to run the full matrix.
-            robot_ids = (
-                [r.strip() for r in robots_param.split(",") if r.strip()]
-                or ["franka_panda", "ur5e", "kuka_iiwa"]
-            )
-            if len(robot_ids) > _MAX_ROBOTS_PARAM:
-                self._send_json(
-                    {"error": f"'robots' accepts at most {_MAX_ROBOTS_PARAM} ids -- each compiles every skill category."},
-                    status=400,
-                )
-                return
-            if not self._require_robot_ids(robot_ids):
-                return
-            report = run_benchmark(robot_ids=robot_ids)
-            self._send_json(report.to_dict())
-
-        elif path == "/api/discover":
-            host = query.get("host", [None])[0]
-            subnet = query.get("subnet", [None])[0]
-            if host and subnet:
-                self._send_json({"error": "Use either 'host' or 'subnet', not both."}, status=400)
-                return
-            if (host and len(host) > 253) or (subnet and len(subnet) > 64):
-                self._send_json({"error": "Discovery target is too long."}, status=400)
-                return
-            # A LAN sweep needs a shorter per-probe timeout than a localhost
-            # scan: 254 hosts x 14 ports at 0.8s each would be unusable.
-            scanner = RobotDiscoveryService(timeout=0.3 if subnet else 0.8)
-            try:
-                if subnet:
-                    result = scanner.scan_subnet(subnet)
-                elif host:
-                    result = scanner.scan_host(host)
-                else:
-                    result = scanner.scan()
-            except ValueError as exc:
-                self._send_json({"error": str(exc)}, status=400)
-                return
-            self._send_json(scanner.to_dict(result))
-
-        elif path in ("/health/live", "/health/ready"):
-            self._send_json({
-                "status": "ok",
-                "check": "liveness" if path.endswith("live") else "readiness",
-                "version": ROBOWEAVER_VERSION,
-            })
-
-        elif path == "/api/version":
-            uptime = (
-                round(time.monotonic() - _PROCESS_START_TIME, 1)
-                if _PROCESS_START_TIME is not None
-                else None
-            )
-            self._send_json({
-                "roboweaver_version": ROBOWEAVER_VERSION,
-                "ir_version": _IR_VERSION,
-                "python_version": sys.version.split()[0],
-                "platform": platform_module.system(),
-                "self_healing_active": _SELF_HEALING_ACTIVE,
-                "uptime_seconds": uptime,
-                "registered_robots": len(distinct_robot_specs()),
-            })
-
-        elif path == "/api/network":
-            scanner = RobotDiscoveryService()
-            ranges = scanner.detect_local_networks()
-            self._send_json({
-                "ranges": [
-                    {
-                        "cidr": r.cidr,
-                        "interface_ip": r.interface_ip,
-                        "interface_name": r.interface_name,
-                        "netmask_source": r.netmask_source,
-                        "host_count": r.host_count,
-                    }
-                    for r in ranges
-                ],
-                "max_scan_hosts": MAX_SCAN_HOSTS,
-                "advisor": advisor_status(),
-            })
-
-        elif path == "/api/connect/advise":
-            provider = query.get("provider", ["ollama"])[0]
-            model = query.get("model", [None])[0]
-            # A bare int(...) here previously threw an uncaught ValueError for
-            # any non-numeric port -- proven live: it left the request hanging
-            # with no response (the client got nothing until its own timeout)
-            # and dumped a traceback to the server log. Never let a malformed
-            # query param reach an unguarded parse.
-            try:
-                port = int(query.get("port", ["0"])[0] or 0)
+                q = [float(v) for v in q_param.split(",")]
             except ValueError:
-                self._send_json({"error": "port must be an integer."}, status=400)
+                self._send_json(
+                    {"error": "q must be a comma-separated list of finite numbers."},
+                    status=400,
+                )
                 return
-            if not 1 <= port <= 65535:
-                self._send_json({"error": "port must be between 1 and 65535."}, status=400)
-                return
-            endpoint = {
-                "host": query.get("host", ["localhost"])[0],
-                "port": port,
-                "banner": query.get("banner", [""])[0],
-                "hostname": query.get("hostname", [""])[0],
-                "robot_type_guess": query.get("guess", [""])[0],
-                "latency_ms": query.get("latency", ["0"])[0],
-            }
-            bounded_fields = {
-                "provider": provider,
-                "model": model or "",
-                "host": endpoint["host"],
-                "banner": endpoint["banner"],
-                "hostname": endpoint["hostname"],
-                "robot_type_guess": endpoint["robot_type_guess"],
-                "latency_ms": endpoint["latency_ms"],
-            }
-            if any(not isinstance(value, str) for value in bounded_fields.values()):
-                self._send_json({"error": "Connection advice fields must be strings."}, status=400)
-                return
-            limits = {
-                "provider": 32,
-                "model": 128,
-                "host": 253,
-                "banner": 512,
-                "hostname": 253,
-                "robot_type_guess": 128,
-                "latency_ms": 32,
-            }
-            too_long = [name for name, value in bounded_fields.items() if len(value) > limits[name]]
-            if too_long:
-                self._send_json({"error": "Connection advice field too long.", "fields": too_long}, status=400)
-                return
-            if provider != "ollama":
-                self._send_json({"error": "provider must be 'ollama'."}, status=400)
-                return
-            advice = build_advisor(provider, model).advise(endpoint)
-            self._send_json({
-                "robot_id": advice.robot_id,
-                "protocol": advice.protocol,
-                "uri": advice.uri,
-                "reasoning": advice.reasoning,
-                "confidence": advice.confidence,
-                "provider": advice.provider,
-                "model": advice.model,
-                "error": advice.error,
-            })
-
-        elif path == "/api/connect":
+        else:
+            q = [0.0] * spec.dof
+        if len(q) != spec.dof or not all(math.isfinite(value) for value in q):
             self._send_json(
-                {"error": "method_not_allowed", "message": "Use POST /api/connect with a JSON body."},
-                status=405,
+                {"error": f"q must contain exactly {spec.dof} finite joint values."},
+                status=400,
             )
+            return
+        positions = forward_kinematics_chain_ndof(spec, q)
+        self._send_json({
+            "id": spec.id,
+            "q": q,
+            # Real forward-kinematics chain -- the exact function the compiler's
+            # motion planner uses -- not a client-side approximation.
+            "positions": [[p.x, p.y, p.z] for p in positions],
+        })
 
-        # ── AI Endpoints (all fully offline, Ollama-backed) ────────────
-        # Every /api/ai/* endpoint is additive: if Ollama is unavailable,
-        # the response carries a stated error, never a silent fallback.
 
-        elif path == "/api/ai/status":
-            from roboweaver.nlu.ollama_manager import get_manager
-            self._send_json(get_manager().to_status_dict())
+    def _route_get_08(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/build"):
+            return _ROUTE_NOT_HANDLED
+        prompt = query.get(
+            "prompt",
+            [
+                "Franka Panda pick up the red cube, KUKA iiwa tighten the M8 bolt, "
+                "ABB weld the steel seam"
+            ],
+        )[0]
+        if self._reject_if_too_long(prompt, "prompt"):
+            return
 
-        elif path == "/api/ai/models":
-            from roboweaver.nlu.ollama_manager import get_manager
-            mgr = get_manager()
-            models = mgr.list_models()
-            self._send_json({
-                "available": mgr.is_available(),
-                "models": [
-                    {
-                        "name": m.name,
-                        "size_bytes": m.size_bytes,
-                        "parameter_size": m.parameter_size,
-                        "quantization": m.quantization,
-                    }
-                    for m in models
-                ],
-            })
-
-        elif path == "/api/ai/explain":
-            from roboweaver.nlu.skill_explainer import SkillExplainer
-
-            instruction = query.get("instruction", ["Pick up the red cube"])[0]
-            robot_id = query.get("robot", ["franka_panda"])[0]
-            if self._reject_if_too_long(instruction, "instruction"):
-                return
-            if not self._require_robot_id(robot_id):
-                return
-
-            compiler = SkillCompiler(target_robot=robot_id)
-            try:
-                result = compiler.compile_with_diagnostics(instruction, verbose=False)
-            except SkillCompilationError as exc:
-                self._send_json(
-                    {"error": "compilation_failed", "diagnostics": [d.to_dict() for d in exc.diagnostics]},
-                    status=400,
-                )
-                return
-
-            bt_xml = export_groot2_xml(result.skill)
-            compile_result = {
-                "instruction": instruction,
-                "robot": robot_id,
-                "intent": {
-                    "action": result.skill.intent.action.value,
-                    "object_name": result.skill.intent.object_name,
-                    "parameters": result.skill.intent.parameters,
-                    "confidence": result.skill.intent.confidence,
+        parsed = SystemPromptParser.parse(prompt)
+        if not parsed.tasks:
+            self._send_json(
+                {
+                    "error": "compilation_failed",
+                    "warnings": parsed.warnings,
+                    "diagnostics": [
+                        {
+                            "code": "RW101",
+                            "severity": "error",
+                            "message": "The workcell prompt contains no supported executable task.",
+                            "reason": "; ".join(parsed.warnings),
+                            "required_capability": None,
+                            "fixes": [
+                                "Assign each robot an explicit supported action and target."
+                            ],
+                        }
+                    ],
                 },
-                "tasks": [
-                    {"type": t.type.value, "description": t.description}
-                    for t in result.skill.task_graph.tasks
-                ],
-                "ir": result.ir.to_dict(),
-                "diagnostics": [d.to_dict() for d in result.diagnostics],
-            }
-            if result.pipeline is not None:
-                compile_result["pipeline"] = result.pipeline.to_dict()
-            if result.skill_pipeline is not None:
-                compile_result["skill_pipeline"] = result.skill_pipeline.to_dict()
-
-            spec = ROBOT_REGISTRY.get(robot_id)
-            robot_spec_dict = {
-                "gripper_type": spec.gripper_type if spec else "unknown",
-                "payload_capacity_kg": spec.payload_capacity_kg if spec else 0,
-                "max_reach_m": spec.max_reach_m if spec else 0,
-            } if spec else None
-
-            explainer = SkillExplainer()
-            explanation = explainer.explain_compilation(compile_result, robot_spec_dict)
-            self._send_json({
-                "instruction": instruction,
-                "robot": robot_id,
-                "explanation": explanation.text,
-                "model": explanation.model,
-                "latency_s": round(explanation.latency_s, 3),
-                "error": explanation.error,
-            }, status=200 if explanation.text else 503)
-
-        elif path == "/api/ai/diagnose":
-            from roboweaver.runtime.ai_recovery import AIRecoveryAdvisor
-
-            diagnostic_code = query.get("diagnostic", [""])[0].upper()
-            diagnostic_failures = {
-                "RW201": "PERCEPTION_FAILED",
-                "RW301": "PERCEPTION_FAILED",
-                "RW302": "GRASP_FAILED",
-                "RW303": "TARGET_UNREACHABLE",
-                "RW304": "JOINT_LIMIT_VIOLATED",
-                "RW305": "COLLISION_DETECTED",
-                "RW306": "COLLISION_DETECTED",
-                "RW501": "JOINT_LIMIT_VIOLATED",
-                "RW502": "IK_TIMEOUT",
-                "RW505": "JOINT_LIMIT_VIOLATED",
-                "RW506": "TIMEOUT",
-                "RW507": "COLLISION_DETECTED",
-                "RW601": "TIMEOUT",
-                "RW602": "COLLISION_DETECTED",
-                "RW603": "TIMEOUT",
-                "RW604": "TARGET_UNREACHABLE",
-                "RW605": "COLLISION_DETECTED",
-            }
-            if diagnostic_code and diagnostic_code not in diagnostic_failures:
-                self._send_json({"error": f"Unknown diagnostic code '{diagnostic_code}'"}, status=400)
-                return
-            failure_mode = query.get(
-                "failure", [diagnostic_failures.get(diagnostic_code, "GRASP_FAILED")]
-            )[0]
-            robot_id = query.get("robot", ["franka_panda"])[0]
-            action = query.get("action", ["PICK"])[0]
-            if not self._require_robot_id(robot_id):
-                return
-
-            from roboweaver.runtime.recovery import RecoveryEngine, FailureMode as FM
-            try:
-                fm = FM(failure_mode)
-            except ValueError:
-                self._send_json({"error": f"Unknown failure mode '{failure_mode}'"}, status=400)
-                return
-
-            engine = RecoveryEngine()
-            plan = engine.diagnose(fm)
-
-            spec = ROBOT_REGISTRY.get(robot_id)
-            spec_dict = {
-                "dof": spec.dof if spec else 7,
-                "gripper_type": spec.gripper_type if spec else "unknown",
-            }
-
-            advisor = AIRecoveryAdvisor()
-            advice = advisor.advise(
-                failure_mode=failure_mode,
-                rule_based_action=plan.recommended_action.value,
-                rule_based_reason=plan.reason,
-                robot_id=robot_id,
-                robot_spec=spec_dict,
-                skill_context={"action": action, "diagnostic_code": diagnostic_code or None},
+                status=400,
             )
+            return
+        choreographer = MultiRobotChoreographer(workcell_name=parsed.workcell_name)
+        for t in parsed.tasks:
+            choreographer.add_robot_task(
+                step_id=t["step_id"],
+                robot_id=t["robot_id"],
+                instruction=t["instruction"],
+                depends_on=t["depends_on"],
+                handover_target=t["handover_target"],
+            )
+        try:
+            schedule = choreographer.compile_workcell(verbose=False)
+        except SkillCompilationError as exc:
+            self._send_json(
+                {
+                    "error": "compilation_failed",
+                    "warnings": parsed.warnings,
+                    "diagnostics": [diagnostic.to_dict() for diagnostic in exc.diagnostics],
+                },
+                status=400,
+            )
+            return
+        tiers = schedule.get_execution_tiers()
+        bt_xml = choreographer.generate_composite_behavior_tree()
 
-            self._send_json({
-                "failure_mode": failure_mode,
-                "diagnostic_code": diagnostic_code or None,
-                "robot": robot_id,
-                "rule_based_action": advice.rule_based_action,
-                "rule_based_reason": advice.rule_based_reason,
-                "ai_explanation": advice.ai_explanation,
-                "ai_root_cause": advice.ai_root_cause,
-                "fix_description": advice.fix_description,
-                "confidence": advice.confidence,
-                "suggested_parameter_changes": advice.ai_suggested_params,
-                "model": advice.model,
-                "latency_s": round(advice.latency_s, 3),
-                "error": advice.error,
-            })
-
-        elif path == "/api/ai/compose":
-            from roboweaver.nlu.skill_composer import SkillComposer
-
-            instruction = query.get("instruction", [""])[0]
-            if not instruction:
-                self._send_json({"error": "'instruction' query param is required"}, status=400)
-                return
-            if self._reject_if_too_long(instruction, "instruction"):
-                return
-
-            composer = SkillComposer()
-            composition = composer.compose(instruction)
-
-            self._send_json({
-                "original_instruction": composition.original_instruction,
-                "steps": [
+        res = {
+            "prompt": prompt,
+            "workcell_name": parsed.workcell_name,
+            "robots": sorted({step.robot_id for step in schedule.steps.values()}),
+            "warnings": parsed.warnings,
+            "tiers": [
+                [
                     {
                         "step_id": s.step_id,
+                        "robot_id": s.robot_id,
                         "instruction": s.instruction,
-                        "action": s.action,
-                        "target_object": s.target_object,
-                        "suggested_robot": s.suggested_robot,
                         "depends_on": s.depends_on,
-                        "reasoning": s.reasoning,
+                        "handover_target": s.handover_target,
+                        "action": s.compiled_skill.intent.action.value if s.compiled_skill else None,
                     }
-                    for s in composition.steps
-                ],
-                "suggested_robots": composition.suggested_robots,
-                "choreography_prompt": composition.choreography_prompt,
-                "model": composition.model,
-                "latency_s": round(composition.latency_s, 3),
-                "error": composition.error,
-            }, status=200 if composition.steps else 503)
-
-        elif path == "/api/ai/enrich":
-            from roboweaver.knowledge.ai_enrichment import KnowledgeGraphEnricher
-
-            mode = query.get("mode", ["edges"])[0]
-            enricher = KnowledgeGraphEnricher()
-
-            if mode == "describe":
-                robot_id = query.get("robot", [""])[0]
-                if not robot_id:
-                    self._send_json({"error": "'robot' param required for describe mode"}, status=400)
-                    return
-                if not self._require_robot_id(robot_id):
-                    return
-                result = enricher.describe_robot(robot_id)
-                self._send_json({
-                    "mode": "describe",
-                    "descriptions": [
-                        {
-                            "robot_id": d.robot_id,
-                            "summary": d.summary,
-                            "strengths": d.strengths,
-                            "limitations": d.limitations,
-                            "ideal_tasks": d.ideal_tasks,
-                        }
-                        for d in result.robot_descriptions
-                    ],
-                    "model": result.model,
-                    "latency_s": round(result.latency_s, 3),
-                    "error": result.error,
-                })
-            elif mode == "summary":
-                node_id = query.get("node", [""])[0]
-                if not node_id:
-                    self._send_json({"error": "'node' param required for summary mode"}, status=400)
-                    return
-                graph = build_graph_from_registry()
-                result = enricher.summarize_obsidian_node(graph, node_id)
-                self._send_json({
-                    "mode": "summary",
-                    "summaries": [
-                        {"node_id": s.node_id, "summary": s.summary}
-                        for s in result.obsidian_summaries
-                    ],
-                    "model": result.model,
-                    "latency_s": round(result.latency_s, 3),
-                    "error": result.error,
-                }, status=200 if result.obsidian_summaries else 503)
-            elif mode == "pairings":
-                result = enricher.suggest_pairings()
-                self._send_json({
-                    "mode": "pairings",
-                    "pairings": [
-                        {
-                            "robot_a": p.robot_a,
-                            "robot_b": p.robot_b,
-                            "reasoning": p.reasoning,
-                            "suggested_tasks": p.suggested_tasks,
-                        }
-                        for p in result.robot_pairings
-                    ],
-                    "model": result.model,
-                    "latency_s": round(result.latency_s, 3),
-                    "error": result.error,
-                })
-            else:
-                graph = build_graph_from_registry()
-                existing_edges = [
-                    (
-                        edge.target_id.removeprefix("robot_"),
-                        edge.source_id.removeprefix("skill_").upper(),
-                    )
-                    for edge in graph.edges
-                    if edge.relation.value == "SUITABLE_FOR"
-                    and edge.source_id.startswith("skill_")
-                    and edge.target_id.startswith("robot_")
+                    for s in tier
                 ]
-                result = enricher.suggest_edges(existing_edges)
-                self._send_json({
-                    "mode": "edges",
-                    "suggestions": [
-                        {
-                            "robot_id": e.robot_id,
-                            "skill_category": e.skill_category,
-                            "confidence": e.confidence,
-                            "reasoning": e.reasoning,
-                        }
-                        for e in result.edge_suggestions
-                    ],
-                    "model": result.model,
-                    "latency_s": round(result.latency_s, 3),
-                    "error": result.error,
-                })
+                for tier in tiers
+            ],
+            "behavior_tree_xml": bt_xml,
+        }
+        self._send_json(res)
 
-        elif path == "/api/ai/chat":
-            from roboweaver.nlu.ollama_manager import get_manager
 
-            message = query.get("message", [""])[0]
-            if not message:
-                self._send_json({"error": "'message' query param is required"}, status=400)
-                return
-            if self._reject_if_too_long(message, "message"):
-                return
+    def _route_get_09(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/simulate/gestures"):
+            return _ROUTE_NOT_HANDLED
+        self._send_json(list(InspireHandRS485Driver.GESTURES.keys()))
 
-            mgr = get_manager()
-            if query.get("stream", ["0"])[0] == "1":
-                self._send_ai_chat_stream(mgr, message)
-                return
-            resp = mgr.generate(
-                prompt=message,
-                feature="chat",
-                system=(
-                    "You are RoboWeaver AI, a helpful assistant for the RoboWeaver "
-                    "robotics compiler platform. You help users understand robot skill "
-                    "compilation, motion planning, RoboIR, behavior trees, and the "
-                    "RoboWeaver pipeline. Be precise, technical, and concise."
-                ),
-                temperature=0.4,
-            )
-            self._send_json({
-                "message": message,
-                "response": resp.text,
-                "model": resp.model,
-                "latency_s": round(resp.latency_s, 3),
-                "error": resp.error,
-            }, status=200 if resp.text else 503)
 
-        elif path == "/" or path == "/index.html":
+    def _route_get_10(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/simulate/objects"):
+            return _ROUTE_NOT_HANDLED
+        self._send_json([
+            {
+                "id": key,
+                "name": obj.name,
+                "diameter_mm": obj.diameter_mm,
+                "compatible_gestures": obj.compatible_gestures,
+                "min_hold_force_n": obj.min_hold_force_n,
+                "max_safe_force_n": obj.max_safe_force_n,
+            }
+            for key, obj in InspireHandSimulator.OBJECT_CATALOG.items()
+        ])
+
+
+    def _route_get_11(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/simulate"):
+            return _ROUTE_NOT_HANDLED
+        gesture = query.get("gesture", ["open"])[0]
+        object_key = query.get("object", ["medical_vial"])[0]
+
+        if gesture not in InspireHandRS485Driver.GESTURES:
+            self._send_json({"error": f"Unknown gesture '{gesture}'"}, status=400)
+            return
+        if object_key not in InspireHandSimulator.OBJECT_CATALOG:
+            self._send_json({"error": f"Unknown object '{object_key}'"}, status=400)
+            return
+
+        sim = InspireHandSimulator()
+        sim.load_object(object_key)
+        sim.driver.set_gesture(gesture)
+        for _ in range(5):
+            state = sim.step(dt=0.05)
+
+        total_force = round(sum(state.actuator_forces_n), 2)
+        res = {
+            "gesture": state.gesture_active,
+            "object": object_key,
+            "is_simulated": sim.driver.simulated,
+            "connect_fallback_reason": sim.driver.last_connect_error,
+            "actuator_positions": state.actuator_positions,
+            "actuator_currents_ma": state.actuator_currents_ma,
+            "actuator_forces_n": state.actuator_forces_n,
+            "total_force_n": total_force,
+            "object_name": sim.current_object.name if sim.current_object else None,
+            "object_status": sim.current_object.status if sim.current_object else "NO OBJECT LOADED",
+            "stability_score": round(sim.stability_score, 2),
+            "slip_risk": sim.current_object.slip_risk if sim.current_object else 0.0,
+        }
+        self._send_json(res)
+
+
+    def _route_get_12(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/compile"):
+            return _ROUTE_NOT_HANDLED
+        instruction = query.get("instruction", ["Pick up the red cube"])[0]
+        robot_id = query.get("robot", ["franka_panda"])[0]
+        if self._reject_if_too_long(instruction, "instruction"):
+            return
+        if not self._require_robot_id(robot_id):
+            return
+
+        compiler = SkillCompiler(target_robot=robot_id)
+        try:
+            result = compiler.compile_with_diagnostics(instruction, verbose=False)
+        except SkillCompilationError as exc:
             self._send_json(
                 {
-                    "message": "RoboWeaver API server. The web UI is the Next.js frontend.",
-                    "frontend": "cd frontend && npm run dev  ->  http://localhost:3000",
-                    "api_docs": "See docs/REDESIGN.md for the API surface.",
-                }
+                    "error": "compilation_failed",
+                    "diagnostics": [d.to_dict() for d in exc.diagnostics],
+                },
+                status=400,
             )
+            return
 
+        bt_xml = export_groot2_ir(result.ir)
+
+        res = {
+            "instruction": instruction,
+            "robot": robot_id,
+            "intent": {
+                "action": result.skill.intent.action.value,
+                "object_name": result.skill.intent.object_name,
+                "parameters": result.skill.intent.parameters,
+                "confidence": result.skill.intent.confidence,
+            },
+            "tasks": [
+                {"type": t.type.value, "description": t.description}
+                for t in result.skill.task_graph.tasks
+            ],
+            "behavior_tree_xml": bt_xml,
+            "ir": result.ir.to_dict(),
+            "diagnostics": [d.to_dict() for d in result.diagnostics],
+            "native_mlir": result.native_mlir.to_dict() if result.native_mlir else None,
+        }
+        # Additive: the real Pass Manager traces (ir/pass_manager.py,
+        # optimize/pass_manager.py), opt-in via a query param so the default
+        # response shape/size is unchanged for existing callers.
+        self._augment_compile_explanation(res, result, robot_id, query)
+        self._send_json(res)
+
+    @staticmethod
+    def _augment_compile_explanation(res, result, robot_id, query) -> None:
+        pipeline = result.pipeline.to_dict() if result.pipeline is not None else None
+        skill_pipeline = (
+            result.skill_pipeline.to_dict() if result.skill_pipeline is not None else None
+        )
+        if query.get("explain_passes", ["0"])[0] == "1":
+            if pipeline is not None:
+                res["pipeline"] = pipeline
+            if skill_pipeline is not None:
+                res["skill_pipeline"] = skill_pipeline
+        if query.get("explain", ["0"])[0] != "1":
+            return
+        from roboweaver.nlu.skill_explainer import SkillExplainer
+        explanation_input = dict(res)
+        if pipeline is not None:
+            explanation_input["pipeline"] = pipeline
+        if skill_pipeline is not None:
+            explanation_input["skill_pipeline"] = skill_pipeline
+        spec = ROBOT_REGISTRY.get(robot_id)
+        spec_dict = ({
+            "gripper_type": spec.gripper_type,
+            "payload_capacity_kg": spec.payload_capacity_kg,
+            "max_reach_m": spec.max_reach_m,
+        } if spec else None)
+        explanation = SkillExplainer().explain_compilation(explanation_input, spec_dict)
+        res.update({
+            "explanation": explanation.text,
+            "explanation_model": explanation.model,
+            "explanation_latency_s": round(explanation.latency_s, 3),
+            "explanation_error": explanation.error,
+        })
+
+
+    def _route_get_13(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/compile-matrix"):
+            return _ROUTE_NOT_HANDLED
+        instruction = query.get("instruction", ["Pick up the red cube"])[0]
+        if self._reject_if_too_long(instruction, "instruction"):
+            return
+        robots_param = query.get("robots", [""])[0]
+        robot_ids = [r.strip() for r in robots_param.split(",") if r.strip()] or [
+            "franka_panda", "ur5e", "kuka_iiwa", "kinova_gen3", "abb_irb120",
+        ]
+        if len(robot_ids) > _MAX_ROBOTS_PARAM:
+            self._send_json(
+                {"error": f"'robots' accepts at most {_MAX_ROBOTS_PARAM} ids."},
+                status=400,
+            )
+            return
+        if not self._require_robot_ids(robot_ids):
+            return
+
+        try:
+            matrix = SkillCompiler.compile_targets(instruction, robot_ids, verbose=False)
+        except SkillCompilationError as exc:
+            self._send_json(
+                {
+                    "error": "compilation_failed",
+                    "diagnostics": [diagnostic.to_dict() for diagnostic in exc.diagnostics],
+                },
+                status=400,
+            )
+            return
+        self._send_json({
+            "instruction": instruction,
+            "source_digest": matrix.source_digest,
+            "portable": {
+                "action": matrix.portable.intent.action.value,
+                "object_name": matrix.portable.intent.object_name,
+                "parameters": matrix.portable.intent.parameters,
+                "confidence": matrix.portable.intent.confidence,
+                "warnings": matrix.portable.intent.parse_warnings,
+                "tasks": [
+                    {
+                        "type": task.type.value,
+                        "description": task.description,
+                        "parameters": task.params,
+                    }
+                    for task in matrix.portable.task_graph.tasks
+                ],
+            },
+            "targets": {
+                robot_id: {
+                    "instruction": instruction,
+                    "robot": robot_id,
+                    "intent": {
+                        "action": matrix.portable.intent.action.value,
+                        "object_name": matrix.portable.intent.object_name,
+                        "parameters": matrix.portable.intent.parameters,
+                        "confidence": matrix.portable.intent.confidence,
+                    },
+                    "tasks": [
+                        {"type": task.type.value, "description": task.description}
+                        for task in matrix.portable.task_graph.tasks
+                    ],
+                    "behavior_tree_xml": export_groot2_ir(result.ir),
+                    "ir": result.ir.to_dict(),
+                    "diagnostics": [d.to_dict() for d in result.diagnostics],
+                    "native_mlir": (
+                        result.native_mlir.to_dict() if result.native_mlir else None
+                    ),
+                    "pipeline": result.pipeline.to_dict() if result.pipeline else None,
+                    "skill_pipeline": (
+                        result.skill_pipeline.to_dict() if result.skill_pipeline else None
+                    ),
+                }
+                for robot_id, result in matrix.results.items()
+            },
+            "failures": {
+                robot_id: [d.to_dict() for d in diagnostics]
+                for robot_id, diagnostics in matrix.failures.items()
+            },
+        })
+
+
+    def _route_get_14(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/artifact"):
+            return _ROUTE_NOT_HANDLED
+        """Compile and return an actual target backend artifact.
+
+        ROS 2 is returned as a reproducible zip containing the complete
+        ``ament_python`` package. URScript is returned as executable text and
+        is accepted only for a verified Universal Robots target.
+        """
+        import io
+        import tempfile
+        import zipfile
+
+        from roboweaver.plugins.backend import BACKEND_REGISTRY
+
+        instruction = query.get("instruction", ["Pick up the red cube"])[0]
+        robot_id = query.get("robot", ["franka_panda"])[0]
+        backend_name = query.get("backend", ["ros2"])[0].lower()
+        if self._reject_if_too_long(instruction, "instruction"):
+            return
+        if not self._require_robot_id(robot_id):
+            return
+        if backend_name not in BACKEND_REGISTRY:
+            self._send_json(
+                {
+                    "error": "unknown_backend",
+                    "registered_backends": BACKEND_REGISTRY.names(),
+                },
+                status=400,
+            )
+            return
+
+        compiler = SkillCompiler(target_robot=robot_id)
+        try:
+            result = compiler.compile_with_diagnostics(instruction, verbose=False)
+        except SkillCompilationError as exc:
+            self._send_json(
+                {
+                    "error": "compilation_failed",
+                    "diagnostics": [d.to_dict() for d in exc.diagnostics],
+                },
+                status=400,
+            )
+            return
+
+        backend = BACKEND_REGISTRY.get(backend_name)
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                output_root = Path(tmpdir)
+                artifact_path = backend.compile(result, output_root)
+                if artifact_path.is_dir():
+                    buffer = io.BytesIO()
+                    with zipfile.ZipFile(
+                        buffer, "w", compression=zipfile.ZIP_DEFLATED
+                    ) as archive:
+                        for source in sorted(
+                            path for path in artifact_path.rglob("*") if path.is_file()
+                        ):
+                            relative = source.relative_to(output_root).as_posix()
+                            info = zipfile.ZipInfo(relative, date_time=(1980, 1, 1, 0, 0, 0))
+                            info.compress_type = zipfile.ZIP_DEFLATED
+                            info.external_attr = 0o100644 << 16
+                            archive.writestr(info, source.read_bytes())
+                    body = buffer.getvalue()
+                    filename = f"{artifact_path.name}-{robot_id}.zip"
+                    content_type = "application/zip"
+                else:
+                    body = artifact_path.read_bytes()
+                    filename = artifact_path.name
+                    content_type = "text/plain; charset=utf-8"
+        except ValueError as exc:
+            self._send_json(
+                {"error": "artifact_generation_failed", "reason": str(exc)},
+                status=400,
+            )
+            return
+
+        self._send_bytes(
+            body,
+            content_type=content_type,
+            extra_headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "X-RoboWeaver-Backend": backend_name,
+                "X-RoboWeaver-Robot": robot_id,
+            },
+        )
+
+
+    def _route_get_15(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/diff"):
+            return _ROUTE_NOT_HANDLED
+        # Real cross-robot RoboIR diff -- mirrors cli/main.py::cmd_diff()'s
+        # --robot2 path exactly (same compile calls, same ir/diff.py::diff_ir()).
+        # Per that function's own docstring, per-pass diffing (no robot2) shows
+        # "no differences" for almost every real compile today, since the three
+        # registered RoboIR passes are diagnostics-only -- this endpoint
+        # deliberately only exposes the honest, substantive comparison.
+        from roboweaver.ir.diff import diff_ir
+
+        instruction = query.get("instruction", ["Pick up the red cube"])[0]
+        if self._reject_if_too_long(instruction, "instruction"):
+            return
+        robot_id = query.get("robot", ["franka_panda"])[0]
+        robot2_id = query.get("robot2", [""])[0]
+        if not robot2_id:
+            self._send_json({"error": "'robot2' query param is required"}, status=400)
+            return
+        if not self._require_robot_ids([robot_id, robot2_id]):
+            return
+
+        compiler = SkillCompiler(target_robot=robot_id)
+        try:
+            result = compiler.compile_with_diagnostics(instruction, verbose=False)
+        except SkillCompilationError as exc:
+            self._send_json(
+                {"error": "compilation_failed", "robot": robot_id,
+                 "diagnostics": [d.to_dict() for d in exc.diagnostics]},
+                status=400,
+            )
+            return
+
+        compiler2 = SkillCompiler(target_robot=robot2_id)
+        try:
+            result2 = compiler2.compile_with_diagnostics(instruction, verbose=False)
+        except SkillCompilationError as exc:
+            self._send_json(
+                {"error": "compilation_failed", "robot": robot2_id,
+                 "diagnostics": [d.to_dict() for d in exc.diagnostics]},
+                status=400,
+            )
+            return
+
+        diff = diff_ir(result.ir, result2.ir)
+        diff_payload = {
+            "instruction": instruction,
+            "from_robot": robot_id,
+            "to_robot": robot2_id,
+            "field_changes": {k: list(v) for k, v in diff.field_changes.items()},
+            "objects_added": [o.to_dict() for o in diff.objects_added],
+            "objects_removed": [o.to_dict() for o in diff.objects_removed],
+            "objects_changed": [
+                {"before": old.to_dict(), "after": new.to_dict()}
+                for old, new in diff.objects_changed
+            ],
+        }
+        if query.get("explain", ["0"])[0] == "1":
+            from roboweaver.nlu.skill_explainer import SkillExplainer
+            explanation = SkillExplainer().explain_diff(diff_payload)
+            diff_payload["explanation"] = explanation.text
+            diff_payload["explanation_model"] = explanation.model
+            diff_payload["explanation_latency_s"] = round(explanation.latency_s, 3)
+            diff_payload["explanation_error"] = explanation.error
+        self._send_json(diff_payload)
+
+
+    def _route_get_16(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/cost"):
+            return _ROUTE_NOT_HANDLED
+        from roboweaver.optimize.cost_model import compute_cost
+
+        instruction = query.get("instruction", ["Pick up the red cube"])[0]
+        robot_id = query.get("robot", ["franka_panda"])[0]
+        if self._reject_if_too_long(instruction, "instruction"):
+            return
+        if not self._require_robot_id(robot_id):
+            return
+        compiler = SkillCompiler(target_robot=robot_id)
+        try:
+            result = compiler.compile_with_diagnostics(instruction, verbose=False)
+        except SkillCompilationError as exc:
+            self._send_json(
+                {"error": "compilation_failed", "diagnostics": [d.to_dict() for d in exc.diagnostics]},
+                status=400,
+            )
+            return
+        cost = compute_cost(result.skill, result.ir, compiler.robot_spec)
+        self._send_json({
+            "instruction": instruction, "robot": robot_id,
+            "estimated_cycle_time_s": cost.estimated_cycle_time_s,
+            "payload_margin_kg": cost.payload_margin_kg,
+            "total_joint_travel_rad": cost.total_joint_travel_rad,
+            "manipulability_margin": cost.manipulability_margin,
+            "historical_success_rate": cost.historical_success_rate,
+        })
+
+
+    def _route_get_17(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/compare"):
+            return _ROUTE_NOT_HANDLED
+        from roboweaver.optimize.cost_model import compare_robots
+
+        instruction = query.get("instruction", ["Pick up the red cube"])[0]
+        if self._reject_if_too_long(instruction, "instruction"):
+            return
+        robots_param = query.get("robots", [""])[0]
+        # Omitting 'robots' is a real, distinct request now, not an error --
+        # it means "let the knowledge graph suggest candidates" (real
+        # SUITABLE_FOR edges for this instruction's real skill category), not
+        # "compare nothing." compare_robots(robot_ids=None) does that lookup.
+        robot_ids = [r.strip() for r in robots_param.split(",") if r.strip()] or None
+        if robot_ids is not None and len(robot_ids) > _MAX_ROBOTS_PARAM:
+            self._send_json(
+                {"error": f"'robots' accepts at most {_MAX_ROBOTS_PARAM} ids -- each one compiles a full skill."},
+                status=400,
+            )
+            return
+        if robot_ids is not None and not self._require_robot_ids(robot_ids):
+            return
+        comparison = compare_robots(instruction, robot_ids)
+        self._send_json({
+            "instruction": instruction,
+            "candidate_source": comparison.candidate_source,
+            "ranked": [
+                {
+                    "robot": rid, "score": score,
+                    "cost": {
+                        "estimated_cycle_time_s": cost.estimated_cycle_time_s,
+                        "payload_margin_kg": cost.payload_margin_kg,
+                        "total_joint_travel_rad": cost.total_joint_travel_rad,
+                        "manipulability_margin": cost.manipulability_margin,
+                        "historical_success_rate": cost.historical_success_rate,
+                    },
+                }
+                for rid, score, cost in comparison.ranked
+            ],
+            "pareto_optimal": comparison.pareto_optimal,
+            "skipped": comparison.skipped,
+        })
+
+
+    def _route_get_18(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/benchmark"):
+            return _ROUTE_NOT_HANDLED
+        from roboweaver.benchmark.robobench import run_benchmark
+
+        robots_param = query.get("robots", [""])[0]
+        # A small default subset (not every registered robot) keeps a live
+        # dashboard-triggered call fast and predictable -- the CLI/roboweaver
+        # benchmark command is the place to run the full matrix.
+        robot_ids = (
+            [r.strip() for r in robots_param.split(",") if r.strip()]
+            or ["franka_panda", "ur5e", "kuka_iiwa"]
+        )
+        if len(robot_ids) > _MAX_ROBOTS_PARAM:
+            self._send_json(
+                {"error": f"'robots' accepts at most {_MAX_ROBOTS_PARAM} ids -- each compiles every skill category."},
+                status=400,
+            )
+            return
+        if not self._require_robot_ids(robot_ids):
+            return
+        report = run_benchmark(robot_ids=robot_ids)
+        self._send_json(report.to_dict())
+
+
+    def _route_get_19(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/discover"):
+            return _ROUTE_NOT_HANDLED
+        host = query.get("host", [None])[0]
+        subnet = query.get("subnet", [None])[0]
+        if host and subnet:
+            self._send_json({"error": "Use either 'host' or 'subnet', not both."}, status=400)
+            return
+        if (host and len(host) > 253) or (subnet and len(subnet) > 64):
+            self._send_json({"error": "Discovery target is too long."}, status=400)
+            return
+        # A LAN sweep needs a shorter per-probe timeout than a localhost
+        # scan: 254 hosts x 14 ports at 0.8s each would be unusable.
+        scanner = RobotDiscoveryService(timeout=0.3 if subnet else 0.8)
+        try:
+            if subnet:
+                result = scanner.scan_subnet(subnet)
+            elif host:
+                result = scanner.scan_host(host)
+            else:
+                result = scanner.scan()
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+        self._send_json(scanner.to_dict(result))
+
+
+    def _route_get_20(self, path: str, query: dict[str, list[str]]):
+        if not (path in ("/health/live", "/health/ready")):
+            return _ROUTE_NOT_HANDLED
+        self._send_json({
+            "status": "ok",
+            "check": "liveness" if path.endswith("live") else "readiness",
+            "version": ROBOWEAVER_VERSION,
+        })
+
+
+    def _route_get_21(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/version"):
+            return _ROUTE_NOT_HANDLED
+        uptime = (
+            round(time.monotonic() - _PROCESS_START_TIME, 1)
+            if _PROCESS_START_TIME is not None
+            else None
+        )
+        self._send_json({
+            "roboweaver_version": ROBOWEAVER_VERSION,
+            "ir_version": _IR_VERSION,
+            "python_version": sys.version.split()[0],
+            "platform": platform_module.system(),
+            "self_healing_active": _SELF_HEALING_ACTIVE,
+            "uptime_seconds": uptime,
+            "registered_robots": len(distinct_robot_specs()),
+            "native_mlir": native_mlir_tool_status(),
+        })
+
+
+    def _route_get_22(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/network"):
+            return _ROUTE_NOT_HANDLED
+        scanner = RobotDiscoveryService()
+        ranges = scanner.detect_local_networks()
+        self._send_json({
+            "ranges": [
+                {
+                    "cidr": r.cidr,
+                    "interface_ip": r.interface_ip,
+                    "interface_name": r.interface_name,
+                    "netmask_source": r.netmask_source,
+                    "host_count": r.host_count,
+                }
+                for r in ranges
+            ],
+            "max_scan_hosts": MAX_SCAN_HOSTS,
+            "advisor": advisor_status(),
+        })
+
+
+    def _route_get_23(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/connect/advise"):
+            return _ROUTE_NOT_HANDLED
+        provider = query.get("provider", ["ollama"])[0]
+        model = query.get("model", [None])[0]
+        # A bare int(...) here previously threw an uncaught ValueError for
+        # any non-numeric port -- proven live: it left the request hanging
+        # with no response (the client got nothing until its own timeout)
+        # and dumped a traceback to the server log. Never let a malformed
+        # query param reach an unguarded parse.
+        try:
+            port = int(query.get("port", ["0"])[0] or 0)
+        except ValueError:
+            self._send_json({"error": "port must be an integer."}, status=400)
+            return
+        if not 1 <= port <= 65535:
+            self._send_json({"error": "port must be between 1 and 65535."}, status=400)
+            return
+        endpoint = {
+            "host": query.get("host", ["localhost"])[0],
+            "port": port,
+            "banner": query.get("banner", [""])[0],
+            "hostname": query.get("hostname", [""])[0],
+            "robot_type_guess": query.get("guess", [""])[0],
+            "latency_ms": query.get("latency", ["0"])[0],
+        }
+        bounded_fields = {
+            "provider": provider,
+            "model": model or "",
+            "host": endpoint["host"],
+            "banner": endpoint["banner"],
+            "hostname": endpoint["hostname"],
+            "robot_type_guess": endpoint["robot_type_guess"],
+            "latency_ms": endpoint["latency_ms"],
+        }
+        if any(not isinstance(value, str) for value in bounded_fields.values()):
+            self._send_json({"error": "Connection advice fields must be strings."}, status=400)
+            return
+        limits = {
+            "provider": 32,
+            "model": 128,
+            "host": 253,
+            "banner": 512,
+            "hostname": 253,
+            "robot_type_guess": 128,
+            "latency_ms": 32,
+        }
+        too_long = [name for name, value in bounded_fields.items() if len(value) > limits[name]]
+        if too_long:
+            self._send_json({"error": "Connection advice field too long.", "fields": too_long}, status=400)
+            return
+        if provider not in ("ollama", "openrouter"):
+            self._send_json({"error": "provider must be 'ollama' or 'openrouter'."}, status=400)
+            return
+        advice = build_advisor(provider, model).advise(endpoint)
+        self._send_json({
+            "robot_id": advice.robot_id,
+            "protocol": advice.protocol,
+            "uri": advice.uri,
+            "reasoning": advice.reasoning,
+            "confidence": advice.confidence,
+            "provider": advice.provider,
+            "model": advice.model,
+            "error": advice.error,
+        })
+
+
+    def _route_get_24(self, path: str, query: dict[str, list[str]]):
+        if not (path in ("/api/connect", "/api/connect/codegen")):
+            return _ROUTE_NOT_HANDLED
+        self._send_json(
+            {"error": "method_not_allowed", "message": f"Use POST {path} with a JSON body."},
+            status=405,
+        )
+
+    # ── AI Endpoints (local Ollama unless a remote provider is explicit) ──
+    # Every /api/ai/* endpoint is additive: if the provider is unavailable,
+    # the response carries a stated error, never a silent fallback.
+
+
+    def _route_get_25(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/ai/status"):
+            return _ROUTE_NOT_HANDLED
+        from roboweaver.nlu.ollama_manager import get_manager
+        self._send_json(get_manager().to_status_dict())
+
+
+    def _route_get_26(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/ai/models"):
+            return _ROUTE_NOT_HANDLED
+        from roboweaver.nlu.ollama_manager import get_manager
+        mgr = get_manager()
+        models = mgr.list_models()
+        self._send_json({
+            "available": mgr.is_available(),
+            "models": [
+                {
+                    "name": m.name,
+                    "size_bytes": m.size_bytes,
+                    "parameter_size": m.parameter_size,
+                    "quantization": m.quantization,
+                }
+                for m in models
+            ],
+        })
+
+
+    def _route_get_27(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/ai/explain"):
+            return _ROUTE_NOT_HANDLED
+        from roboweaver.nlu.skill_explainer import SkillExplainer
+
+        instruction = query.get("instruction", ["Pick up the red cube"])[0]
+        robot_id = query.get("robot", ["franka_panda"])[0]
+        if self._reject_if_too_long(instruction, "instruction"):
+            return
+        if not self._require_robot_id(robot_id):
+            return
+
+        compiler = SkillCompiler(target_robot=robot_id)
+        try:
+            result = compiler.compile_with_diagnostics(instruction, verbose=False)
+        except SkillCompilationError as exc:
+            self._send_json(
+                {"error": "compilation_failed", "diagnostics": [d.to_dict() for d in exc.diagnostics]},
+                status=400,
+            )
+            return
+
+        compile_result = {
+            "instruction": instruction,
+            "robot": robot_id,
+            "intent": {
+                "action": result.skill.intent.action.value,
+                "object_name": result.skill.intent.object_name,
+                "parameters": result.skill.intent.parameters,
+                "confidence": result.skill.intent.confidence,
+            },
+            "tasks": [
+                {"type": t.type.value, "description": t.description}
+                for t in result.skill.task_graph.tasks
+            ],
+            "ir": result.ir.to_dict(),
+            "diagnostics": [d.to_dict() for d in result.diagnostics],
+        }
+        if result.pipeline is not None:
+            compile_result["pipeline"] = result.pipeline.to_dict()
+        if result.skill_pipeline is not None:
+            compile_result["skill_pipeline"] = result.skill_pipeline.to_dict()
+
+        spec = ROBOT_REGISTRY.get(robot_id)
+        robot_spec_dict = {
+            "gripper_type": spec.gripper_type if spec else "unknown",
+            "payload_capacity_kg": spec.payload_capacity_kg if spec else 0,
+            "max_reach_m": spec.max_reach_m if spec else 0,
+        } if spec else None
+
+        explainer = SkillExplainer()
+        explanation = explainer.explain_compilation(compile_result, robot_spec_dict)
+        self._send_json({
+            "instruction": instruction,
+            "robot": robot_id,
+            "explanation": explanation.text,
+            "model": explanation.model,
+            "latency_s": round(explanation.latency_s, 3),
+            "error": explanation.error,
+        }, status=200 if explanation.text else 503)
+
+
+    def _route_get_28(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/ai/diagnose"):
+            return _ROUTE_NOT_HANDLED
+        from roboweaver.runtime.ai_recovery import AIRecoveryAdvisor
+
+        diagnostic_code = query.get("diagnostic", [""])[0].upper()
+        diagnostic_failures = {
+            "RW201": "PERCEPTION_FAILED",
+            "RW301": "PERCEPTION_FAILED",
+            "RW302": "GRASP_FAILED",
+            "RW303": "TARGET_UNREACHABLE",
+            "RW304": "JOINT_LIMIT_VIOLATED",
+            "RW305": "COLLISION_DETECTED",
+            "RW306": "COLLISION_DETECTED",
+            "RW501": "JOINT_LIMIT_VIOLATED",
+            "RW502": "IK_TIMEOUT",
+            "RW505": "JOINT_LIMIT_VIOLATED",
+            "RW506": "TIMEOUT",
+            "RW507": "COLLISION_DETECTED",
+            "RW601": "TIMEOUT",
+            "RW602": "COLLISION_DETECTED",
+            "RW603": "TIMEOUT",
+            "RW604": "TARGET_UNREACHABLE",
+            "RW605": "COLLISION_DETECTED",
+        }
+        if diagnostic_code and diagnostic_code not in diagnostic_failures:
+            self._send_json({"error": f"Unknown diagnostic code '{diagnostic_code}'"}, status=400)
+            return
+        failure_mode = query.get(
+            "failure", [diagnostic_failures.get(diagnostic_code, "GRASP_FAILED")]
+        )[0]
+        robot_id = query.get("robot", ["franka_panda"])[0]
+        action = query.get("action", ["PICK"])[0]
+        if not self._require_robot_id(robot_id):
+            return
+
+        from roboweaver.runtime.recovery import RecoveryEngine, FailureMode as FM
+        try:
+            fm = FM(failure_mode)
+        except ValueError:
+            self._send_json({"error": f"Unknown failure mode '{failure_mode}'"}, status=400)
+            return
+
+        engine = RecoveryEngine()
+        plan = engine.diagnose(fm)
+
+        spec = ROBOT_REGISTRY.get(robot_id)
+        spec_dict = {
+            "dof": spec.dof if spec else 7,
+            "gripper_type": spec.gripper_type if spec else "unknown",
+        }
+
+        advisor = AIRecoveryAdvisor()
+        advice = advisor.advise(
+            failure_mode=failure_mode,
+            rule_based_action=plan.recommended_action.value,
+            rule_based_reason=plan.reason,
+            robot_id=robot_id,
+            robot_spec=spec_dict,
+            skill_context={"action": action, "diagnostic_code": diagnostic_code or None},
+        )
+
+        self._send_json({
+            "failure_mode": failure_mode,
+            "diagnostic_code": diagnostic_code or None,
+            "robot": robot_id,
+            "rule_based_action": advice.rule_based_action,
+            "rule_based_reason": advice.rule_based_reason,
+            "ai_explanation": advice.ai_explanation,
+            "ai_root_cause": advice.ai_root_cause,
+            "fix_description": advice.fix_description,
+            "confidence": advice.confidence,
+            "suggested_parameter_changes": advice.ai_suggested_params,
+            "model": advice.model,
+            "latency_s": round(advice.latency_s, 3),
+            "error": advice.error,
+        })
+
+
+    def _route_get_29(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/ai/compose"):
+            return _ROUTE_NOT_HANDLED
+        from roboweaver.nlu.skill_composer import SkillComposer
+
+        instruction = query.get("instruction", [""])[0]
+        if not instruction:
+            self._send_json({"error": "'instruction' query param is required"}, status=400)
+            return
+        if self._reject_if_too_long(instruction, "instruction"):
+            return
+
+        composer = SkillComposer()
+        composition = composer.compose(instruction)
+
+        self._send_json({
+            "original_instruction": composition.original_instruction,
+            "steps": [
+                {
+                    "step_id": s.step_id,
+                    "instruction": s.instruction,
+                    "action": s.action,
+                    "target_object": s.target_object,
+                    "suggested_robot": s.suggested_robot,
+                    "depends_on": s.depends_on,
+                    "reasoning": s.reasoning,
+                }
+                for s in composition.steps
+            ],
+            "suggested_robots": composition.suggested_robots,
+            "choreography_prompt": composition.choreography_prompt,
+            "model": composition.model,
+            "latency_s": round(composition.latency_s, 3),
+            "error": composition.error,
+        }, status=200 if composition.steps else 503)
+
+
+    def _route_get_30(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/ai/enrich"):
+            return _ROUTE_NOT_HANDLED
+        from roboweaver.knowledge.ai_enrichment import KnowledgeGraphEnricher
+
+        mode = query.get("mode", ["edges"])[0]
+        enricher = KnowledgeGraphEnricher()
+
+        if mode == "describe":
+            robot_id = query.get("robot", [""])[0]
+            if not robot_id:
+                self._send_json({"error": "'robot' param required for describe mode"}, status=400)
+                return
+            if not self._require_robot_id(robot_id):
+                return
+            result = enricher.describe_robot(robot_id)
+            self._send_json({
+                "mode": "describe",
+                "descriptions": [
+                    {
+                        "robot_id": d.robot_id,
+                        "summary": d.summary,
+                        "strengths": d.strengths,
+                        "limitations": d.limitations,
+                        "ideal_tasks": d.ideal_tasks,
+                    }
+                    for d in result.robot_descriptions
+                ],
+                "model": result.model,
+                "latency_s": round(result.latency_s, 3),
+                "error": result.error,
+            })
+        elif mode == "summary":
+            node_id = query.get("node", [""])[0]
+            if not node_id:
+                self._send_json({"error": "'node' param required for summary mode"}, status=400)
+                return
+            graph = build_graph_from_registry()
+            result = enricher.summarize_obsidian_node(graph, node_id)
+            self._send_json({
+                "mode": "summary",
+                "summaries": [
+                    {"node_id": s.node_id, "summary": s.summary}
+                    for s in result.obsidian_summaries
+                ],
+                "model": result.model,
+                "latency_s": round(result.latency_s, 3),
+                "error": result.error,
+            }, status=200 if result.obsidian_summaries else 503)
+        elif mode == "pairings":
+            result = enricher.suggest_pairings()
+            self._send_json({
+                "mode": "pairings",
+                "pairings": [
+                    {
+                        "robot_a": p.robot_a,
+                        "robot_b": p.robot_b,
+                        "reasoning": p.reasoning,
+                        "suggested_tasks": p.suggested_tasks,
+                    }
+                    for p in result.robot_pairings
+                ],
+                "model": result.model,
+                "latency_s": round(result.latency_s, 3),
+                "error": result.error,
+            })
         else:
-            self._send_json({"error": "not_found"}, status=404)
+            graph = build_graph_from_registry()
+            existing_edges = [
+                (
+                    edge.target_id.removeprefix("robot_"),
+                    edge.source_id.removeprefix("skill_").upper(),
+                )
+                for edge in graph.edges
+                if edge.relation.value == "SUITABLE_FOR"
+                and edge.source_id.startswith("skill_")
+                and edge.target_id.startswith("robot_")
+            ]
+            result = enricher.suggest_edges(existing_edges)
+            self._send_json({
+                "mode": "edges",
+                "suggestions": [
+                    {
+                        "robot_id": e.robot_id,
+                        "skill_category": e.skill_category,
+                        "confidence": e.confidence,
+                        "reasoning": e.reasoning,
+                    }
+                    for e in result.edge_suggestions
+                ],
+                "model": result.model,
+                "latency_s": round(result.latency_s, 3),
+                "error": result.error,
+            })
+
+
+    def _route_get_31(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/api/ai/chat"):
+            return _ROUTE_NOT_HANDLED
+        from roboweaver.nlu.ollama_manager import get_manager
+
+        message = query.get("message", [""])[0]
+        if not message:
+            self._send_json({"error": "'message' query param is required"}, status=400)
+            return
+        if self._reject_if_too_long(message, "message"):
+            return
+
+        mgr = get_manager()
+        if query.get("stream", ["0"])[0] == "1":
+            self._send_ai_chat_stream(mgr, message)
+            return
+        resp = mgr.generate(
+            prompt=message,
+            feature="chat",
+            system=(
+                "You are RoboWeaver AI, a helpful assistant for the RoboWeaver "
+                "robotics compiler platform. You help users understand robot skill "
+                "compilation, motion planning, RoboIR, behavior trees, and the "
+                "RoboWeaver pipeline. Be precise, technical, and concise."
+            ),
+            temperature=0.4,
+        )
+        self._send_json({
+            "message": message,
+            "response": resp.text,
+            "model": resp.model,
+            "latency_s": round(resp.latency_s, 3),
+            "error": resp.error,
+        }, status=200 if resp.text else 503)
+
+
+    def _route_get_32(self, path: str, query: dict[str, list[str]]):
+        if not (path == "/" or path == "/index.html"):
+            return _ROUTE_NOT_HANDLED
+        self._send_json(
+            {
+                "message": "RoboWeaver API server. The web UI is the Next.js frontend.",
+                "frontend": "cd frontend && npm run dev  ->  http://localhost:3000",
+                "api_docs": "See docs/REDESIGN.md for the API surface.",
+            }
+        )
+
+
+    def _route_get_33(self, path: str, query: dict[str, list[str]]):
+        if path == "/api/observability":
+            from roboweaver.observability.cache import get_result_cache
+            from roboweaver.observability.traces import get_trace_registry
+
+            self._send_json({
+                "traces": get_trace_registry().report(),
+                "cache": get_result_cache().stats(),
+                "implementation": "Sentinel-inspired bounded attempts; original dependency-light implementation.",
+            })
+            return
+        if path == "/api/research/benchmark":
+            from roboweaver.research.evaluation import run_research_evaluation
+
+            self._send_json(run_research_evaluation().to_dict())
+            return
+        if path != "/api/research/status":
+            return _ROUTE_NOT_HANDLED
+        from roboweaver.nlu.gemini_manager import gemini_status
+        from roboweaver.nlu.ollama_manager import get_manager
+        from roboweaver.nlu.openrouter_manager import openrouter_status
+
+        ollama = get_manager()
+        self._send_json({
+            "providers": {
+                "ollama": {
+                    "configured": True,
+                    "available": ollama.is_available(timeout=1.0),
+                    "model": ollama.model_for_feature("experiment"),
+                    "remote": False,
+                },
+                "gemini": gemini_status(),
+                "openrouter": openrouter_status(),
+            },
+            "cascade": ["ollama", "gemini", "openrouter"],
+            "max_attempts": 3,
+            "sandbox": {
+                "profile": "research",
+                "network": "none",
+                "root_filesystem": "read_only",
+                "devices": "none",
+                "command": "docker compose --profile research run --rm experiment-sandbox",
+                "physics_adapter": "not_configured",
+            },
+            "boundaries": {
+                "model_code_execution": False,
+                "physical_hardware": False,
+                "cache_safety_revalidation": True,
+                "prompt_storage": False,
+            },
+        })
+
 
     def send_error(
         self,
@@ -1427,6 +1845,36 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                 status=400,
             )
 
+    def _generate_connection_adapter(self, payload: dict[str, Any]) -> None:
+        robot_id = payload.get("robot")
+        protocol = payload.get("protocol")
+        uri = payload.get("uri")
+        provider = payload.get("provider", "none")
+        ai_review = payload.get("ai_review", False)
+        if not all(isinstance(value, str) for value in (robot_id, protocol, uri, provider)):
+            self._send_json(
+                {"error": "robot, protocol, uri, and provider must be strings."}, status=400
+            )
+            return
+        if not isinstance(ai_review, bool):
+            self._send_json({"error": "ai_review must be a boolean."}, status=400)
+            return
+        if len(robot_id) > 128 or len(protocol) > 32 or len(uri) > 2048 or len(provider) > 32:
+            self._send_json({"error": "Connection code request field too long."}, status=400)
+            return
+        try:
+            generated = generate_connection_code(
+                robot_id=robot_id,
+                protocol=protocol,
+                uri=uri,
+                provider=provider,
+                ai_review=ai_review,
+            )
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+        self._send_json(generated.to_dict())
+
     def _pull_ai_model(self, payload: dict[str, Any]) -> None:
         from roboweaver.nlu.ollama_manager import get_manager
         model = payload.get("model")
@@ -1467,6 +1915,24 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             "feature": feature,
             "model": mgr.model_for_feature(feature),
         })
+
+    def _plan_research_experiment(self, payload: dict[str, Any]) -> None:
+        from roboweaver.research.experiments import ExperimentPlanner
+
+        objective = payload.get("objective")
+        use_ai = payload.get("use_ai", True)
+        if not isinstance(objective, str) or not objective.strip():
+            self._send_json({"error": "'objective' must be a non-empty string."}, status=400)
+            return
+        if len(objective) > 1000 or not isinstance(use_ai, bool):
+            self._send_json({"error": "objective is limited to 1000 characters and use_ai must be boolean."}, status=400)
+            return
+        try:
+            result = ExperimentPlanner().plan(objective, use_ai=use_ai)
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+        self._send_json(result.to_dict())
 
     def _send_ai_chat_stream(self, manager: Any, message: str) -> None:
         """Proxy Ollama's token stream as newline-delimited JSON."""
@@ -1589,7 +2055,7 @@ def start_dashboard_server(port: int = 8080, host: str = "127.0.0.1") -> None:
     print(f"\n\033[1;32m🚀 RoboWeaver API server running at: http://{host}:{port}\033[0m")
     if host not in ("127.0.0.1", "localhost"):
         print(f"   \033[1;33m⚠ Bound to {host} -- reachable from other machines on this network.\033[0m")
-    print(f"   Frontend (Engineering Workbench): cd frontend && npm run dev -> http://localhost:3000")
+    print("   Frontend (Engineering Workbench): cd frontend && npm run dev -> http://localhost:3000")
     print("   Press Ctrl+C to stop server.\n")
     try:
         httpd.serve_forever()
