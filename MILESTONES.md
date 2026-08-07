@@ -28,8 +28,9 @@ works. Record the test, build, hardware log, or other reproducible evidence.
 
 Measured on Python 3.12.13 and Node.js 22 tooling on 2026-08-07:
 
-- **450 tests passed, 1 skipped, and 5 subtests passed.**
-- **78.57% branch-aware Python coverage**, with a **75% CI floor**.
+- **459 tests passed, 0 skipped, and 5 subtests passed** (also re-run clean on Python
+  3.10.19 with the same lock file: 459 passed, 0 skipped).
+- **78.93% branch-aware Python coverage**, with a **75% CI floor**.
 - Ruff/Pyflakes, Python compilation, dependency consistency, and CI YAML checks pass.
 - Frontend ESLint, strict TypeScript checking, and the Next.js production build pass.
 - `pip-audit` and `npm audit` report no known dependency vulnerabilities.
@@ -56,9 +57,33 @@ Measured on Python 3.12.13 and Node.js 22 tooling on 2026-08-07:
 - A live production LAN-mode run returned compiler access, blocked hardware control,
   completed a real compile, denied discovery with HTTP 403, and denied an untrusted
   Host header with HTTP 421.
-- Native `mlir-opt` is not installed on the local macOS machine. CI now installs
-  Ubuntu's `mlir-18-tools` and requires a real upstream canonicalize/CSE run before
-  containers can publish; that CI result becomes public evidence only after push.
+- Native `mlir-opt` is not installed on the local macOS machine. CI installs Ubuntu's
+  `mlir-18-tools` and requires a real upstream canonicalize/CSE run before containers
+  can publish.
+- **First fully green public CI run on `main`** (commit `2271db5`, run
+  [31215741851](https://github.com/Siddharthpatni/Roboweaver/actions/runs/31215741851)):
+  every job passed, including native `mlir-opt`, Humble `colcon` build of a
+  compiler-generated package, and — after replacing the slow `ros-tooling/setup-ros`
+  step with a digest-pinned `ros:jazzy-ros-base-noble` container — the ROS 2
+  Jazzy/Gazebo Harmonic headless spawn-and-inspect job, which now completes in 3m32s
+  and actually parses the compiler-derived URDF, spawns it in Gazebo, and inspects its
+  7 joints. This is the first time that job produced public evidence rather than a
+  configured-but-unrun gate.
+- The research sandbox now runs **real headless MuJoCo physics**, not just artifact
+  validation. `roboweaver.research.mujoco_adapter` compiles a validated
+  `ExperimentSpec` into MJCF (free-floating root, per-branch sibling fan-out to avoid
+  sibling overlap, geometry/mass/joint limits taken directly from the validated
+  numeric spec) and runs a deterministic, bounded, gravity+contact rollout with a
+  synthetic bounded actuation signal (not a learned policy). A fresh hardened
+  Docker run (`--network none`, read-only root, all capabilities dropped, no devices)
+  on the climbing-monkey embodiment reported: `status: executed`,
+  `numerically_stable: true`, `root_height_start_m: 1.87`, `root_height_end_m: 0.2473`,
+  `max_contacts_observed: 4`, `steps_executed: 600` of 600, MuJoCo 3.11.0. This closes
+  the `physics_execution: not_run_no_simulator_adapter` gap for the first time.
+- Added a third real `RobotBackend`: `AbbRapidBackend` emits real RAPID
+  (`MODULE`/`PROC`/`MoveAbsJ` with correct radian-to-degree conversion, `fine` zone on
+  each segment's final waypoint) target-gated to verified ABB profiles, checked by a
+  bounded structural syntax validator (not RobotStudio-validated; see limitations).
 
 Primary verification commands:
 
@@ -90,7 +115,7 @@ npm audit --audit-level=high
 | Multi-target compilation | **Verified** | One portable source program is independently planned and verified against each concrete target. One target failure does not invalidate accepted lowerings. |
 | Motion planning | **Verified, bounded** | A real full-conversion engine declares legal/illegal operations, applies ordered rewrite patterns, fails unresolved operations, and dispatches discoverable serial-arm, holonomic-base, differential-drive, branched-humanoid, and multi-finger plugins. Plans/IR record every legalization rewrite; orientation and dynamics remain open. |
 | Pass infrastructure | **Verified** | Ordered RoboIR and `CompiledSkill` pass managers record timing, metrics, diagnostics, snapshots, and optimization levels. RoboIR passes now use lazy analysis caching plus explicit preserved-analysis declarations and invalidation, adapted from LLVM's new pass-manager semantics. |
-| Upstream compiler execution | **Implemented; CI gate configured** | RoboIR emits valid unregistered-dialect MLIR. In auto/required mode a bounded subprocess executes upstream `mlir-opt` canonicalize+CSE with a minimal environment and records executable, version, pipeline, and input/output SHA-256. Local status truthfully says unavailable; Ubuntu CI installs `mlir-18-tools` and requires success. This is not LLVM machine-code generation. |
+| Upstream compiler execution | **Verified (public CI); local unavailable** | RoboIR emits valid unregistered-dialect MLIR. In auto/required mode a bounded subprocess executes upstream `mlir-opt` canonicalize+CSE with a minimal environment and records executable, version, pipeline, and input/output SHA-256. Local status truthfully says unavailable (no `mlir-opt` on this macOS machine); Ubuntu CI installs `mlir-18-tools` and requires success — verified public in run [31215741851](https://github.com/Siddharthpatni/Roboweaver/actions/runs/31215741851). This is not LLVM machine-code generation. |
 | Compiler plugins | **Verified** | The active target-lowering dispatcher uses a typed Input/Transformation/Output phase registry with deterministic priority and `roboweaver.motion_lowerers` entry-point discovery, adapting RoboticsLanguage's composition model without vendoring or claiming source-level integration. |
 | Optimization | **Verified, bounded** | Waypoint decimation and redundant-segment elision run with verify-before/after checks. This is not a broad LLVM optimization catalog. |
 | Capability diagnostics | **Verified** | RW1xx–RW6xx diagnostics reject unsupported capabilities and malformed or unsafe programs. Perception gaps are warnings; safety and required sensing failures are blocking. |
@@ -99,14 +124,15 @@ npm audit --audit-level=high
 | Collision and formal checks | **Verified, bounded** | Behavior-tree/forbidden-range checks run automatically. With a typed Scene, the final pass checks every emitted waypoint using sampled link capsules or inflated mobile footprints, performs deterministic bounded replanning, records the scene digest, and fails as RW307 when no verified route exists. No self-collision, SMT, temporal-logic, or continuous-time proof is claimed. |
 | Native simulation | **Verified, bounded** | Complete RoboIR is adapted into the legacy runtime view and executed through the native twin. PICK has a modeled process outcome; other processes report unsupported status rather than false success. |
 | External simulation | **Partial / blocked externally** | Remote twin connectivity is truthful, but Isaac, Gazebo, Webots, and similar physics engines are not integrated or exercised here. |
-| Research experiment sandbox | **Verified, bounded** | Open-ended prompts become a validated connected-tree morphology, deterministic URDF, and deterministic training-adapter scaffold. A hardened no-network/no-device Docker run passed locally. Model-authored code is never executed; no Gazebo/MuJoCo physics or training outcome is claimed. |
+| Research experiment sandbox | **Verified, bounded** | Open-ended prompts become a validated connected-tree morphology, deterministic URDF, and deterministic training-adapter scaffold. A hardened no-network/no-device Docker run executes a real headless MuJoCo rollout (gravity, contacts, bounded synthetic actuation) and reports numeric physics evidence. Model-authored code is never executed; no training outcome or learned policy is claimed, and Gazebo/ros2_control physics remain separate/open. |
 | Model cascade and observability | **Verified, bounded** | At most three explicit attempts route Ollama → configured Gemini → configured OpenRouter. Exact TTL cache hits re-run validation. Sentinel-inspired traces retain provider/model/latency/token/error metadata but no prompts, responses, keys, or target addresses. This is an original in-process implementation, not Sentinel's complete gateway. |
 | Research evaluation | **Verified locally; CI artifact configured** | Versioned harness measures expected compilation outcomes, diagnostic precision/recall, three-run IR determinism, target portability, modeled NativeTwin correctness, and an internal O0/O1 planning baseline. External MoveIt/baseline comparison and independent reproduction remain open. |
-| Gazebo acceptance | **Implemented; public CI pending** | Jazzy/Harmonic CI generates a compiler-derived URDF, validates it with `check_urdf`, starts headless Gazebo, spawns the model through `ros_gz_sim`, and inspects its joints with `gz model`. Gazebo is unavailable on this macOS workspace, so no local simulator result is claimed. |
+| Gazebo acceptance | **Verified (public CI)** | Jazzy/Harmonic CI generates a compiler-derived URDF, validates it with `check_urdf`, starts headless Gazebo, spawns the model through `ros_gz_sim`, and inspects its joints with `gz model`. Public run [31215741851](https://github.com/Siddharthpatni/Roboweaver/actions/runs/31215741851) passed in 3m32s with all 7 joints inspected. Gazebo is still unavailable on this macOS workspace, so no local simulator result is claimed; the public Linux CI job is the evidence. |
 | ROS 2 backend | **Verified** | RoboIR-only generation of a complete `ament_python` package with exact joints, waypoints, controller client, launch/config files, BehaviorTree XML, and manifest. Generated packages are wheel-tested and CI is configured for Humble `colcon`. |
 | URScript backend | **Verified, target-gated** | RoboIR-only URScript generation is available only for validated Universal Robots profiles. Other profiles are rejected instead of receiving misleading output. |
+| ABB RAPID backend | **Verified, target-gated** | RoboIR-only RAPID generation (`MODULE`/`PROC`/`MoveAbsJ`, correct radian-to-degree axis conversion, `fine` zone on each segment's last waypoint) is available only for validated ABB profiles; other profiles are rejected. Checked by a bounded structural syntax validator (module/proc balance, statement termination, identifier form) written for this project — not RobotStudio-validated. |
 | BehaviorTree XML | **Verified** | Production dashboard and `.rwsp` export paths generate XML from complete RoboIR. Legacy `CompiledSkill` export remains only for backward-compatible callers without RoboIR. |
-| Downloadable artifacts | **Verified** | The dashboard API returns reproducible ROS package ZIPs or target-gated URScript files. |
+| Downloadable artifacts | **Verified** | The dashboard API returns reproducible ROS package ZIPs or target-gated URScript/ABB RAPID files. |
 | Connection adapter generation | **Verified** | The dashboard generates a deterministic Python no-motion connection probe from a validated registry profile and real bridge protocol. Target URI is supplied at runtime and is not embedded in model review prompts. |
 | Ollama connection assistance | **Verified, optional** | Local endpoint identification and additive adapter review use the centralized Ollama manager. Provider failure never removes deterministic generated code. |
 | OpenRouter connection assistance | **Verified, optional** | Explicit opt-in OpenRouter client, code-focused free primary with free-router fallback, bounded responses, server-only key, cloud privacy notice, model-output validation, deterministic fakes, and a live container request are verified. |
@@ -322,6 +348,46 @@ Evidence: `tests/test_model_cascade.py`, `tests/test_gemini_manager.py`,
 `tests/test_research_experiments.py`, `tests/test_research_evaluation.py`, the local
 hardened Docker report, `frontend/scripts/visual-qa.mjs`, and `.github/workflows/ci.yml`.
 
+### M12 — Real Sandbox Physics, a Third Backend Dialect, and First Green Public CI — Verified
+
+- Replaced the slow `ros-tooling/setup-ros` Jazzy install (10+ minutes, previously
+  causing the Gazebo job to run long or stall) with a digest-pinned
+  `ros:jazzy-ros-base-noble` container that installs only `ros-jazzy-ros-gz-sim` and
+  `liburdfdom-tools`. Bumped `actions/upload-artifact` to v6. Result: every CI job on
+  `main` is green in one public run for the first time
+  ([31215741851](https://github.com/Siddharthpatni/Roboweaver/actions/runs/31215741851)),
+  including native `mlir-opt`, Humble `colcon`, and the Jazzy/Gazebo headless
+  spawn-and-inspect job (3m32s, 7/7 joints inspected).
+- Added `roboweaver.research.mujoco_adapter`: compiles a validated `ExperimentSpec`
+  into MJCF (free-floating root body, per-parent sibling fan-out so branching
+  morphologies like the climbing monkey don't spawn overlapping, exploding geometry)
+  and runs a real, deterministic, bounded MuJoCo physics rollout — gravity, ground
+  contacts, and a bounded synthetic actuation signal explicitly documented as not a
+  learned control policy. Wired into `research_sandbox_check.py` so the hardened
+  no-network/no-device Docker profile now reports real numeric physics evidence
+  instead of `not_run_no_simulator_adapter`. `mujoco`/`numpy` and their transitive
+  pins were added to `requirements-ci.lock` (with `python_version` markers for the
+  two packages whose latest release requires Python 3.12) so backend CI actually
+  exercises this, not just skips it.
+- Added `AbbRapidBackend`, RoboWeaver's third real `RobotBackend`, generating actual
+  RAPID (`MODULE`/`PROC`/`MoveAbsJ`) exclusively from verified RoboIR, target-gated to
+  ABB profiles, with correct radian-to-degree joint-target conversion (a real
+  RAPID/URScript semantic difference, not a copy-paste of the URScript backend) and
+  its own bounded structural syntax checker. Wired into the dashboard's dynamic
+  `BACKEND_REGISTRY`-driven `/api/artifact` route and the Compiler Studio download
+  selector with the same target-gating pattern already used for URScript.
+- Fresh verification: 459 tests passed, 0 skipped, 5 subtests, 78.93% branch coverage
+  (also re-run clean on Python 3.10.19 against the updated lock file: 459 passed);
+  zero Ruff C901/F findings; TypeScript, ESLint, and production frontend build pass;
+  `npm audit`/`pip-audit` report no known vulnerabilities; Bandit reports no
+  medium/high findings; sdist/wheel build; `docker compose --profile research config`
+  validates.
+
+Evidence: `src/roboweaver/research/mujoco_adapter.py`, `tests/test_mujoco_adapter.py`,
+`src/roboweaver/codegen/abb_rapid_gen.py`, `tests/test_backend.py`,
+`.github/workflows/ci.yml`, `requirements-ci.lock`, the hardened Docker sandbox run
+recorded above, and GitHub Actions run 31215741851.
+
 ## Latest Change Log
 
 ### 2026-08-07 — Isolated Research Lab and Measurable Evaluation
@@ -494,8 +560,12 @@ These are not hidden defects; they define the current product boundary:
     geometry is a bounded hypothesis. It has not passed dynamics, torque, singularity,
     continuous-time collision, manufacturability, or physical validation.
 16. **The training artifact is an adapter scaffold, not a trained brain.** It defines a
-    bounded rollout/reward contract but requires a real simulator adapter and learning
-    implementation. The isolated run validates artifacts; it does not train a policy.
+    bounded rollout/reward contract. The isolated sandbox now runs a real MuJoCo
+    physics rollout (gravity, contacts, a bounded synthetic actuation signal) and
+    reports real numeric evidence, but no learning algorithm is connected to it — the
+    actuation is deterministic and synthetic, not optimized against the reward
+    contract. The isolated run validates artifacts and morphology physical viability;
+    it does not train a policy.
 17. **Observability is intentionally in-process.** It adapts Sentinel's bounded fallback,
     provenance, cache, and control-room ideas, but does not include Sentinel's durable
     database, semantic cache, alerts, authentication, or distributed evaluation workers.
@@ -583,8 +653,13 @@ Deliverables:
   analysis notebook, and an external reproduction protocol.
 
 Current result: the sandbox contract, artifact generator, local six-metric harness, and
-Jazzy/Harmonic spawn CI are implemented. Physics rollout, controller bridge, external
-planner baseline, live perception, and independent reproduction are still open.
+Jazzy/Harmonic spawn CI are implemented and the Jazzy/Harmonic job is now public-CI
+verified (run 31215741851). The MuJoCo `SimulatorAdapter` deliverable above is now
+real: `mujoco_adapter.py` loads the exact generated embodiment, executes a bounded
+gravity+contact rollout, and returns real physics metrics (stability, contact count,
+root height delta) — verified in the hardened Docker sandbox. Remaining open: the
+`ros2_control`/Gazebo controller bridge, an external MoveIt 2 planner baseline, live
+perception ingestion, and independent third-party reproduction.
 
 ### P1 — Real Perception Input Contract — Partially verified
 
@@ -637,7 +712,7 @@ Current result: lazy RoboIR analysis caching and preserved-analysis invalidation
 real; source/target/scene cache keys and the unification of the second CompiledSkill
 pass manager remain open.
 
-### P4 — Additional Real Backend Dialects — Planned
+### P4 — Additional Real Backend Dialects — Partially verified
 
 Goal: prove backend extensibility beyond ROS 2 and URScript.
 
@@ -649,6 +724,12 @@ Candidate sequence:
 
 Definition of done: each backend has target-specific validation, syntax/build tests,
 failure diagnostics, documentation, and no copied target semantics outside RoboIR.
+
+Current result: `AbbRapidBackend` is real and registered (item 1, ABB half), with
+target gating, radian-to-degree conversion, and a bounded structural syntax checker —
+but that checker is this project's own code, not an official ABB RobotStudio
+validation path, so "official syntax/build validation" is not yet satisfied. KUKA KRL,
+a mature simulation/planning bridge, and vendor-neutral conformance tests remain open.
 
 ### P5 — Hardware-in-the-Loop Evidence — Harness verified / hardware-dependent
 

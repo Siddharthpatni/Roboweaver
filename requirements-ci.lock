@@ -1,11 +1,22 @@
 # Exact CI/test toolchain. Runtime installation uses this file followed by
 # `pip install -e . --no-deps`, so declared ranges cannot drift between runs.
+# mujoco/numpy and their transitive deps below satisfy the `sim` extra so CI
+# actually exercises the headless physics rollout instead of skipping it.
+absl-py==2.5.0
 build==1.2.2.post1
 coverage==7.10.1
+etils==1.13.0 ; python_version < "3.12"
+etils==1.14.0 ; python_version >= "3.12"
+fsspec==2026.7.0
+glfw==2.10.2
 iniconfig==2.1.0
+mujoco==3.11.0
+numpy==2.2.6 ; python_version < "3.12"
+numpy==2.5.1 ; python_version >= "3.12"
 packaging==25.0
 pluggy==1.6.0
 pygments==2.19.2
+PyOpenGL==3.1.10
 pyproject-hooks==1.2.0
 pyserial==3.5
 pytest==8.4.1
@@ -13,4 +24,6 @@ pytest-cov==6.2.1
 ruff==0.12.4
 setuptools==80.9.0
 tomli==2.2.1 ; python_version < "3.11"
+typing_extensions==4.16.0
 wheel==0.45.1
+zipp==4.1.0

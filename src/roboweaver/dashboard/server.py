@@ -1712,7 +1712,8 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                 "root_filesystem": "read_only",
                 "devices": "none",
                 "command": "docker compose --profile research run --rm experiment-sandbox",
-                "physics_adapter": "not_configured",
+                "physics_adapter": "mujoco",
+                "physics_adapter_scope": "executes only inside the isolated sandbox container, not this API process",
             },
             "boundaries": {
                 "model_code_execution": False,

@@ -6,6 +6,6 @@ RUN groupadd --gid 10001 sandbox && useradd --uid 10001 --gid 10001 --no-create-
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 COPY scripts/research_sandbox_check.py ./scripts/research_sandbox_check.py
-RUN pip install --no-cache-dir --no-deps .
+RUN pip install --no-cache-dir --no-deps . && pip install --no-cache-dir mujoco==3.11.0
 USER sandbox
 ENTRYPOINT ["python", "/opt/roboweaver/scripts/research_sandbox_check.py"]

@@ -221,7 +221,7 @@ export const RoboWeaverAPI = {
   artifact: async (
     instruction: string,
     robot: string,
-    backend: 'ros2' | 'urscript',
+    backend: 'ros2' | 'urscript' | 'abb_rapid',
   ): Promise<{ blob: Blob; filename: string }> => {
     const path = `/api/artifact?instruction=${encodeURIComponent(instruction)}` +
       `&robot=${encodeURIComponent(robot)}&backend=${encodeURIComponent(backend)}`;
@@ -232,9 +232,10 @@ export const RoboWeaverAPI = {
     }
     const disposition = res.headers.get('content-disposition') ?? '';
     const match = /filename="?([^";]+)"?/i.exec(disposition);
+    const extension = backend === 'ros2' ? 'zip' : backend === 'abb_rapid' ? 'mod' : 'script';
     return {
       blob: await res.blob(),
-      filename: match?.[1] ?? `roboweaver-${robot}.${backend === 'ros2' ? 'zip' : 'script'}`,
+      filename: match?.[1] ?? `roboweaver-${robot}.${extension}`,
     };
   },
   /** Real cost figures for one instruction on one robot (optimize/cost_model.py). */

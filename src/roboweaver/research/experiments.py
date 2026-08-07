@@ -483,5 +483,6 @@ class ExperimentPlanner:
                 "cpu_limit": 2.0,
                 "command": "docker compose --profile research run --rm experiment-sandbox",
                 "status": "artifact_ready_not_executed",
+                "physics_adapter": "mujoco (runs only inside the sandbox container above, not this API call)",
             },
         )

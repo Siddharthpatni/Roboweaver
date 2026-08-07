@@ -693,6 +693,7 @@ export interface ResearchStatusResult {
     devices: string;
     command: string;
     physics_adapter: string;
+    physics_adapter_scope: string;
   };
   boundaries: {
     model_code_execution: boolean;
@@ -763,6 +764,7 @@ export interface ExperimentPlanResult {
     cpu_limit: number;
     command: string;
     status: string;
+    physics_adapter: string;
   };
 }
 

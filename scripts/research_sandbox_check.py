@@ -10,11 +10,13 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from roboweaver.research.experiments import ExperimentPlanner, validate_generated_python
+from roboweaver.research.mujoco_adapter import run_physics_rollout
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate a bounded research embodiment.")
     parser.add_argument("--objective", default="Design a climbing monkey robot")
+    parser.add_argument("--physics-steps", type=int, default=600)
     args = parser.parse_args()
     if os.environ.get("ROBOWEAVER_RESEARCH_SANDBOX") != "1":
         print(json.dumps({"status": "refused", "reason": "sandbox marker missing"}))
@@ -23,6 +25,7 @@ def main() -> int:
     ET.fromstring(result.artifacts["model.urdf"])
     validate_generated_python(result.artifacts["brain_train.py"])
     compile(result.artifacts["brain_train.py"], "brain_train.py", "exec")
+    physics = run_physics_rollout(result.spec, max_steps=args.physics_steps)
     output_dir = Path("/output")
     output_dir.mkdir(parents=True, exist_ok=True)
     for name, content in result.artifacts.items():
@@ -36,7 +39,7 @@ def main() -> int:
         "artifacts": result.artifact_sha256,
         "network_policy": "none",
         "hardware_policy": "no devices mounted",
-        "physics_execution": "not_run_no_simulator_adapter",
+        "physics_execution": physics.to_dict(),
     }
     (output_dir / "sandbox-report.json").write_text(
         json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8"

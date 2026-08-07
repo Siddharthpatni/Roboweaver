@@ -1,12 +1,12 @@
 """
 RobotBackend contract (docs/COMPILER_ROADMAP.md v2 vision, item 3) -- a richer
 plugin contract than a bare "name -> class" codegen registry: metadata(),
-capabilities(), validate(), compile(), deploy(). Two real implementations (ROS 2,
-URScript), registered in the PluginRegistry built for item/Phase 13.
+capabilities(), validate(), compile(), deploy(). Three real implementations (ROS 2,
+URScript, ABB RAPID), registered in the PluginRegistry built for item/Phase 13.
 
-Explicitly not built: MoveIt/Isaac/Drake/Webots/CuRobo/BehaviorTree.CPP/ABB
-RAPID/KUKA KRL/Fanuc TP backends -- each needs per-vendor protocol/controller
-knowledge this session can't validate against real hardware. Adding one later means
+Explicitly not built: MoveIt/Isaac/Drake/Webots/CuRobo/BehaviorTree.CPP/KUKA
+KRL/Fanuc TP backends -- each needs per-vendor protocol/controller knowledge
+this session can't validate against real hardware. Adding one later means
 registering another RobotBackend, not rewriting this module.
 """
 
@@ -181,6 +181,27 @@ class UrScriptBackend(RobotBackend):
         return generate_urscript(result.ir, robot_spec, out_path)
 
 
+class AbbRapidBackend(RobotBackend):
+    name = "abb_rapid"
+
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "name": "abb_rapid",
+            "description": "ABB RAPID (.mod) -- own structural syntax checker, not RobotStudio-validated",
+            "output": ".mod file",
+        }
+
+    def capabilities(self) -> list[str]:
+        return ["abb_family_syntax"]
+
+    def compile(self, result: "CompilationResult", output_dir: Path) -> Path:
+        from roboweaver.codegen.abb_rapid_gen import generate_abb_rapid
+        robot_spec = get_robot_spec(result.ir.execution.robot_id)
+        out_path = Path(output_dir) / f"{safe_identifier(result.ir.skill_id, default='skill')}.mod"
+        return generate_abb_rapid(result.ir, robot_spec, out_path)
+
+
 BACKEND_REGISTRY: PluginRegistry[RobotBackend] = PluginRegistry(kind="robot backend")
 BACKEND_REGISTRY.register("ros2")(Ros2Backend())
 BACKEND_REGISTRY.register("urscript")(UrScriptBackend())
+BACKEND_REGISTRY.register("abb_rapid")(AbbRapidBackend())

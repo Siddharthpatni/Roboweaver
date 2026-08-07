@@ -60,8 +60,9 @@ Error RW102: Cannot compile skill 'skill_m8_bolt_407db03cd329' for backend 'temi
 ```
 
 The target-independent `ProgramSpec` is parsed once and lowered independently into a
-complete RoboIR for each robot. ROS 2 and URScript backends consume only that verified
-IR; changing the legacy `CompiledSkill` afterward cannot change generated output.
+complete RoboIR for each robot. ROS 2, URScript, and ABB RAPID backends consume only
+that verified IR; changing the legacy `CompiledSkill` afterward cannot change generated
+output.
 
 ## What works today
 
@@ -71,11 +72,11 @@ IR; changing the legacy `CompiledSkill` afterward cannot change generated output
 | Robots | Registry-backed profiles, explicit motion-model contracts, serial arms, holonomic/differential bases, branched humanoids, multi-finger hands, URDF/STL export, discovery, and protocol-specific bridge selection |
 | Planning | Deterministic routing for 18 NL actions across 17 categories, fail-closed unknown actions, typed observations, target-legality conversion, reproducible IK/posture/base lowering, optional scene collision replanning, and one-source/many-target compilation |
 | Verification | IR structural invariants, capability checks, workspace/floor/joint/velocity constraints, bounded forbidden-zone checking, truthful process-model status, and fail-closed deployment |
-| Code generation | RoboIR-only ROS 2 packages with exact target joints/waypoints, BehaviorTree.CPP/Groot2 XML, UR-only URScript, deployment manifests, and `.rwsp` archives |
+| Code generation | RoboIR-only ROS 2 packages with exact target joints/waypoints, BehaviorTree.CPP/Groot2 XML, UR-only URScript, ABB-only RAPID, deployment manifests, and `.rwsp` archives |
 | Runtime | Native simulation, optional MuJoCo, telemetry, execution memory, deterministic recovery, and opt-in AI recovery advice |
 | Knowledge | A registry-ingested robotics graph, path queries, package recommendations, interactive visualization, and Obsidian export |
 | Local AI | Ollama health and model discovery, parsing, explanations, diff summaries, composition, recovery advice, graph enrichment, chat, and code-review sidecars |
-| Research lab | Bounded Ollama/Gemini/OpenRouter cascade, prompt-free traces, exact cache, connected-tree embodiment schema, deterministic URDF/training artifacts, hardened no-network sandbox, and six-metric evaluation |
+| Research lab | Bounded Ollama/Gemini/OpenRouter cascade, prompt-free traces, exact cache, connected-tree embodiment schema, deterministic URDF/training artifacts, hardened no-network sandbox with a real headless MuJoCo physics rollout, and six-metric evaluation |
 | Interface | CLI plus a fluid localhost/LAN dashboard with compiler, evidence ledger, comparison, workcell, benchmark, research lab, fleet, digital-twin, graph, and AI co-pilot views |
 | Operations | Private authenticated backend, compiler-only LAN gateway, Host/Origin validation, hardened containers, native MLIR acceptance, and dependency/build checks in CI |
 

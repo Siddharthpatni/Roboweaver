@@ -243,7 +243,7 @@ export const CompilerView: React.FC = () => {
   const [compatibilityLoading, setCompatibilityLoading] = useState(false);
   const [compatibilityError, setCompatibilityError] = useState<string | null>(null);
   const [matrix, setMatrix] = useState<UniversalCompileMatrix | null>(null);
-  const [artifactBackend, setArtifactBackend] = useState<'ros2' | 'urscript'>('ros2');
+  const [artifactBackend, setArtifactBackend] = useState<'ros2' | 'urscript' | 'abb_rapid'>('ros2');
   const [artifactLoading, setArtifactLoading] = useState(false);
   const [artifactError, setArtifactError] = useState<string | null>(null);
 
@@ -324,9 +324,12 @@ export const CompilerView: React.FC = () => {
     [robots, result?.robot],
   );
   const supportsUrScript = compiledRobot?.manufacturer === 'Universal Robots';
-  const effectiveArtifactBackend = artifactBackend === 'urscript' && !supportsUrScript
-    ? 'ros2'
-    : artifactBackend;
+  const supportsAbbRapid = compiledRobot?.manufacturer === 'ABB Robotics';
+  const effectiveArtifactBackend =
+    (artifactBackend === 'urscript' && !supportsUrScript) ||
+    (artifactBackend === 'abb_rapid' && !supportsAbbRapid)
+      ? 'ros2'
+      : artifactBackend;
   const handleArtifactDownload = async () => {
     if (!result) return;
     setArtifactLoading(true);
@@ -525,9 +528,10 @@ export const CompilerView: React.FC = () => {
                         <h3>Build a runtime package</h3>
                         <p>The package uses the currently selected accepted robot: {compiledRobot?.name ?? result.robot}.</p>
                         <div className="compiler-simple-actions">
-                          <select aria-label="Download format" value={effectiveArtifactBackend} onChange={(event) => setArtifactBackend(event.target.value as 'ros2' | 'urscript')} className="compiler-select compiler-artifact-select">
+                          <select aria-label="Download format" value={effectiveArtifactBackend} onChange={(event) => setArtifactBackend(event.target.value as 'ros2' | 'urscript' | 'abb_rapid')} className="compiler-select compiler-artifact-select">
                             <option value="ros2">ROS 2 package (.zip)</option>
                             <option value="urscript" disabled={!supportsUrScript}>URScript (.script)</option>
+                            <option value="abb_rapid" disabled={!supportsAbbRapid}>ABB RAPID (.mod)</option>
                           </select>
                           <button onClick={handleArtifactDownload} disabled={artifactLoading} className="compiler-action-button is-primary">
                             {artifactLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
@@ -606,7 +610,7 @@ export const CompilerView: React.FC = () => {
                 )}
 
                 {showAdvanced && activeStage === 'artifact' && (
-                  <div className="compiler-stage-content"><div className="flex flex-wrap items-start justify-between gap-4"><PanelTitle icon={TerminalSquare} eyebrow="Stage 06 · emitted artifacts" title="Download a target runtime" meta={result.ir.execution.robot_id} /><div className="flex flex-wrap gap-2"><select aria-label="Artifact backend" value={effectiveArtifactBackend} onChange={(event) => setArtifactBackend(event.target.value as 'ros2' | 'urscript')} className="compiler-select compiler-artifact-select"><option value="ros2">ROS 2 package (.zip)</option><option value="urscript" disabled={!supportsUrScript}>URScript (.script)</option></select><button onClick={handleArtifactDownload} disabled={artifactLoading} className="compiler-action-button is-primary">{artifactLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}{artifactLoading ? 'Building…' : 'Build artifact'}</button></div></div>{artifactError && <div className="compiler-alert compiler-alert-error"><AlertTriangle className="h-4 w-4 shrink-0" /><span>{artifactError}</span></div>}<div className="compiler-artifact-meta"><Tag tone="green">complete RoboIR-derived output</Tag><Tag tone="cyan">{result.ir.lowering?.trajectories.reduce((total, trajectory) => total + trajectory.waypoints.length, 0) ?? 0} waypoints</Tag><Tag>{result.ir.lowering?.joint_names.length ?? 0} exact joints</Tag><span className="ml-auto font-data text-[10px] text-slate-600">reproducible source id · {result.ir.skill.id.slice(-12)}</span></div><div className="compiler-inline-note"><TerminalSquare className="h-4 w-4 text-cyan-300" /><span>ROS 2 export is a complete ament_python package with controller client, launch/config files, manifest, exact joints and trajectories. URScript is emitted only when the selected target is a verified Universal Robots profile.</span></div><div className="flex flex-wrap items-center justify-between gap-3"><PanelTitle icon={Code2} eyebrow="Additional adapter" title="BehaviorTree XML preview" meta="application/xml" /><div className="flex gap-2"><button onClick={handleCopy} className="compiler-action-button">{copied ? <Check className="h-3.5 w-3.5 text-cyan-300" /> : <Copy className="h-3.5 w-3.5" />}{copied ? 'Copied' : 'Copy XML'}</button><button onClick={handleXmlDownload} className="compiler-action-button"><Download className="h-3.5 w-3.5" />Export XML</button></div></div><pre className="compiler-code-block"><XmlHighlight xml={result.behavior_tree_xml} /></pre></div>
+                  <div className="compiler-stage-content"><div className="flex flex-wrap items-start justify-between gap-4"><PanelTitle icon={TerminalSquare} eyebrow="Stage 06 · emitted artifacts" title="Download a target runtime" meta={result.ir.execution.robot_id} /><div className="flex flex-wrap gap-2"><select aria-label="Artifact backend" value={effectiveArtifactBackend} onChange={(event) => setArtifactBackend(event.target.value as 'ros2' | 'urscript' | 'abb_rapid')} className="compiler-select compiler-artifact-select"><option value="ros2">ROS 2 package (.zip)</option><option value="urscript" disabled={!supportsUrScript}>URScript (.script)</option><option value="abb_rapid" disabled={!supportsAbbRapid}>ABB RAPID (.mod)</option></select><button onClick={handleArtifactDownload} disabled={artifactLoading} className="compiler-action-button is-primary">{artifactLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}{artifactLoading ? 'Building…' : 'Build artifact'}</button></div></div>{artifactError && <div className="compiler-alert compiler-alert-error"><AlertTriangle className="h-4 w-4 shrink-0" /><span>{artifactError}</span></div>}<div className="compiler-artifact-meta"><Tag tone="green">complete RoboIR-derived output</Tag><Tag tone="cyan">{result.ir.lowering?.trajectories.reduce((total, trajectory) => total + trajectory.waypoints.length, 0) ?? 0} waypoints</Tag><Tag>{result.ir.lowering?.joint_names.length ?? 0} exact joints</Tag><span className="ml-auto font-data text-[10px] text-slate-600">reproducible source id · {result.ir.skill.id.slice(-12)}</span></div><div className="compiler-inline-note"><TerminalSquare className="h-4 w-4 text-cyan-300" /><span>ROS 2 export is a complete ament_python package with controller client, launch/config files, manifest, exact joints and trajectories. URScript is emitted only for a verified Universal Robots profile; ABB RAPID only for a verified ABB profile.</span></div><div className="flex flex-wrap items-center justify-between gap-3"><PanelTitle icon={Code2} eyebrow="Additional adapter" title="BehaviorTree XML preview" meta="application/xml" /><div className="flex gap-2"><button onClick={handleCopy} className="compiler-action-button">{copied ? <Check className="h-3.5 w-3.5 text-cyan-300" /> : <Copy className="h-3.5 w-3.5" />}{copied ? 'Copied' : 'Copy XML'}</button><button onClick={handleXmlDownload} className="compiler-action-button"><Download className="h-3.5 w-3.5" />Export XML</button></div></div><pre className="compiler-code-block"><XmlHighlight xml={result.behavior_tree_xml} /></pre></div>
                 )}
               </div>
 

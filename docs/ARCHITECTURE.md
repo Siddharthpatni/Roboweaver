@@ -44,9 +44,11 @@ The compiler is data-driven off a declarative `RobotSpec` rather than per-robot 
 paths. `plugins/registry.py::PluginRegistry` is a real, generic, name-keyed registry —
 the same primitive backs robot-driver bridge dispatch, `RobotBackend`s, and
 `DigitalTwin`s. `plugins/backend.py::RobotBackend` (`metadata()`, `capabilities()`,
-`validate()`, `compile()`, `deploy()`) has two real implementations: `Ros2Backend`
-(wraps the ROS 2 codegen) and `UrScriptBackend` (real, syntactically valid URScript
-generated exclusively from verified RoboIR trajectories). `deploy()` re-runs the real
+`validate()`, `compile()`, `deploy()`) has three real implementations: `Ros2Backend`
+(wraps the ROS 2 codegen), `UrScriptBackend` (real, syntactically valid URScript
+generated exclusively from verified RoboIR trajectories), and `AbbRapidBackend` (real
+RAPID with its own bounded structural syntax checker, not RobotStudio-validated).
+`deploy()` re-runs the real
 Safety Kernel on the exact IR and performs a real simulation check
 before any bridge connect is attempted. Adding a new backend is a registry entry, not a
 compiler change. Full detail: [`REDESIGN.md` §4](REDESIGN.md#4-robot-backends--stop-overfocusing-on-ros-2)

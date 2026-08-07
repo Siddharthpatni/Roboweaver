@@ -304,10 +304,10 @@ export function ResearchLabView() {
               <div className="flex items-center justify-between rounded-lg bg-white/[0.025] px-3 py-2.5"><span className="flex items-center gap-2 text-slate-500"><Network className="h-3.5 w-3.5" /> Network</span><span className="font-data text-emerald-300">none</span></div>
               <div className="flex items-center justify-between rounded-lg bg-white/[0.025] px-3 py-2.5"><span className="flex items-center gap-2 text-slate-500"><HardDrive className="h-3.5 w-3.5" /> Root filesystem</span><span className="font-data text-emerald-300">read-only</span></div>
               <div className="flex items-center justify-between rounded-lg bg-white/[0.025] px-3 py-2.5"><span className="flex items-center gap-2 text-slate-500"><ShieldCheck className="h-3.5 w-3.5" /> Devices</span><span className="font-data text-emerald-300">none</span></div>
-              <div className="flex items-center justify-between rounded-lg bg-white/[0.025] px-3 py-2.5"><span className="flex items-center gap-2 text-slate-500"><Clock3 className="h-3.5 w-3.5" /> Physics</span><span className="font-data text-amber-300">adapter required</span></div>
+              <div className="flex items-center justify-between rounded-lg bg-white/[0.025] px-3 py-2.5"><span className="flex items-center gap-2 text-slate-500"><Clock3 className="h-3.5 w-3.5" /> Physics</span><span className="font-data text-emerald-300">{status?.sandbox.physics_adapter ?? 'mujoco'} (in-container)</span></div>
             </div>
             <div className="mt-4 rounded-xl border border-white/[0.07] bg-[#070d16] p-3 font-data text-[9.5px] leading-5 text-slate-500">{status?.sandbox.command ?? 'docker compose --profile research run --rm experiment-sandbox'}</div>
-            <p className="mt-3 flex gap-2 text-[10px] leading-4 text-amber-200/70"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />This validates generated artifacts in isolation. It does not claim Gazebo/MuJoCo physics or runtime correctness until that adapter reports evidence.</p>
+            <p className="mt-3 flex gap-2 text-[10px] leading-4 text-amber-200/70"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />This API call only validates artifacts. A real headless MuJoCo rollout (gravity, contacts, bounded synthetic actuation) runs and reports numeric evidence only inside the isolated container above — it does not train or claim a learned control policy.</p>
           </div>
         </section>
       </div>

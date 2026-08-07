@@ -16,6 +16,7 @@ from roboweaver.compiler import SkillCompiler
 from roboweaver.hardware.universal_driver import RobotConnectionStatus
 from roboweaver.plugins.backend import (
     BACKEND_REGISTRY,
+    AbbRapidBackend,
     DeploymentRefused,
     Ros2Backend,
     UrScriptBackend,
@@ -27,12 +28,13 @@ def _real_result(robot_id: str = "ur5e"):
     return compiler.compile_with_diagnostics("Pick up the red cube", verbose=False)
 
 
-def test_registry_has_both_real_backends():
-    print("\n[TEST 1] Testing both backends are registered...")
-    assert set(BACKEND_REGISTRY.names()) == {"ros2", "urscript"}
+def test_registry_has_all_real_backends():
+    print("\n[TEST 1] Testing all backends are registered...")
+    assert set(BACKEND_REGISTRY.names()) == {"ros2", "urscript", "abb_rapid"}
     assert isinstance(BACKEND_REGISTRY.get("ros2"), Ros2Backend)
     assert isinstance(BACKEND_REGISTRY.get("urscript"), UrScriptBackend)
-    print("  -> ros2 and urscript both registered [PASSED]")
+    assert isinstance(BACKEND_REGISTRY.get("abb_rapid"), AbbRapidBackend)
+    print("  -> ros2, urscript, and abb_rapid all registered [PASSED]")
 
 
 def test_unknown_backend_raises_clearly():
@@ -140,6 +142,32 @@ def test_urscript_backend_refuses_non_ur_targets(tmp_path):
         BACKEND_REGISTRY.get("urscript").compile(result, tmp_path)
 
 
+def test_abb_rapid_backend_generates_real_syntax():
+    print("\n[TEST 4b] Testing AbbRapidBackend.compile() produces real, syntactically valid RAPID...")
+    result = _real_result("abb_irb120")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out = BACKEND_REGISTRY.get("abb_rapid").compile(result, Path(tmpdir))
+        assert out.exists()
+        content = out.read_text()
+        assert content.startswith("MODULE ")
+        assert content.rstrip().endswith("ENDMODULE")
+        assert content.count("    PROC main()") == 1
+        assert content.count("    ENDPROC") == 1
+        assert content.count("MoveAbsJ ") > 0
+        # Real waypoints from verified RoboIR -- not placeholders.
+        assert result.ir.lowering is not None
+        total_waypoints = sum(len(s.waypoints) for s in result.ir.lowering.trajectories)
+        assert content.count("MoveAbsJ ") == total_waypoints
+        assert "fine" in content  # final waypoint of a segment stops precisely
+    print(f"  -> {content.count('MoveAbsJ ')} real MoveAbsJ statements match the compiled skill's waypoint count [PASSED]")
+
+
+def test_abb_rapid_backend_refuses_non_abb_targets(tmp_path):
+    result = _real_result("kuka_iiwa")
+    with pytest.raises(ValueError, match="only supports verified ABB"):
+        BACKEND_REGISTRY.get("abb_rapid").compile(result, tmp_path)
+
+
 def test_backend_validate_returns_real_diagnostics():
     print("\n[TEST 5] Testing RobotBackend.validate() returns the real compile diagnostics...")
     result = _real_result()
@@ -204,10 +232,11 @@ def test_deploy_stops_and_disconnects_when_bridge_rejects_a_trajectory():
 
 if __name__ == "__main__":
     print("=== STARTING ROBOTBACKEND (ITEM 3) VERIFICATION ===")
-    test_registry_has_both_real_backends()
+    test_registry_has_all_real_backends()
     test_unknown_backend_raises_clearly()
     test_ros2_backend_generates_a_real_package()
     test_urscript_backend_generates_real_syntax()
+    test_abb_rapid_backend_generates_real_syntax()
     test_backend_validate_returns_real_diagnostics()
     test_deploy_sends_real_trajectories_over_sim_bridge()
     print("\n=== ALL ROBOTBACKEND TESTS PASSED SUCCESSFULLY ===")
