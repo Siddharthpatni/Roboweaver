@@ -425,12 +425,25 @@ recorded above, and GitHub Actions run 31215741851.
   rebuilt Docker stack: the real `/api/research/plan` request that previously hung now
   returns HTTP 200 in 24.47s, and `/api/compile?...&explain_mlir=1` returns a real
   Ollama-generated explanation of the actual compiled RoboIR's MLIR module in 7.79s.
+- Two follow-on CI failures, both caught and fixed before declaring this done. First,
+  a `nanoid` advisory (GHSA-2v37-7h3g-55p8) was published to the npm registry between
+  a local `npm audit` pass and the push, failing the public Frontend job; fixed with
+  `npm audit fix`. Second, regenerating that lockfile with `npm install` on local
+  macOS/Node 25 resolved a different set of platform-specific optional dependencies
+  (`@emnapi/core`/`@emnapi/runtime`) than CI's Ubuntu/Node 22 runner needs, so `npm ci`
+  failed there with "Missing ... from lock file" even though the audit was clean --
+  fixed by regenerating inside a `node:22-bookworm` container matching CI exactly, and
+  restoring local `node_modules` afterward with `npm ci` (never rewrites the lockfile)
+  instead of `npm install` (which had silently reverted the first attempt at this fix
+  before it was even committed). Public run
+  [31220260487](https://github.com/Siddharthpatni/Roboweaver/actions/runs/31220260487)
+  is fully green across all 10 jobs, including Containers.
 
 Evidence: `src/roboweaver/nlu/cascade.py`, `tests/test_model_cascade.py`,
 `src/roboweaver/upstream/mlir_explainer.py`, `tests/test_mlir_explainer.py`,
 `tests/test_dashboard_ai.py`, `frontend/src/app/api/roboweaver/[...path]/route.ts`,
-`frontend/src/lib/api.ts`, `frontend/src/components/CompilerView.tsx`, and the live
-Docker verification runs recorded above.
+`frontend/src/lib/api.ts`, `frontend/src/components/CompilerView.tsx`, the live
+Docker verification runs recorded above, and GitHub Actions run 31220260487.
 
 ## Latest Change Log
 
