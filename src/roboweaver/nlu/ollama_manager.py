@@ -314,6 +314,7 @@ class OllamaManager:
         json_mode: bool = False,
         timeout: float = 60.0,
         temperature: float = 0.1,
+        max_tokens: int = 2048,
     ) -> OllamaResponse:
         """Send a generation request to the local Ollama server.
 
@@ -325,6 +326,9 @@ class OllamaManager:
             json_mode: If True, request JSON output format.
             timeout: HTTP timeout in seconds.
             temperature: Sampling temperature (lower = more deterministic).
+            max_tokens: Caps Ollama's `options.num_predict` -- matches the
+                OpenRouterManager signature so CascadeManager can
+                pass one value uniformly across all three providers.
         """
         resolved_model = model or self.model_for_feature(feature)
 
@@ -332,7 +336,7 @@ class OllamaManager:
             "model": resolved_model,
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": temperature},
+            "options": {"temperature": temperature, "num_predict": max(1, min(int(max_tokens), 8192))},
         }
         body.update({"system": system} if system else {})
         if json_mode:
@@ -356,7 +360,16 @@ class OllamaManager:
                 error=_http_error_text(exc, resolved_model),
                 latency_s=time.monotonic() - start,
             )
-        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        except TimeoutError:
+            # Distinct from "unreachable": the connection succeeded but generation
+            # didn't finish within the budget -- a real local model under load can
+            # legitimately take longer than a single cascade attempt allows.
+            return OllamaResponse(
+                text=None, model=resolved_model,
+                error=f"Ollama at {self.host} did not finish generating within {timeout:.0f}s (model={resolved_model}).",
+                latency_s=time.monotonic() - start,
+            )
+        except (urllib.error.URLError, OSError) as exc:
             return OllamaResponse(
                 text=None, model=resolved_model,
                 error=f"Ollama unreachable at {self.host} (model={resolved_model}): {exc}",

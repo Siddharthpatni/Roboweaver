@@ -1,6 +1,6 @@
 # RoboWeaver Milestones and Future Plan
 
-**Last updated:** 2026-08-07
+**Last updated:** 2026-08-08
 **Current release:** 0.1.0
 **RoboIR version:** 0.2.0
 **Status:** active development; compiler and generated artifacts are tested, physical
@@ -26,9 +26,9 @@ works. Record the test, build, hardware log, or other reproducible evidence.
 
 ## Current Verified Snapshot
 
-Measured on Python 3.12.13 and Node.js 22 tooling on 2026-08-07:
+Measured on Python 3.12.13 and Node.js 22 tooling on 2026-08-08:
 
-- **464 tests passed, 0 skipped, and 5 subtests passed**.
+- **462 tests passed, 0 skipped, and 5 subtests passed** (count decreased by 2: the direct-Gemini provider and its tests were removed in M14).
 - **79.01% branch-aware Python coverage**, with a **75% CI floor**.
 - Ruff/Pyflakes, Python compilation, dependency consistency, and CI YAML checks pass.
 - Frontend ESLint, strict TypeScript checking, and the Next.js production build pass.
@@ -124,7 +124,7 @@ npm audit --audit-level=high
 | Native simulation | **Verified, bounded** | Complete RoboIR is adapted into the legacy runtime view and executed through the native twin. PICK has a modeled process outcome; other processes report unsupported status rather than false success. |
 | External simulation | **Partial / blocked externally** | Remote twin connectivity is truthful, but Isaac, Gazebo, Webots, and similar physics engines are not integrated or exercised here. |
 | Research experiment sandbox | **Verified, bounded** | Open-ended prompts become a validated connected-tree morphology, deterministic URDF, and deterministic training-adapter scaffold. A hardened no-network/no-device Docker run executes a real headless MuJoCo rollout (gravity, contacts, bounded synthetic actuation) and reports numeric physics evidence. Model-authored code is never executed; no training outcome or learned policy is claimed, and Gazebo/ros2_control physics remain separate/open. |
-| Model cascade and observability | **Verified, bounded** | At most three explicit attempts route Ollama → configured Gemini → configured OpenRouter, now under a shared 55s total wall-clock budget (not just a per-attempt cap) so a slow early candidate cannot silently push the whole cascade past every client-side HTTP timeout above it — the exact failure mode a real `/api/research/plan` request hit before this fix. Exact TTL cache hits re-run validation. Sentinel-inspired traces retain provider/model/latency/token/error metadata but no prompts, responses, keys, or target addresses. This is an original in-process implementation, not Sentinel's complete gateway. |
+| Model cascade and observability | **Verified, bounded** | Explicit attempts route local Ollama → configured OpenRouter (Google models are reached *through* OpenRouter; the separate direct-Gemini client was removed so there is one remote provider, one key, one error shape). Runs under a shared 55s total wall-clock budget (not just a per-attempt cap) so a slow early candidate cannot silently push the whole cascade past every client-side HTTP timeout above it. Per-request `max_tokens` is threaded to all providers — including Ollama's `num_predict`, which previously had no cap at all. Exact TTL cache hits re-run validation. Sentinel-inspired traces retain provider/model/latency/token/error metadata but no prompts, responses, keys, or target addresses. This is an original in-process implementation, not Sentinel's complete gateway. |
 | Compiler AI explanation (MLIR) | **Verified, optional** | `?explain_mlir=1` on `/api/compile` runs the same provider cascade to summarize the *real* recorded `mlir-opt` evidence and the exact deterministic emitted MLIR text — never invents pass results and states plainly when the native tool was unavailable. Strictly read-only: it cannot alter compilation and a compile succeeds identically with it on or off. Available cascade models now include a real, explicitly non-free OpenRouter Gemini 2.5 Flash Lite option (`google/gemini-2.5-flash-lite`, verified live against OpenRouter's own model list to confirm it carries no `:free` tag) alongside the existing free-tier-eligible direct Gemini API path. |
 | Research evaluation | **Verified locally; CI artifact configured** | Versioned harness measures expected compilation outcomes, diagnostic precision/recall, three-run IR determinism, target portability, modeled NativeTwin correctness, and an internal O0/O1 planning baseline. External MoveIt/baseline comparison and independent reproduction remain open. |
 | Gazebo acceptance | **Verified (public CI)** | Jazzy/Harmonic CI generates a compiler-derived URDF, validates it with `check_urdf`, starts headless Gazebo, spawns the model through `ros_gz_sim`, and inspects its joints with `gz model`. Public run [31215741851](https://github.com/Siddharthpatni/Roboweaver/actions/runs/31215741851) passed in 3m32s with all 7 joints inspected. Gazebo is still unavailable on this macOS workspace, so no local simulator result is claimed; the public Linux CI job is the evidence. |
@@ -444,6 +444,55 @@ Evidence: `src/roboweaver/nlu/cascade.py`, `tests/test_model_cascade.py`,
 `tests/test_dashboard_ai.py`, `frontend/src/app/api/roboweaver/[...path]/route.ts`,
 `frontend/src/lib/api.ts`, `frontend/src/components/CompilerView.tsx`, the live
 Docker verification runs recorded above, and GitHub Actions run 31220260487.
+
+### M14 — AI Research Lab Actually Generates (Was Silently Always Falling Back) — Verified
+
+- **Reported symptom:** the Research Lab "worked" but every result came from the
+  deterministic template. The recorded traces showed why — *every* AI attempt failed,
+  and the fallback then masked it behind a successful-looking HTTP 200.
+- **Root cause 1 — truncation.** The embodiment schema is a large JSON object (up to
+  24 links / 32 joints plus training terms), but the cascade passed the default
+  `max_tokens=2048` sized for short prose. Remote responses were cut off mid-object,
+  so every attempt failed JSON parsing before any provider was genuinely "wrong".
+  Fixed by threading a per-request `max_tokens` through the cascade to all providers
+  and requesting 4096 for this feature.
+- **Root cause 2 — Ollama had no token cap at all.** `OllamaManager.generate()` never
+  set `options.num_predict`, so it was the only provider that couldn't be bounded.
+  Added `max_tokens` with the same signature as the remote managers.
+- **Root cause 3 — the prompt never stated the schema's numeric bounds.** Once
+  truncation was fixed, models returned well-formed JSON that still failed validation
+  on out-of-range `effort`/`velocity` and on `sensors` emitted as objects instead of
+  strings. `parse_experiment_spec()` is a strict safety boundary, but the system
+  prompt only described the *shape* of the JSON, never the ranges. Rewrote it to state
+  every bound the validator enforces, verbatim.
+- Also corrected a misleading error: a slow local generation was reported as "Ollama
+  unreachable" when the connection had in fact succeeded. Timeout and connection
+  failure are now distinct messages.
+- **Removed the direct Gemini API client** (`nlu/gemini_manager.py` and its tests).
+  Google models are reached through OpenRouter instead, so there is one remote
+  provider, one API key, and one request/error shape rather than two paths to the same
+  model family. Cascade is now `ollama → openrouter` (max 2 attempts).
+  Honest trade-off: this removes the only genuinely-free Google path (Google's own
+  free tier); OpenRouter's `google/gemini-2.5-flash-lite` is inexpensive but paid.
+- **Measured the free alternatives rather than assuming.** On this exact task:
+  `google/gemini-2.5-flash-lite` returned valid specs in ~20-37s and always served the
+  requested model. The `:free` models took 64-98s — past the cascade's 30s/attempt and
+  55s total budget — and OpenRouter silently served a *different* model than requested
+  via fallback (asked for `gemma-4-31b:free`, got `gpt-oss-20b:free`). Free tiers stay
+  configured for short-prose features; they are not viable for this endpoint.
+- Fixed a latent bug found in passing: `nlu/__init__.py` assigned `__all__` twice, so
+  the second assignment silently shadowed the first and `from roboweaver.nlu import *`
+  exported only two of the eleven intended names.
+- **Verified live through a rebuilt Docker stack** (not just unit tests): three
+  different objectives each produced a real model-authored embodiment with
+  `ai_error: None` and no fallback — a 20-link climbing monkey, a 13-link quadruped,
+  and a 19-link hexapod inspector. 462 tests pass, zero Ruff C901/F findings, frontend
+  typecheck/lint/build clean.
+
+Evidence: `src/roboweaver/research/experiments.py`, `src/roboweaver/nlu/cascade.py`,
+`src/roboweaver/nlu/ollama_manager.py`, `src/roboweaver/nlu/__init__.py`,
+`tests/test_model_cascade.py`, the recorded observability traces that exposed the
+100%-fallback rate, and the live rebuilt-container runs recorded above.
 
 ## Latest Change Log
 

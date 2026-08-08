@@ -406,15 +406,45 @@ def _generic_spec(objective: str) -> ExperimentSpec:
     )
 
 
-_SYSTEM_PROMPT = """You design bounded research-only robot embodiments. Return JSON only.
-Required keys: name, objective, embodiment_class, links, joints, sensors, training.
-links: 1-24 objects with lower_snake_case name, shape box/cylinder/sphere/capsule,
-size_m as 3 positive values, mass_kg. joints: one connected tree with name, parent,
-child, joint_type fixed/revolute/continuous/prismatic, axis[3], lower, upper, effort,
-velocity. sensors: joint_position/joint_velocity/contact/imu/camera/force_torque.
-training: algorithm PPO/SAC/TD3/behavior_cloning plus non-empty observation_terms,
-reward_terms, termination_terms and max_steps. Do not emit code, paths, URLs, plugins,
-commands, or physical-hardware instructions."""
+# Every numeric bound below is enforced verbatim by parse_experiment_spec(). The
+# validator is a safety boundary and is deliberately strict, so the prompt must
+# state the exact same limits -- when it only described the shape of the JSON and
+# omitted the ranges, real models returned well-formed JSON that failed validation
+# on out-of-range effort/velocity values almost every time.
+_SYSTEM_PROMPT = """You design bounded research-only robot embodiments. Return one JSON object only.
+
+Required top-level keys: name, objective, embodiment_class, links, joints, sensors, training.
+
+name: lower_snake_case, starts with a letter, max 48 characters.
+objective: 1-400 characters. embodiment_class: 1-80 characters.
+
+links: array of 1-24 objects. Each: name (lower_snake_case, unique),
+  shape (exactly one of: box, cylinder, sphere, capsule),
+  size_m (array of exactly 3 numbers, each 0.01 to 3.0),
+  mass_kg (number, 0.01 to 500.0).
+
+joints: array of 0-32 objects forming ONE connected tree.
+  There must be exactly (number of links - 1) joints, exactly one root link that is
+  never a child, no link may have two parents, and no cycles.
+  Each: name (lower_snake_case, unique), parent and child (names of two DIFFERENT
+  declared links), joint_type (exactly one of: fixed, revolute, continuous, prismatic),
+  axis (array of exactly 3 numbers, each -1.0 to 1.0),
+  lower and upper (numbers, -6.3 to 6.3; for revolute/prismatic, lower MUST be < upper),
+  effort (number, 0.01 to 1000.0),
+  velocity (number, 0.01 to 100.0).
+
+sensors: a FLAT array of 1-12 plain strings, each exactly one of:
+  joint_position, joint_velocity, contact, imu, camera, force_torque.
+  Do not use objects; ["imu","contact"] is correct, [{"type":"imu"}] is wrong.
+
+training: object with algorithm (exactly one of: PPO, SAC, TD3, behavior_cloning),
+  observation_terms, reward_terms (each a flat array of 1-16 non-empty strings),
+  termination_terms (flat array of 1-12 non-empty strings),
+  max_steps (integer, 10 to 1000000).
+
+Every numeric value must be finite and inside the stated range -- values outside these
+ranges are rejected. Do not emit code, paths, URLs, plugins, commands, comments,
+markdown fences, or physical-hardware instructions."""
 
 
 class ExperimentPlanner:
@@ -434,6 +464,15 @@ class ExperimentPlanner:
                 system=_SYSTEM_PROMPT,
                 json_mode=True,
                 temperature=0.1,
+                # A full embodiment (up to 24 links/32 joints plus training terms)
+                # is a large JSON object; 2048 tokens (the cascade default sized
+                # for short prose) truncated it mid-object every time in practice,
+                # so every attempt failed JSON parsing before a provider was ever
+                # really "wrong". 30s also gives a real local model enough room to
+                # finish this larger generation instead of hitting the cascade's
+                # default 20s per-attempt timeout mid-response.
+                max_tokens=4096,
+                per_attempt_timeout=30.0,
                 validate=lambda text: parse_experiment_spec(text),
             )
             if response.text is not None:

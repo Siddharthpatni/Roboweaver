@@ -1698,7 +1698,6 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
             return
         if path != "/api/research/status":
             return _ROUTE_NOT_HANDLED
-        from roboweaver.nlu.gemini_manager import gemini_status
         from roboweaver.nlu.ollama_manager import get_manager
         from roboweaver.nlu.openrouter_manager import openrouter_status
 
@@ -1711,11 +1710,10 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                     "model": ollama.model_for_feature("experiment"),
                     "remote": False,
                 },
-                "gemini": gemini_status(),
                 "openrouter": openrouter_status(),
             },
-            "cascade": ["ollama", "gemini", "openrouter"],
-            "max_attempts": 3,
+            "cascade": ["ollama", "openrouter"],
+            "max_attempts": 2,
             "sandbox": {
                 "profile": "research",
                 "network": "none",

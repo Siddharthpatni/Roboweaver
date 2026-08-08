@@ -26,7 +26,7 @@ class FakeManager:
 
 def test_cascade_falls_back_traces_attempts_and_caches_valid_result():
     first = FakeManager("ollama", [OllamaResponse(None, "offline", "local", 0.01)])
-    second = FakeManager("gemini", [OllamaResponse('{"ok":true}', None, "flash-lite", 0.02, 7)])
+    second = FakeManager("openrouter", [OllamaResponse('{"ok":true}', None, "flash-lite", 0.02, 7)])
     cache = ExactResultCache(max_entries=10, ttl_seconds=60)
     traces = TraceRegistry(max_entries=10)
     cascade = CascadeManager(
@@ -40,7 +40,7 @@ def test_cascade_falls_back_traces_attempts_and_caches_valid_result():
     result = cascade.generate(prompt="design", feature="experiment", json_mode=True, validate=validate)
     cached = cascade.generate(prompt="design", feature="experiment", json_mode=True, validate=validate)
 
-    assert result.provider == "gemini"
+    assert result.provider == "openrouter"
     assert result.attempts == 2
     assert cached.cache_hit is True
     assert first.calls == 1
@@ -59,7 +59,7 @@ def test_cascade_skips_later_candidates_once_the_time_budget_is_spent():
     # frontend's fetch timeout because per-attempt timeouts alone don't bound
     # the sum across multiple sequential attempts).
     slow = FakeManager("ollama", [OllamaResponse(None, "slow failure", "local", 0.2)], delay_s=0.2)
-    unreachable_budget = FakeManager("gemini", [OllamaResponse('{"ok":true}', None, "flash-lite", 0.0, 1)])
+    unreachable_budget = FakeManager("openrouter", [OllamaResponse('{"ok":true}', None, "flash-lite", 0.0, 1)])
     cache = ExactResultCache(max_entries=10, ttl_seconds=60)
     traces = TraceRegistry(max_entries=10)
     cascade = CascadeManager(

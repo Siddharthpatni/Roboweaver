@@ -7,7 +7,6 @@ import uuid
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
-from roboweaver.nlu.gemini_manager import GeminiManager
 from roboweaver.nlu.ollama_manager import OllamaResponse, get_manager
 from roboweaver.nlu.openrouter_manager import OpenRouterManager
 from roboweaver.observability.cache import ExactResultCache, get_result_cache
@@ -41,12 +40,15 @@ class CascadeResponse:
 
 
 def default_candidates(feature: str = "experiment") -> list[CascadeCandidate]:
+    """Local Ollama first, then OpenRouter if a key is configured.
+
+    Google models are reached through OpenRouter rather than a second direct
+    Gemini client: one remote provider means one API key, one request/error
+    shape, and one place where model routing can drift.
+    """
     ollama = get_manager()
-    gemini = GeminiManager()
     openrouter = OpenRouterManager()
     candidates: list[CascadeCandidate] = [CascadeCandidate(ollama, ollama.model_for_feature(feature))]
-    if gemini.configured:
-        candidates.append(CascadeCandidate(gemini, gemini.model_for_feature(feature)))
     if openrouter.configured:
         candidates.append(CascadeCandidate(openrouter, openrouter.model_for_feature(feature)))
     return candidates[:3]
@@ -72,7 +74,7 @@ class CascadeManager:
     def _attempt_one(
         self, *, candidate: CascadeCandidate, attempt: int, requested_model: str,
         remaining: float, prompt: str, feature: str, system: str, json_mode: bool,
-        temperature: float, per_attempt_timeout: float,
+        temperature: float, per_attempt_timeout: float, max_tokens: int,
         validate: Callable[[str], None] | None, parent_id: str, cache_key: str,
     ) -> tuple[OllamaResponse | None, str | None]:
         """Try one candidate and record its trace. Returns `(response, None)` on
@@ -93,7 +95,7 @@ class CascadeManager:
 
         response = candidate.manager.generate(
             prompt, feature=feature, model=requested_model, system=system,
-            json_mode=json_mode, temperature=temperature,
+            json_mode=json_mode, temperature=temperature, max_tokens=max_tokens,
             timeout=max(1.0, min(float(per_attempt_timeout), 30.0, remaining)),
         )
         validation_error: str | None = None
@@ -125,6 +127,7 @@ class CascadeManager:
         temperature: float = 0.1,
         per_attempt_timeout: float = 20.0,
         max_total_seconds: float = 55.0,
+        max_tokens: int = 2048,
         validate: Callable[[str], None] | None = None,
     ) -> CascadeResponse:
         if not prompt.strip():
@@ -141,6 +144,7 @@ class CascadeManager:
             "system": system,
             "json_mode": json_mode,
             "temperature": round(float(temperature), 3),
+            "max_tokens": int(max_tokens),
             "candidates": candidate_signature,
         })
         cached = self.cache.get(cache_key)
@@ -177,8 +181,8 @@ class CascadeManager:
                 candidate=candidate, attempt=attempt, requested_model=requested_model,
                 remaining=deadline - time.monotonic(), prompt=prompt, feature=feature,
                 system=system, json_mode=json_mode, temperature=temperature,
-                per_attempt_timeout=per_attempt_timeout, validate=validate,
-                parent_id=parent_id, cache_key=cache_key,
+                per_attempt_timeout=per_attempt_timeout, max_tokens=max_tokens,
+                validate=validate, parent_id=parent_id, cache_key=cache_key,
             )
             if response is not None:
                 assert response.text is not None

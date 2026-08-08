@@ -17,14 +17,12 @@ from roboweaver.nlu.ollama_manager import (
 )
 from roboweaver.nlu.skill_explainer import SkillExplainer, SkillExplanation
 from roboweaver.nlu.skill_composer import SkillComposer, SkillComposition
+from roboweaver.nlu.cascade import CascadeManager
 
 __all__ = [
     "OllamaIntentParser", "OllamaParseResult", "DEFAULT_HOST", "DEFAULT_MODEL",
     "OllamaManager", "OllamaResponse", "OllamaStatus", "OllamaStreamChunk", "get_manager",
     "SkillExplainer", "SkillExplanation",
     "SkillComposer", "SkillComposition",
+    "CascadeManager",
 ]
-from roboweaver.nlu.cascade import CascadeManager
-from roboweaver.nlu.gemini_manager import GeminiManager
-
-__all__ = ["CascadeManager", "GeminiManager"]

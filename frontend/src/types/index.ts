@@ -193,7 +193,7 @@ export interface CompiledSkillResult {
   explanation_latency_s?: number;
   explanation_error?: string | null;
   /** Present only when compiled with `?explain_mlir=1` and native_mlir evidence
-   * exists; cascade-backed (Ollama -> Gemini -> OpenRouter), read-only summary
+   * exists; cascade-backed (Ollama -> OpenRouter), read-only summary
    * of the real emitted MLIR text and recorded mlir-opt evidence. */
   mlir_explanation?: string | null;
   mlir_explanation_provider?: string;
@@ -691,7 +691,7 @@ export interface ResearchProviderStatus {
 }
 
 export interface ResearchStatusResult {
-  providers: Record<'ollama' | 'gemini' | 'openrouter', ResearchProviderStatus>;
+  providers: Record<'ollama' | 'openrouter', ResearchProviderStatus>;
   cascade: string[];
   max_attempts: number;
   sandbox: {
